@@ -2,6 +2,8 @@ name: Development checks
 
 on:
   push:
+    # Dependabot branches are checked by their pull request run.
+    branches-ignore: ['dependabot/**']
     paths-ignore: ['**.md', 'docs/**', 'LICENSE']
   pull_request:
     paths-ignore: ['**.md', 'docs/**', 'LICENSE']
