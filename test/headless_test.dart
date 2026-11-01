@@ -52,7 +52,7 @@ void main() {
       final count = calls.length;
       for (final method in [
         'debugFault',
-        'importRoutingQRCamera',
+        'saveLogs',
         'openProviderLink',
         'unknown',
       ]) {

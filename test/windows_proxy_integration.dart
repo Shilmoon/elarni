@@ -3309,11 +3309,12 @@ for line in sys.stdin:
       final imported = await backend.control.importClientProfiles(
         content: pinned,
       );
-      await backend.control.selectNode(
+      final selected = await backend.control.selectNode(
         imported.snapshot.subscriptions.single.nodes
             .firstWhere((node) => node.id != first)
             .id,
       );
+      expect(selected.state, 'prepared');
       final snapshot = await backend.control.subscriptions();
       // The pinned profile joins the local group; a link adds another server.
       expect(snapshot.subscriptions.single.nodes.length, 2);

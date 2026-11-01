@@ -30,6 +30,10 @@ gofmt -l Vendor
 
 For Go concurrency changes, also run `sh scripts/check-tests race` (needs cgo).
 
+Helper tools have loopback self-tests: `scripts/check-macos-harness` (the macOS
+acceptance fixture) and `scripts/check-protocol-benchmark` (the live-server
+`scripts/benchmark-protocols`, with Chromium).
+
 ## Server cores
 
 `python scripts/check-server-cores` downloads the newest Xray-core, 3x-ui and
@@ -54,11 +58,9 @@ another VPN, against a release build.
   (as root), `check-linux-storage` and `check-linux-desktop` (as a normal user).
 - Windows: `python scripts/check-windows-vpn` from an elevated terminal.
 - macOS: `python3 scripts/check-extension --fixture <file>` on a disposable Mac
-  account (`--list` shows the cases, `--build-only` only compiles);
-  `scripts/check-macos-harness` self-tests its network fixture on loopback.
+  account, with `macos/Checks/AcceptanceResponder.py` serving the network
+  fixture (`--list` shows the cases, `--build-only` only compiles).
 - Android: `scripts/check-android`, see [android/README.md](../android/README.md).
 - iOS: `scripts/check-ios <simulator-udid>`, see [ios/README.md](../ios/README.md).
-- Protocol benchmark: `scripts/benchmark-protocols` against live servers;
-  `scripts/check-protocol-benchmark` self-tests it on loopback with Chromium.
 - Sleep and idle cost: with Elarni connected, `python scripts/measure-wake`
   (close and open the lid) and `python scripts/measure-idle`.
