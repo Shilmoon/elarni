@@ -5,7 +5,7 @@ THIRD_PARTY_NOTICES. The native engine components retain their existing terms.
 
 AndroidX Activity, Compose, Material3, Lifecycle and their AndroidX runtime
 components are provided by the Android Open Source Project under Apache-2.0.
-Kotlin standard library 2.4.10 and kotlinx.coroutines 1.9.0 are provided by
+Kotlin standard library 2.4.21 and kotlinx.coroutines 1.11.0 are provided by
 JetBrains and contributors under Apache-2.0. JetBrains annotations, JSpecify,
 and Guava listenablefuture also declare Apache-2.0.
 
@@ -194,7 +194,7 @@ The application uses native Kotlin/Compose; Flutter is not packaged in this APK.
 
 
 Kotlin standard library: ThreeTen-derived date/time code
-Source: https://github.com/JetBrains/kotlin/blob/v2.4.10/license/third_party/threetenbp_license.txt
+Source: https://github.com/JetBrains/kotlin/blob/v2.4.21/license/third_party/threetenbp_license.txt
 
 Copyright (c) 2007-present, Stephen Colebourne & Michael Nascimento Santos.
 All rights reserved.
@@ -222,7 +222,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Kotlin standard library: JVM mathematical functions
 Derived from Eric Ford and Hubert Holin (2001).
-Source: https://github.com/JetBrains/kotlin/blob/v2.4.10/license/third_party/boost_LICENSE.txt
+Source: https://github.com/JetBrains/kotlin/blob/v2.4.21/license/third_party/boost_LICENSE.txt
 
 Boost Software License - Version 1.0 - August 17th, 2003
 Permission is hereby granted, free of charge, to any person or organization
