@@ -27,7 +27,7 @@ jobs:
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-24.04' || fromJSON('["self-hosted", "elarni-linux"]') }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           # The container fetches the commit from this checkout, which a shallow clone cannot always serve.
@@ -92,7 +92,7 @@ jobs:
       # ("storage quota has been hit"), and the runner's checkout keeps the files until the next run.
       - name: Retain candidates (not production releases)
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: unsigned-candidate-linux
           path: |
@@ -106,7 +106,7 @@ jobs:
       - name: Retain synthetic check results
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: checks-linux
           path: |
@@ -140,7 +140,7 @@ jobs:
       # Restored Go caches speed up builds; tests still run fresh on every push.
       GOFLAGS: -count=1
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           # Self-hosted runners keep ignored build outputs (Rust target, Flutter build) for incremental builds.
@@ -149,7 +149,7 @@ jobs:
         if: runner.environment == 'self-hosted'
         # Old reports would pile up and be uploaded again; the packaging scripts refuse a non-empty output folder.
         run: git clean -fdq && rm -rf .build/check-results .build/release-candidate .build/diagnostics-windows
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           version: 2026.9.8
           # A self-hosted runner keeps its installs; restoring the 2 GB cache over them took 6 minutes.
@@ -178,7 +178,7 @@ jobs:
             deps-${{ runner.os }}-
       - name: Restore Rust caches
         if: matrix.part == 'checks' && runner.environment == 'github-hosted'
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: |
             . -> target
@@ -267,7 +267,7 @@ jobs:
       - name: Retain candidates (not production releases)
         if: matrix.part == 'release'
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: unsigned-candidate-${{ matrix.os }}
           path: |
@@ -280,7 +280,7 @@ jobs:
       - name: Retain synthetic check results
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: checks-${{ matrix.os }}-${{ matrix.part }}
           path: |
