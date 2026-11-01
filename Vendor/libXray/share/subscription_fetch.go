@@ -137,7 +137,7 @@ func SubscriptionDeviceID(request SubscriptionFetchRequest) (string, error) {
 }
 
 // appVersion mirrors pubspec.yaml; cmd/elarni-core's fetch test fails when they differ.
-const appVersion = "0.3.7"
+const appVersion = "0.4.0"
 
 func FetchSubscription(ctx context.Context, request SubscriptionFetchRequest) (any, error) {
 	return FetchResource(ctx, request, 4*1024*1024, 30*time.Second, false)
