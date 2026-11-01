@@ -9,7 +9,7 @@ import XCTest
 @MainActor
 final class MacOSAcceptanceTests: InstalledVPNTestCase {
   private func network(_ fixture: Fixture) throws -> AcceptanceNetwork {
-    let value = try XCTUnwrap(fixture.network, "full suite requires the network fixture; see docs/MACOS_ACCEPTANCE.md")
+    let value = try XCTUnwrap(fixture.network, "full suite requires the network fixture (scripts/check-extension --fixture)")
     try value.validate(nodes: fixture.nodeIDs)
     return value
   }

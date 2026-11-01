@@ -180,7 +180,6 @@ def main(argv=None):
             report["status"] = "incomplete"
         report_path.write_text(json.dumps(report, indent=2) + "\n")
         print("Installed test report: " + str(report_path))
-        print("Physical/UI operator acceptance remains separate; see docs/MACOS_ACCEPTANCE.md.")
 
 
 if __name__ == "__main__":
