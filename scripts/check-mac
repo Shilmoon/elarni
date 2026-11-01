@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Run the macOS CI checks, or any command, in a kept workspace on the Mac test host.
+
+Each run pushes a commit of the working tree (uncommitted and untracked files
+included) to the host and checks it out in one workspace that keeps its ignored
+build outputs, Go cache and TUIC fixture, so a run only rebuilds what changed.
+The command runs under nohup and caffeinate: a dropped SSH connection or idle
+sleep does not stop it, and this script waits for its exit while streaming its
+output. New check reports are copied to .build/check-results here.
+
+Android: python scripts/check-mac -- python3 scripts/check-android --avd Elarni_API_36_16K --avd Elarni_API_30
+"""
+import argparse
+import io
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import tarfile
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / 'scripts'))
+from snapshot import snapshot
+
+# Runs on the host as `sh -s WORKSPACE RUN COMMIT -- COMMAND...`: claims the workspace, then starts the run detached.
+START = r"""set -eu
+W=$1 RUN=$2 COMMIT=$3; shift 4
+cd "$HOME/$W"
+mkdir -p runs source gocache
+if ! mkdir lock 2>/dev/null; then
+  if kill -0 "$(cat lock/pid 2>/dev/null)" 2>/dev/null; then echo "Another run holds $W: $(cat lock/run)" >&2; exit 75; fi
+  rm -rf lock && mkdir lock
+fi
+mkdir "runs/$RUN"
+echo "$RUN" > lock/run
+cat > "runs/$RUN/run.sh" <<'RUNSCRIPT'
+set -e
+W=$HOME/$1 RUN=$2 COMMIT=$3; shift 4
+T=$HOME/proxy-client/.toolchains
+export ANDROID_HOME=$HOME/Library/Android/sdk JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer GOCACHE=$W/gocache GOFLAGS=-count=1 GOMOBILE=$HOME/go/bin/gomobile
+export PATH="$JAVA_HOME/bin:$HOME/go/bin:$T/go/bin:$HOME/.cargo/bin:$T/flutter/bin:$T/cbindgen/bin:/opt/homebrew/bin:$ANDROID_HOME/platform-tools:/usr/bin:/bin:/usr/sbin:/sbin"
+cd "$W/source"
+[ -d .git ] || git init -q
+git fetch -q --no-tags ../repo.git "$COMMIT"
+git checkout -q -f --detach "$COMMIT"
+# Untracked leftovers go; ignored build outputs and the toolchain link stay.
+git clean -fdq -e /.toolchains
+[ -e .toolchains ] || ln -s "$T" .toolchains
+export ELARNI_GO="$(go env GOROOT)/bin/go"
+[ -x .build/tuic/tools/sing-box ] || GOWORK=off GOBIN="$PWD/.build/tuic/tools" go install -tags=with_quic github.com/sagernet/sing-box/cmd/sing-box@v1.14.0
+flutter pub get > /dev/null
+touch "$W/runs/$RUN/started"
+set +e
+caffeinate -i "$@"
+RUNSCRIPT
+nohup sh -c 'sh "$0/run.sh" "$@"; echo $? > "$0/exit"; rm -rf "$HOME/$1/lock"' "$HOME/$W/runs/$RUN" "$W" "$RUN" "$COMMIT" -- "$@" \
+  < /dev/null > "runs/$RUN/log" 2>&1 &
+echo $! > lock/pid
+"""
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument('--host', default=os.environ.get('ELARNI_MAC_HOST'),
+                        help='user@address of the Mac (default: ELARNI_MAC_HOST)')
+    parser.add_argument('--workspace', default='Projects/elarni-ci', help='workspace under the host home (default: %(default)s)')
+    parser.add_argument('command', nargs=argparse.REMAINDER,
+                        help='command to run in the checkout (default: python3 scripts/check-changed --all)')
+    arguments = parser.parse_args()
+    if not arguments.host:
+        parser.error('name the Mac with --host or ELARNI_MAC_HOST')
+    host, workspace, command = arguments.host, arguments.workspace, arguments.command
+    if command[:1] == ['--']:
+        command = command[1:]
+    command = command or ['python3', 'scripts/check-changed', '--all']
+    ssh = ['ssh', '-o', 'BatchMode=yes', '-o', 'ServerAliveInterval=30', host]
+
+    commit = snapshot()
+    # The host keeps a bare copy of the history, so each run pushes only new objects.
+    subprocess.run([*ssh, f'mkdir -p {shlex.quote(workspace)} && git init -q --bare {shlex.quote(workspace)}/repo.git'], check=True)
+    subprocess.run(['git', '-C', str(ROOT), 'push', '-q', f'{host}:{workspace}/repo.git', f'{commit}:refs/snapshots/{commit}'], check=True)
+    run = time.strftime('%Y%m%dT%H%M%S') + f'-{commit[:8]}'
+    started = subprocess.run([*ssh, shlex.join(['sh', '-s', workspace, run, commit, '--', *command])], input=START.encode())
+    if started.returncode:
+        return started.returncode
+    directory = f'{workspace}/runs/{run}'
+    print(f'Running on {host} in ~/{directory} (it continues if this script stops)', flush=True)
+
+    offset, unreachable = 0, 0
+    while True:
+        # The exit file is read first, so a run seen as finished has its whole log in this reply.
+        reply = subprocess.run([*ssh, f'cat {directory}/exit 2>/dev/null; echo; echo ---; tail -c +{offset + 1} {directory}/log'],
+                               capture_output=True)
+        if reply.returncode:
+            unreachable += 1
+            if unreachable == 1:
+                print(f'{host} is not answering (asleep or off the network?); still waiting', file=sys.stderr, flush=True)
+            time.sleep(min(60, 5 * unreachable))
+            continue
+        unreachable = 0
+        status, _, chunk = reply.stdout.partition(b'\n---\n')
+        sys.stdout.buffer.write(chunk)
+        sys.stdout.buffer.flush()
+        offset += len(chunk)
+        if status.strip():
+            code = int(status.strip())
+            break
+        time.sleep(5)
+
+    results = ROOT / '.build/check-results'
+    results.mkdir(parents=True, exist_ok=True)
+    # A run that failed before its command started has no marker, so find lists nothing.
+    archive = subprocess.run([*ssh, f'cd {workspace}/source && find .build/check-results -mindepth 1 -maxdepth 1 '
+                              f'-newer ../runs/{run}/started -print0 2>/dev/null | tar -cf - --null -T -'],
+                             capture_output=True).stdout
+    copied = 0
+    if archive:
+        with tarfile.open(fileobj=io.BytesIO(archive)) as reports:
+            members = [member for member in reports.getmembers() if member.name.startswith('.build/check-results/')]
+            for member in members:
+                member.name = member.name.removeprefix('.build/check-results/')
+            reports.extractall(results, members=members, filter='data')
+            copied = len({member.name.split('/')[0] for member in members})
+    print(f'Mac run exited {code}; {copied} new check report(s) copied to {results}', flush=True)
+    return code
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

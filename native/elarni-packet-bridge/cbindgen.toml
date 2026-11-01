@@ -1,0 +1,28 @@
+language = "C"
+pragma_once = true
+include_guard = "ELARNI_PACKET_BRIDGE_H"
+documentation = true
+usize_is_size_t = true
+
+[enum]
+prefix_with_name = true
+rename_variants = "screaming_snake_case"
+
+[parse]
+parse_deps = false
+
+[export]
+include = [
+  "ElarniPacketBridge",
+  "ElarniPacketCounters",
+  "ElarniPacketState",
+  "ElarniPacketStatus",
+  "elarni_packet_abi_version",
+  "elarni_packet_bridge_new",
+  "elarni_packet_bridge_free",
+  "elarni_packet_bridge_submit",
+  "elarni_packet_bridge_receive",
+  "elarni_packet_bridge_counters",
+  "elarni_packet_bridge_state",
+  "elarni_packet_bridge_stop",
+]

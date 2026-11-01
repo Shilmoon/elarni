@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Time how long traffic takes to work again after this computer wakes.
+
+Start it with Elarni connected, then close the lid (or sleep the computer) and open it again. A gap
+in wall-clock time marks the sleep; from the first moment after it, the check repeats a request to
+--url until one succeeds. It stops after --sleeps wakes and fails when traffic took longer than
+--limit seconds after any of them. Run it with Elarni off to see the bare network's time.
+"""
+import argparse
+import http.client
+from pathlib import Path
+import sys
+import time
+import urllib.request
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / 'scripts'))
+from check_report import record_check
+record_check(ROOT)
+
+parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+parser.add_argument('--url', default='https://www.gstatic.com/generate_204', help='A request that must succeed through the connection.')
+parser.add_argument('--proxy', help='HTTP proxy for local-proxy mode, for example http://127.0.0.1:10809; the VPN needs none.')
+parser.add_argument('--sleeps', type=int, default=1, help='Wakes to measure before stopping.')
+parser.add_argument('--limit', type=float, default=30, help='Seconds after a wake within which traffic must work.')
+args = parser.parse_args()
+# An empty mapping also keeps proxies from the environment out of the measurement.
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({'http': args.proxy, 'https': args.proxy} if args.proxy else {}))
+
+
+def probe():
+    try:
+        with opener.open(args.url, timeout=3) as reply:
+            return 200 <= reply.status < 400
+    except (OSError, http.client.HTTPException):
+        return False
+
+
+if not probe():
+    raise SystemExit(f'{args.url} does not answer now; connect first.')
+print('Ready: close the lid (or sleep the computer), then open it.', flush=True)
+results = []
+last = time.time()
+while len(results) < args.sleeps:
+    time.sleep(.5)
+    now = time.time()
+    slept, last = now - last, now
+    # The loop wakes twice a second, so a longer gap means the computer slept.
+    if slept < 5:
+        continue
+    woke, attempts, took = time.monotonic(), 0, None
+    while took is None and time.monotonic() - woke < 2 * args.limit:
+        attempts += 1
+        if probe():
+            took = time.monotonic() - woke
+        else:
+            time.sleep(.2)
+    results.append(took)
+    tries = f'{attempts} request{"s" * (attempts != 1)}'
+    print(f'Slept {slept:.0f} s; ' + (f'traffic worked {took:.1f} s after the wake ({tries})' if took is not None
+                                      else f'no traffic {2 * args.limit:.0f} s after the wake ({tries})'), flush=True)
+    last = time.time()
+late = [took for took in results if took is None or took > args.limit]
+print(f'{len(results) - len(late)} of {len(results)} wakes carried traffic within {args.limit:.0f} s.', flush=True)
+raise SystemExit(1 if late else 0)

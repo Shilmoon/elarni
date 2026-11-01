@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Per-machine MSI around the validated bundle; scripts/package-windows builds it with WiX v5. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!-- Keep UpgradeCode fixed for every release so a new MSI replaces the old one. -->
+  <Package Name="Elarni" Manufacturer="Elarni" Version="$(Version)" Scope="perMachine"
+           UpgradeCode="D8AAE067-BACC-4976-BE88-99489140EAC3">
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of Elarni is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="elarni.exe" SourceFile="$(Bundle)\elarni.exe" />
+    <Property Id="ARPPRODUCTICON" Value="elarni.exe" />
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Elarni">
+        <Component Id="Application">
+          <File Id="ElarniExe" Source="$(Bundle)\elarni.exe" KeyPath="yes" />
+        </Component>
+        <Files Include="$(Bundle)\**">
+          <Exclude Files="$(Bundle)\elarni.exe" />
+        </Files>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <!-- Windows Installer requires a per-user key path for a Start menu shortcut. -->
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="StartMenu" Name="Elarni" Target="[#ElarniExe]" WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\Elarni\Installer" Name="StartMenuShortcut" Type="integer"
+                       Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+    <!-- Link handlers and launch-at-login are under the uninstalling user's HKCU. -->
+    <CustomAction Id="Unregister" FileRef="ElarniExe" ExeCommand="--unregister"
+                  Execute="deferred" Impersonate="yes" Return="ignore" />
+    <!-- Installs this build's VPN helper copy during setup, already elevated, so the first
+         connect neither asks for it nor waits for the copy. If it fails, that connect installs it. -->
+    <CustomAction Id="InstallHelper" Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]elarni-core.exe&quot; --install-helper"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+    <!-- The helper copy lives outside this package, in %ProgramFiles%\Elarni VPN Helper. Uninstall
+         stops a running copy, clears a DNS block a stopped one left, and deletes the folder.
+         Upgrades keep it: the new build's InstallHelper replaces the old copy. -->
+    <CustomAction Id="UninstallHelper" Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]elarni-core.exe&quot; --uninstall-helper"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+    <!-- A new install lets the installing account connect without a consent prompt, through the
+         ElarniVPN service (Settings > Connection turns it off). Upgrades keep each account's choice;
+         InstallHelper points an existing service at the new build. -->
+    <CustomAction Id="AllowVPNService" Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]elarni-core.exe&quot; --vpn-service add [UserSID]"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="Unregister" Before="RemoveFiles"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="UninstallHelper" Before="RemoveFiles"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="InstallHelper" After="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="AllowVPNService" After="InstallHelper" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

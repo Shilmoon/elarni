@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Build the daily diagnostic app separately. Never launch or install it."""
+import argparse
+import json
+from pathlib import Path
+import plistlib
+import subprocess
+import time
+
+root = Path(__file__).resolve().parents[1]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--output', type=Path, default=root / '.build/xhttp-diagnostics/macos',
+                    help='Separate Xcode output directory; do not select a running app’s directory.')
+output = parser.parse_args().output.resolve()
+# PlugInKit groups duplicate extensions by their release version. A new build
+# must not compete with older daily builds carrying the same 0.1.0 identity.
+build_number = str(int(time.time()))
+release = next(line.split(':', 1)[1].strip().split('+', 1)[0]
+               for line in (root / 'pubspec.yaml').read_text().splitlines()
+               if line.startswith('version:'))
+diagnostic_version = '.'.join([*release.split('.')[:2], build_number])
+options = {
+    'projectPath': str(root / 'macos/Runner.xcodeproj'),
+    'scheme': 'Runner', 'configuration': 'Debug', 'arch': 'arm64',
+    'derivedDataPath': str(output),
+    'extraArgs': ['ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES',
+                  f'FLUTTER_BUILD_NUMBER={build_number}',
+                  f'FLUTTER_BUILD_NAME={diagnostic_version}',
+                  'ELARNI_DIAGNOSTICS_SUFFIX=-diagnostics',
+                  'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG ELARNI_DIAGNOSTICS'],
+}
+subprocess.run(['xcodebuildmcp', 'macos', 'build', '--json', json.dumps(options)], cwd=root, check=True)
+app = output / 'Build/Products/Debug/Elarni.app'
+subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
+for bundle in [app, app / 'Contents/PlugIns/ElarniPacketTunnel.appex']:
+    info = plistlib.loads((bundle / 'Contents/Info.plist').read_bytes())
+    if (info.get('CFBundleVersion') != build_number or
+            info.get('CFBundleShortVersionString') != diagnostic_version):
+        raise SystemExit(f'Diagnostic build identity mismatch: {bundle}')
+print(f'Diagnostic version: {diagnostic_version} (build {build_number})')
+print(f'Diagnostic app built (not launched): {app}')

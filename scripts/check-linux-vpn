@@ -1,0 +1,529 @@
+#!/usr/bin/env python3
+"""Linux VPN acceptance. All network changes occur in new mount/network/PID namespaces."""
+import argparse
+import base64
+from contextlib import ExitStack
+import concurrent.futures
+import copy
+import http.client
+import http.server
+import ipaddress
+import json
+import os
+from pathlib import Path
+import queue
+import signal
+import socket
+import struct
+import subprocess
+import sys
+import threading
+import tempfile
+import time
+
+BODY = b'elarni-linux-controlled-response'
+# Xray refuses plain VLESS to a public server address, and 192.0.2.0/24 counts as public.
+CLIENT4, PEER4 = '10.212.77.1', '10.212.77.2'
+CLIENT6, PEER6 = 'fd42:726f:7574::1', 'fd42:726f:7574::2'
+TARGET4, TARGET6 = '198.18.77.2', '2001:db8:77::2'
+USER_ID = '00000000-0000-4000-8000-000000000001'
+FIXTURE_FREEDOM = {'finalRules': [{'action':'allow','ip':[TARGET4+'/32',TARGET6+'/128',PEER4+'/32']}]}
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / 'scripts'))
+from tuic_fixture import android_tuic_peer
+
+
+def run(*args):
+    result = subprocess.run(args, capture_output=True, text=True, timeout=15)
+    if result.returncode:
+        raise RuntimeError(f'{args[0]} failed ({result.returncode}): {result.stderr.strip()}')
+    return result.stdout
+
+
+class Core:
+    def __init__(self, core, user=None, group=None, env=None):
+        arguments = [str(core)]
+        if os.environ.get('ELARNI_TRACE') == '1':
+            fd, trace = tempfile.mkstemp(prefix='elarni-sockets-', dir='/run')
+            os.close(fd)
+            arguments = ['strace','-f','-qq','-e','trace=connect,setsockopt,sendto,recvfrom,sendmsg,recvmsg','-s','64','-o',trace,*arguments]
+        diagnostic = subprocess.DEVNULL
+        if os.environ.get('ELARNI_TRACE') == '1':
+            fd, trace = tempfile.mkstemp(prefix='elarni-debug-', dir='/run')
+            diagnostic = os.fdopen(fd, 'w')
+        self.process = subprocess.Popen(arguments, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                        stderr=diagnostic, text=True, user=user, group=group,
+                                        extra_groups=[] if user is not None else None, env=env)
+        if diagnostic != subprocess.DEVNULL: diagnostic.close()
+        self.replies = queue.Queue()
+        self.metrics = {}
+        self.metric_time = 0
+        def read():
+            try:
+                for line in self.process.stdout:
+                    value = json.loads(line)
+                    if value.get('event') == 'metrics':
+                        self.metrics = value['data']
+                        self.metric_time = time.monotonic()
+                    # Log events stream between replies too.
+                    elif 'event' not in value:
+                        self.replies.put(value)
+            except Exception as error:
+                self.replies.put({'success': False, 'error': type(error).__name__})
+            finally:
+                self.replies.put({'success': False, 'error': 'helper_eof'})
+        threading.Thread(target=read, daemon=True).start()
+    def send(self, method, payload):
+        self.process.stdin.write(json.dumps({'apiVersion': 1, 'method': method, 'payload': payload})+'\n')
+        self.process.stdin.flush()
+    def request(self, method, payload, success=True):
+        self.send(method, payload)
+        reply = self.replies.get(timeout=55)
+        if bool(reply.get('success')) != success:
+            raise AssertionError(f'{method}: {reply.get("error", "unexpected success")}; data={reply.get("data")}')
+        return reply.get('data') or {}
+    def close(self):
+        if not self.process.stdin.closed:
+            self.process.stdin.close()
+        try:
+            self.process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait(timeout=3)
+            raise AssertionError('Core survived its owner pipe closing')
+
+
+def dns_packet(kind):
+    labels = b''.join(bytes([len(label)]) + label.encode() for label in 'fixture.elarni.test'.split('.')) + b'\0'
+    return struct.pack('!HHHHHH', 4123, 0x100, 1, 0, 0, 0) + labels + struct.pack('!HH', kind, 1)
+
+
+def peer_main(core, protocol='vless'):
+    counts = {'directHTTP': 0, 'proxyHTTP': 0, 'directUDP': 0, 'proxyUDP': 0, 'physicalDNS': 0, 'profileDNS': 0}
+    parallel_probes = threading.Barrier(32)
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == '/parallel':
+                try:
+                    parallel_probes.wait(timeout=5)
+                except threading.BrokenBarrierError:
+                    self.send_error(503)
+                    return
+            direct = self.client_address[0] in (CLIENT4, CLIENT6)
+            counts['directHTTP' if direct else 'proxyHTTP'] += 1
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(BODY)))
+            self.send_header('X-Elarni-Path', 'direct' if direct else 'proxy')
+            self.end_headers()
+            try:
+                self.wfile.write(BODY)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+        def log_message(self, *_): pass
+    class V6HTTP(http.server.ThreadingHTTPServer):
+        address_family = socket.AF_INET6
+        def server_bind(self):
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            super().server_bind()
+    servers = []
+    for cls, address in ((http.server.ThreadingHTTPServer, '0.0.0.0'), (V6HTTP, '::')):
+        server = cls((address, 18081), Handler)
+        servers.append(server)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    def udp(server):
+        while True:
+            packet, peer = server.recvfrom(65536)
+            direct = peer[0] in (CLIENT4, CLIENT6)
+            counts['directUDP' if direct else 'proxyUDP'] += 1
+            server.sendto((b'direct:' if direct else b'proxy:') + packet, peer)
+    def dns(server, profile):
+        while True:
+            packet, peer = server.recvfrom(65536)
+            if len(packet) < 17: continue
+            end = 12
+            try:
+                while packet[end]: end += packet[end] + 1
+                kind = struct.unpack('!H', packet[end+1:end+3])[0]
+                address = ipaddress.ip_address(TARGET4 if kind == 1 else TARGET6).packed
+                if kind not in (1, 28): continue
+                counts['profileDNS' if profile else 'physicalDNS'] += 1
+                answer = b'\xc0\x0c' + struct.pack('!HHIH', kind, 1, 1, len(address)) + address
+                response = packet[:2] + struct.pack('!HHHHH', 0x8180, 1, 1, 0, 0) + packet[12:end+5] + answer
+                server.sendto(response, peer)
+            except (IndexError, struct.error): continue
+    for family, address in ((socket.AF_INET, '0.0.0.0'), (socket.AF_INET6, '::')):
+        server = socket.socket(family, socket.SOCK_DGRAM)
+        if family == socket.AF_INET6: server.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+        server.bind((address, 18082))
+        threading.Thread(target=udp, args=(server,), daemon=True).start()
+    for port, profile in ((53, False), (15353, True)):
+        server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        server.bind(('0.0.0.0', port))
+        threading.Thread(target=dns, args=(server, profile), daemon=True).start()
+    upstream = Core(core)
+    upstream.request('runXrayFromJson', {'configJSON': json.dumps({
+        'log': {'loglevel': 'debug' if os.environ.get('ELARNI_TRACE') == '1' else 'none'},
+        'inbounds': [{'listen': PEER4, 'port': 18080, 'protocol': 'vless',
+                      'settings': {'decryption': 'none', 'clients': [{'id': USER_ID}]}}],
+        'outbounds': [{'protocol': 'freedom', 'settings': FIXTURE_FREEDOM}],
+    })})
+    try:
+        with ExitStack() as fixtures:
+            outbound = None
+            if protocol.startswith('tuic-'):
+                port, certificate = fixtures.enter_context(android_tuic_peer(ROOT, listen_host=PEER4, listen_port=18080))
+                outbound = {'tag': 'proxy', 'protocol': 'tuic', 'settings': {
+                    'address': PEER4, 'port': port, 'uuid': USER_ID, 'password': 'synthetic-tuic-only',
+                    'udpRelayMode': protocol.removeprefix('tuic-')},
+                    'streamSettings': {'security': 'tls', 'tlsSettings': {
+                        'serverName': 'tuic-fixture.example', 'alpn': ['h3'], 'disableSystemRoot': True,
+                        'certificates': [{'usage': 'verify', 'certificate': base64.b64decode(certificate).decode().splitlines()}]}}}
+            print(json.dumps({'ready': True, 'outbound': outbound}), flush=True)
+            for line in sys.stdin:
+                if line.strip() == 'counts': print(json.dumps(counts), flush=True)
+    finally:
+        upstream.close()
+
+
+def check_http(address, expected='proxy', interface=None, allowed=True):
+    connection = http.client.HTTPConnection(address, 18081, timeout=3)
+    if interface:
+        family = socket.AF_INET if ':' not in address else socket.AF_INET6
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, interface.encode()+b'\0')
+        connection.sock = sock
+        try:
+            sock.connect((address, 18081))
+        except OSError:
+            sock.close()
+            if allowed: raise
+            return
+    try:
+        connection.request('GET', '/fixture')
+        response = connection.getresponse()
+        assert allowed, 'Physical bypass escaped enforced routes'
+        assert response.status == 200 and response.read() == BODY, 'Incorrect controlled response'
+        assert response.getheader('X-Elarni-Path') == expected, 'Traffic used the wrong path'
+    except (OSError, http.client.HTTPException):
+        if allowed: raise
+    finally:
+        connection.close()
+
+
+def check_udp(address, expected='proxy'):
+    family = socket.AF_INET if ':' not in address else socket.AF_INET6
+    with socket.socket(family, socket.SOCK_DGRAM) as client:
+        client.settimeout(3)
+        client.sendto(b'elarni-udp-fixture', (address, 18082))
+        assert client.recv(65536) == expected.encode()+b':elarni-udp-fixture', 'UDP used the wrong path'
+
+
+def check_dns(address, kind):
+    family = socket.AF_INET if ':' not in address else socket.AF_INET6
+    packet = dns_packet(kind)
+    with socket.socket(family, socket.SOCK_DGRAM) as client:
+        client.settimeout(3)
+        client.sendto(packet, (address, 53))
+        answer = client.recv(65536)
+    expected = ipaddress.ip_address(TARGET4 if kind == 1 else TARGET6).packed
+    assert answer[:2] == packet[:2] and answer.endswith(expected), 'Wrong DNS response/family'
+
+
+def wait_sessions(owner, kind, count=0):
+    started=time.monotonic()
+    quiet=None
+    while time.monotonic()<started+12:
+        if owner.metric_time>started and owner.metrics.get('active'+kind+'Sessions')==count:
+            quiet=quiet or time.monotonic()
+            if time.monotonic()-quiet>=2: return
+        else: quiet=None
+        time.sleep(.1)
+    raise AssertionError('Session counter did not settle: '+json.dumps(owner.metrics))
+
+
+def check_limits(owner):
+    for address in (TARGET4,TARGET6):
+        wait_sessions(owner,'Tcp')
+        with socket.create_connection((address,18081),timeout=2) as held:
+            held.sendall(b'GET / HTTP/1.1\r\n')
+            stop=threading.Event()
+            def keep_active():
+                while not stop.wait(.1):
+                    try: held.sendall(b'X-Fixture: hold\r\n')
+                    except OSError: return
+            active=threading.Thread(target=keep_active,daemon=True);active.start()
+            try:
+                wait_sessions(owner,'Tcp',1)
+                check_http(address,allowed=False)
+            finally:
+                stop.set();active.join(timeout=1)
+        wait_sessions(owner,'Tcp')
+        check_http(address)
+        wait_sessions(owner,'Udp')
+        family=socket.AF_INET if ':' not in address else socket.AF_INET6
+        with socket.socket(family,socket.SOCK_DGRAM) as first, socket.socket(family,socket.SOCK_DGRAM) as second:
+            first.settimeout(2);second.settimeout(.2)
+            first.sendto(b'capacity',(address,18082))
+            assert first.recv(1024)==b'proxy:capacity'
+            second.sendto(b'capacity',(address,18082))
+            try:
+                second.recv(1024)
+                raise AssertionError('UDP admission limit was exceeded')
+            except socket.timeout: pass
+            wait_sessions(owner,'Udp')
+            second.settimeout(2);second.sendto(b'reused',(address,18082))
+            assert second.recv(1024)==b'proxy:reused'
+    wait_sessions(owner,'Udp')
+    assert owner.metrics['uplinkBytes']>0 and owner.metrics['downlinkBytes']>0
+    assert owner.metrics['memoryLimitBytes']==64*1024*1024
+
+
+def resource_state():
+    return {
+        'links': [link['ifname'] for link in json.loads(run('ip', '-j', 'link')) if link['ifname'].startswith('rv') and len(link['ifname']) == 14],
+        'rules4': [row for row in json.loads(run('ip', '-j', '-4', 'rule')) if row.get('protocol') in ('186', 186, 'bgp')],
+        'rules6': [row for row in json.loads(run('ip', '-j', '-6', 'rule')) if row.get('protocol') in ('186', 186, 'bgp')],
+        'tables': [item['table']['name'] for item in json.loads(run('nft', '-j', 'list', 'tables'))['nftables'] if 'table' in item and item['table']['name'].startswith('rv')],
+    }
+
+
+def wait_clean():
+    deadline = time.monotonic()+12
+    while time.monotonic() < deadline:
+        state = resource_state()
+        if not any(state.values()): return
+        time.sleep(.1)
+    raise AssertionError('Owned resources survived cleanup: '+json.dumps(state))
+
+
+def setup_isolation():
+    original = os.environ.get('ELARNI_ORIGINAL_NETNS')
+    if not original or str(os.stat('/proc/self/ns/net').st_ino) == original:
+        raise SystemExit('Refusing network tests outside the newly created namespace')
+    run('mount', '--make-rprivate', '/')
+    run('mount', '-t', 'tmpfs', '-o', 'mode=755', 'elarni-test-run', '/run')
+    run('mount', '-t', 'sysfs', '-o', 'ro,nosuid,nodev,noexec', 'sysfs', '/sys')
+    Path('/run/netns').mkdir()
+    run('ip', 'link', 'set', 'lo', 'up')
+    run('ip', 'netns', 'add', 'elarni-peer')
+    run('ip', 'link', 'add', 'rvclient', 'type', 'veth', 'peer', 'name', 'rvserver')
+    run('ip', 'link', 'set', 'rvserver', 'netns', 'elarni-peer')
+    run('ip', 'addr', 'add', CLIENT4+'/30', 'dev', 'rvclient')
+    run('ip', '-6', 'addr', 'add', CLIENT6+'/64', 'dev', 'rvclient', 'nodad')
+    run('ip', 'link', 'set', 'rvclient', 'up')
+    peer = ('ip', 'netns', 'exec', 'elarni-peer')
+    run(*peer, 'ip', 'link', 'set', 'lo', 'up')
+    run(*peer, 'ip', 'addr', 'add', PEER4+'/30', 'dev', 'rvserver')
+    run(*peer, 'ip', '-6', 'addr', 'add', PEER6+'/64', 'dev', 'rvserver', 'nodad')
+    run(*peer, 'ip', 'link', 'set', 'rvserver', 'up')
+    run(*peer, 'ip', 'addr', 'add', TARGET4+'/32', 'dev', 'lo')
+    run(*peer, 'ip', '-6', 'addr', 'add', TARGET6+'/128', 'dev', 'lo', 'nodad')
+    run('ip', 'route', 'add', '198.18.77.0/24', 'via', PEER4)
+    run('ip', '-6', 'route', 'add', '2001:db8:77::/64', 'via', PEER6)
+    # Bind a fixture over the actual resolver target in this private mount
+    # namespace. Ubuntu may use resolvconf or systemd-resolved symlinks.
+    resolved = Path('/etc/resolv.conf').resolve()
+    if resolved.is_relative_to('/run'):
+        resolved.parent.mkdir(parents=True,exist_ok=True);resolved.touch()
+    resolver=Path('/run/elarni-resolv.conf')
+    resolver.write_text('nameserver '+PEER4+'\n')
+    run('mount','--bind',str(resolver),str(resolved))
+
+
+def isolated_main(core, selected, protocol='vless'):
+    setup_isolation()
+    peer = subprocess.Popen(['ip','netns','exec','elarni-peer',sys.executable,str(Path(__file__).resolve()),'--peer','--core',str(core),'--protocol',protocol],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    def counts():
+        peer.stdin.write('counts\n'); peer.stdin.flush()
+        return json.loads(peer.stdout.readline())
+    initial = peer.stdout.readline()
+    if not initial or not json.loads(initial).get('ready'):
+        raise AssertionError('Controlled peer failed: '+peer.stderr.read())
+    config = {
+        'log': {'loglevel': 'debug' if os.environ.get('ELARNI_TRACE') == '1' else 'none'},
+        'inbounds': [{'protocol': 'tun', 'port': 0}, {'protocol': 'socks', 'listen': '127.0.0.1', 'port': 18090}],
+        'outbounds': [
+            {'tag': 'proxy', 'protocol': 'vless', 'settings': {'vnext': [{'address': PEER4, 'port': 18080, 'users': [{'id': USER_ID, 'encryption': 'none'}]}]}},
+            {'tag': 'direct', 'protocol': 'freedom', 'settings': FIXTURE_FREEDOM},
+        ],
+        'dns': {'servers': [{'address': PEER4, 'port': 15353}]},
+    }
+    if protocol.startswith('tuic-'):
+        config['outbounds'][0] = json.loads(initial)['outbound']
+    print('Tunnel protocol: ' + protocol, flush=True)
+    policy = {'includedRoutes':[TARGET4+'/32',TARGET6+'/128'], 'excludedRoutes':[], 'includeAllNetworks':False,'enforceRoutes':False,'hideVPNIcon':False}
+    owners = []
+    passed = []
+    trace = tempfile.TemporaryFile(mode='w+')
+    capture = subprocess.Popen(['tcpdump','--immediate-mode','-nn','-l','-i','any','-c','160','tcp port 18080 or tcp port 18081 or udp'],stdout=trace,stderr=trace,text=True)
+    try:
+        check_http(TARGET4, 'direct'); check_http(TARGET6, 'direct')
+        check_udp(TARGET4, 'direct'); check_udp(TARGET6, 'direct')
+        for case in selected:
+            owner = Core(core); owners.append(owner)
+            current, routes = copy.deepcopy(config), copy.deepcopy(policy)
+            if case == 'include-all': routes['includeAllNetworks'] = True
+            if case.startswith('block-'): routes['blockWithoutVPN'] = True
+            if case == 'enforcement': routes['enforceRoutes'] = True
+            if case == 'exclusions':
+                routes['includedRoutes'] = ['198.18.77.0/24', '2001:db8:77::/64']
+                routes['excludedRoutes'] = [TARGET4+'/32', TARGET6+'/128']
+            if case.startswith('per-app-'):
+                process = str(Path(sys.executable).resolve())
+                if case == 'per-app-name': process = Path(process).name
+                if case == 'per-app-folder': process = str(Path(process).parent)+'/'
+                if case == 'per-app-case': process = process.upper()
+                current['routing'] = {'rules': [{'type':'field','process':[process],'outboundTag':'direct'}]}
+                if case.startswith('per-app-only'):
+                    if case=='per-app-only-other': process='/elarni-fixture/not-running'
+                    current['routing']={'rules':[
+                        {'type':'field','process':[process],'outboundTag':'proxy'},
+                        {'type':'field','network':'tcp,udp','outboundTag':'direct'}]}
+            if case=='session-limits':
+                current['stats']={}
+                current['policy']={'levels':{'0':{'connIdle':1}},'system':{'statsInboundUplink':True,'statsInboundDownlink':True}}
+            options = {'configJSON':json.dumps(current),'routePolicy':routes,'reuseSession':True,'streamMetrics':True,'memoryLimitMB':64}
+            if case=='session-limits': options.update(tcpMaxConnections=1,udpMaxConnections=1)
+            if case == 'startup-cancel':
+                owner.send('runVPN', options); owner.close(); wait_clean()
+                passed.append(case); print(case+': passed',flush=True); continue
+            ready = owner.request('runVPN', options)
+            expected = 'direct' if case in ('exclusions','per-app-path','per-app-name','per-app-folder','per-app-only-other') else 'proxy'
+            if case=='session-limits':
+                check_limits(owner)
+                owner.close();wait_clean()
+                passed.append(case);print(case+': passed',flush=True);continue
+            for address in (TARGET4, TARGET6):
+                print(case+': testing TCP/UDP '+address,flush=True)
+                check_http(address,expected); check_udp(address,expected)
+            if case not in ('exclusions',):
+                before = counts()
+                for address in ('127.0.0.1','::1',PEER4):
+                    print(case+': testing DNS '+address,flush=True)
+                    for kind in (1,28): check_dns(address,kind)
+                after = counts()
+                assert after['profileDNS'] > before['profileDNS'], 'DNS did not use the configured profile server'
+                assert after['physicalDNS'] == before['physicalDNS'], 'Application DNS bypassed capture'
+            if case == 'enforcement':
+                check_http(TARGET4, interface='rvclient', allowed=False)
+                check_http(TARGET6, interface='rvclient', allowed=False)
+            if case == 'reconnect':
+                for limit in (128,0):
+                    owner.request('stopVPN',{}); wait_clean()
+                    options['memoryLimitMB']=limit
+                    restarted=owner.request('runVPN',options)
+                    assert restarted['helperPid']==ready['helperPid'], 'Reconnect replaced the elevated owner'
+                    assert restarted['adapter']!=ready['adapter'], 'Reconnect reused an unreaped interface'
+                    ready=restarted
+                    check_http(TARGET4); check_http(TARGET6)
+                    check_udp(TARGET4); check_udp(TARGET6)
+                    for kind in (1,28):check_dns('127.0.0.1',kind)
+                if protocol == 'vless':
+                    probe=Core(core);owners.append(probe)
+                    result=probe.request('pingEndpoint',{'address':PEER4,'port':18080,'timeout':2})
+                    assert result['delay']>=0
+                    probe.close()
+            if case=='physical-probes':
+                probe_config={'log':{'loglevel':'none'},'inbounds':[{'protocol':'http','listen':'127.0.0.1','port':18091}],
+                              'outbounds':[{'protocol':'freedom','settings':FIXTURE_FREEDOM}]}
+                before=counts()
+                for address in (TARGET4,TARGET6,'fixture.elarni.test'):
+                    print(case+': probing '+address,flush=True)
+                    probe=Core(core);owners.append(probe)
+                    authority='['+address+']' if ':' in address else address
+                    result=probe.request('ping',{'configJSON':json.dumps(probe_config),'proxy':'http://127.0.0.1:18091',
+                        'url':'http://'+authority+':18081/fixture','method':'GET','mode':'default','timeout':3,
+                        'expectedStatus':200,'expectedBody':BODY.decode()})
+                    assert result['delay']>=0
+                    probe.close()
+                after=counts()
+                assert after['directHTTP']==before['directHTTP']+3 and after['proxyHTTP']==before['proxyHTTP'], 'Physical HTTP probe traversed VPN'
+                assert after['physicalDNS']>before['physicalDNS'], 'Physical probe did not use the OS resolver'
+                assert resource_state()['links']==[ready['adapter']], 'Probe changed active tunnel'
+                def parallel_probe(index):
+                    probe=Core(core)
+                    try:
+                        port=18100+index
+                        config=copy.deepcopy(probe_config)
+                        config['inbounds'][0]['port']=port
+                        return probe.request('ping',{'configJSON':json.dumps(config),
+                            'proxy':f'http://127.0.0.1:{port}','url':f'http://{TARGET4}:18081/parallel',
+                            'method':'GET','mode':'default','timeout':10,
+                            'expectedStatus':200,'expectedBody':BODY.decode()})
+                    finally:
+                        probe.close()
+                with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:
+                    results=list(pool.map(parallel_probe,range(32)))
+                assert all(result['delay']>=0 for result in results), 'Concurrent physical probes failed'
+                assert resource_state()['links']==[ready['adapter']], 'Bulk probe changed active tunnel'
+                probe=Core(core);owners.append(probe)
+                probe.request('pingEndpoint',{'address':PEER4,'port':18089,'timeout':2},success=False)
+                probe.close()
+            if case == 'supervisor-death': os.kill(ready['helperPid'],signal.SIGKILL)
+            elif case in ('worker-death', 'block-worker-death'):
+                children={pid for task in Path(f'/proc/{ready["helperPid"]}/task').iterdir() for pid in (task/'children').read_text().split()}
+                workers=[int(pid) for pid in children if b'--linux-worker' in Path(f'/proc/{pid}/cmdline').read_bytes()]
+                assert len(workers)==1,'Could not identify owned worker'
+                os.kill(workers[0],signal.SIGKILL)
+            elif case in ('launcher-death', 'block-launcher-death'): owner.process.kill()
+            else: owner.close()
+            if case.endswith('-death'): owner.process.wait(timeout=15)
+            if case.startswith('block-'):
+                # Block traffic without VPN fails closed: nothing leaves outside the dead tunnel...
+                check_http(TARGET4, allowed=False); check_http(TARGET6, allowed=False)
+                assert resource_state()['tables'], 'The block was removed with the tunnel'
+                # ...until the next connect reaps it, and a requested stop lifts it.
+                owner = Core(core); owners.append(owner)
+                owner.request('runVPN', options)
+                check_http(TARGET4); check_http(TARGET6)
+                owner.request('stopVPN', {}); owner.close()
+            wait_clean()
+            check_http(TARGET4,'direct');check_http(TARGET6,'direct')
+            passed.append(case);print(case+': passed',flush=True)
+    except BaseException:
+        print('Failure state:',json.dumps(resource_state()),flush=True)
+        print(run('ip','-s','link'),flush=True)
+        print(run('ip','-4','rule'),run('ip','-6','rule'),flush=True)
+        print('Peer counters:',counts(),flush=True)
+        print('Runtime metrics:',[(owner.process.pid,owner.metrics) for owner in owners],flush=True)
+        for trace_path in [*Path('/run').glob('elarni-sockets-*'),*Path('/run').glob('elarni-debug-*')]:
+            print(trace_path.name,trace_path.read_text(),flush=True)
+        for interface in ['all','default','rvclient',*resource_state()['links']]:
+            print('rp_filter',interface,Path('/proc/sys/net/ipv4/conf',interface,'rp_filter').read_text().strip(),flush=True)
+        raise
+    finally:
+        capture.terminate()
+        capture.wait(timeout=3)
+        trace.seek(0)
+        if len(passed)!=len(selected):print(trace.read(),flush=True)
+        trace.close()
+        for owner in reversed(owners): owner.close()
+        peer.stdin.close()
+        try: peer.wait(timeout=10)
+        except subprocess.TimeoutExpired: peer.kill();peer.wait(timeout=3)
+    assert len(passed)==len(selected),'Incomplete acceptance run'
+    print(json.dumps({'passed':passed,'failed':0,'skipped':0}),flush=True)
+
+
+if __name__ == '__main__':
+    from check_report import record_check
+    record_check(ROOT)
+    cases=['graceful','reconnect','startup-cancel','include-all','enforcement','exclusions','per-app-path','per-app-name','per-app-folder','per-app-case','per-app-only-selected','per-app-only-other','session-limits','physical-probes','worker-death','supervisor-death','launcher-death','block-worker-death','block-launcher-death']
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--core',type=Path,default=ROOT/'build/linux/x64/release/bundle/elarni-core')
+    parser.add_argument('--case',choices=cases,action='append')
+    parser.add_argument('--protocol',choices=['vless','tuic-native','tuic-quic'],default='vless')
+    parser.add_argument('--trace',action='store_true')
+    parser.add_argument('--isolated',action='store_true',help=argparse.SUPPRESS)
+    parser.add_argument('--peer',action='store_true',help=argparse.SUPPRESS)
+    args=parser.parse_args()
+    if args.trace: os.environ['ELARNI_TRACE']='1'
+    if args.peer: peer_main(args.core,args.protocol)
+    elif args.isolated: isolated_main(args.core,args.case or cases,args.protocol)
+    else:
+        if sys.platform!='linux' or os.geteuid()!=0: raise SystemExit('Run with sudo on the disposable Linux test machine.')
+        if not args.core.is_file(): raise SystemExit('Build the Linux core first.')
+        os.environ['ELARNI_ORIGINAL_NETNS']=str(os.stat('/proc/self/ns/net').st_ino)
+        os.execvp('unshare',['unshare','--mount','--net','--pid','--fork','--mount-proc',sys.executable,str(Path(__file__).resolve()),'--isolated',*sys.argv[1:]])

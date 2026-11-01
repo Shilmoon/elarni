@@ -1,0 +1,511 @@
+part of 'desktop_proxy.dart';
+
+extension _ProxyRuntime on DesktopProxy {
+  Future<CatalogMap> _connect() async {
+    if (_operation != null ||
+        !{'disconnected', 'prepared', 'failed'}.contains(_state))
+      throw desktopError('busy');
+    final done = _operation = Completer<void>(), generation = _generation;
+    try {
+      await _stopProcess();
+      _checkGeneration(generation);
+      if (Platform.isWindows || Platform.isLinux) {
+        await _clearStaleGuard();
+        _checkGeneration(generation);
+      }
+      final candidate = _catalog!.copy();
+      await _start(candidate, generation);
+      candidate.recordSuccess(candidate.selected!);
+      await _save({'version': 1, 'committed': candidate.data});
+      _checkGeneration(generation);
+      _catalog = candidate;
+      _listener?.call(null);
+      return {'state': _state};
+    } on Object catch (error) {
+      await _stopProcess();
+      // A newer generation (sleep, probe interruption) can cancel this connect
+      // after it set connecting or connected; the runtime is stopped either way.
+      if (generation == _generation ||
+          {'connecting', 'connected'}.contains(_state))
+        _state = 'failed';
+      _checkGeneration(generation);
+      if (error is PlatformException) rethrow;
+      throw desktopError('connection_failed');
+    } finally {
+      _operation = null;
+      done.complete();
+    }
+  }
+
+  // Another process can empty the geofile cache under the catalog. Prepare the
+  // selected route's files again once, as Refresh routing data would.
+  Future<CatalogMap> _connectPreparingLostAssets() async {
+    try {
+      return await _connect();
+    } on PlatformException catch (error) {
+      if (error.code != 'assets_missing') rethrow;
+    }
+    final lost = DesktopProxy._runtimeAssets(_catalog!)['assetRevision'];
+    final stops = _linkStopGeneration;
+    while (_operation != null) await _operation!.future;
+    try {
+      await _mutate((candidate) async {
+        for (final route in candidate.routes.where(
+          (route) => route['assetRevision'] == lost,
+        ))
+          await _refreshGeofiles(candidate, route['id']! as String);
+        return {};
+      });
+    } on PlatformException catch (error) {
+      if (error.code == 'cancelled') rethrow;
+      // The routing profile's own refresh reports the download error.
+      throw desktopError('assets_missing');
+    }
+    // A Stop while the old revision was being retired still wins.
+    if (stops != _linkStopGeneration) throw desktopError('cancelled');
+    return _connect();
+  }
+
+  // A helper killed during this boot leaves its fail-closed DNS guard (on Linux,
+  // a redirect to its dead resolver), which blocks every lookup, route
+  // planning's included, until a helper removes it.
+  Future<void> _clearStaleGuard() async {
+    if ((await _storage('staleVPNGuard', {}))['stale'] != true) return;
+    try {
+      await _native('clearVPNGuard', {}, timeout: const Duration(seconds: 90));
+    } on PlatformException catch (error) {
+      if (error.code == 'cancelled') rethrow;
+      throw desktopError('vpn_guard_stale');
+    }
+  }
+
+  Future<void> _start(
+    DesktopCatalog catalog,
+    int generation, {
+    String? preparedConfig,
+  }) async {
+    if (catalog.selected == null) throw desktopError('invalid_profile');
+    _state = 'connecting';
+    final config =
+        preparedConfig ??
+        await _prepareConfig(catalog, catalog.node(catalog.selected!));
+    _checkGeneration(generation);
+    // The core reports a taken port like any start failure, which would blame
+    // the server and send failover through every backup.
+    for (final port in [
+      catalog.settings.socksPort,
+      if (catalog.settings.httpInboundEnabled) catalog.settings.httpPort,
+    ]) {
+      try {
+        await (await ServerSocket.bind(
+          catalog.settings.allowLAN
+              ? InternetAddress.anyIPv4
+              : InternetAddress.loopbackIPv4,
+          port,
+        )).close();
+      } on SocketException catch (error) {
+        // Linux EACCES only means a low port, which the elevated VPN core may
+        // bind. The local proxy core runs as this user and would fail the same way.
+        if (error.osError?.errorCode != 13 || !catalog.settings.xrayTunEnabled)
+          throw desktopError('listener_unavailable');
+      }
+    }
+    await _native(
+      catalog.settings.xrayTunEnabled ? 'runVPN' : 'runXrayFromJson',
+      {
+        'configJSON': config,
+        'memoryLimitMB': catalog.settings.memoryLimitMB,
+        'logLevel': catalog.settings.logLevel,
+        'streamMetrics': true,
+        'recordDiagnostics': catalog.settings.recordDiagnostics,
+        if (catalog.settings.xrayTunEnabled) ...{
+          'tcpMaxConnections': catalog.settings.tcpMaxConnections,
+          'udpMaxConnections': catalog.settings.udpMaxConnections,
+          'routePolicy': {
+            'includedRoutes': catalog.settings.includedRoutes,
+            'excludedRoutes': catalog.settings.excludedRoutes,
+            'includeAllNetworks': catalog.settings.includeAllNetworks,
+            'blockWithoutVPN': catalog.settings.blockWithoutVPN,
+            'enforceRoutes': catalog.settings.enforceRoutes,
+            'hideVPNIcon': catalog.settings.hideVPNIcon,
+          },
+        },
+        ...DesktopProxy._runtimeAssets(catalog),
+      },
+    );
+    _checkGeneration(generation);
+    for (final port in [
+      catalog.settings.socksPort,
+      if (catalog.settings.httpInboundEnabled) catalog.settings.httpPort,
+    ]) {
+      final socket = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        port,
+        timeout: const Duration(seconds: 2),
+      );
+      socket.destroy();
+      _checkGeneration(generation);
+    }
+    if (_process == null) throw desktopError('connection_failed');
+    _state = 'connected';
+    _connectedAt = DateTime.now();
+    _liveness = _livenessAt = null;
+  }
+
+  Future<CatalogMap> _native(
+    String method,
+    CatalogMap payload, {
+    Duration? timeout,
+  }) async {
+    final generation = _generation;
+    final session = method == 'runVPN' || method == 'stopVPN';
+    final request = jsonEncode({
+      'apiVersion': 1,
+      'method': method,
+      'payload': {...payload, if (method == 'runVPN') 'reuseSession': true},
+    });
+    if (utf8.encode(request).length > 16 * 1024 * 1024)
+      throw desktopError('request_too_large');
+    final runtime = {'runXrayFromJson', 'runVPN'}.contains(method),
+        lease = method == 'acquireCatalog',
+        storage = {
+          'loadCatalog',
+          'saveCatalog',
+          'staleVPNGuard',
+        }.contains(method);
+    final cancellable = !runtime && !session && !lease && !storage;
+    // Each Windows core launch costs about 0.5 s, and a connect saves twice.
+    // Linux keeps one-shot storage cores for its Secret Service sessions.
+    final leased = storage && Platform.isWindows && _lease != null;
+    final reused = session && _vpnSession != null || leased;
+    final launch = leased
+        ? _lease!
+        : reused
+        ? _vpnSession!
+        : _startProcess(corePath);
+    if (session) _vpnSession = launch;
+    if (runtime) _process = launch;
+    if (lease) _lease = launch;
+    final Process process;
+    try {
+      process = await launch;
+    } on Object {
+      if (runtime) _process = null;
+      if (lease) _lease = null;
+      if (_vpnSession == launch) _vpnSession = null;
+      throw desktopError('native_unavailable');
+    }
+    if (lease) _leaseOutput = StreamIterator(process.stdout);
+    if (!reused)
+      unawaited(process.stderr.drain<void>().catchError((Object _) {}));
+    if (cancellable) _workers.add(process);
+    var retained = leased;
+    if (!reused)
+      unawaited(
+        process.exitCode.then((_) {
+          if (_vpnSession == launch) _vpnSession = null;
+          if (runtime && _process == launch) {
+            _process = null;
+            // _stopProcess reaps on purpose; its caller reports the outcome.
+            if (_state == 'connected' && _stopping == null) {
+              _state = 'failed';
+              // The listener shows text; codes are for exceptions.
+              // Settings edits reconnect, so the catalog matches the running session.
+              _listener?.call(
+                !session
+                    ? 'Connection stopped unexpectedly. Reconnect to retry.'
+                    : _catalog?.settings.blockWithoutVPN == true
+                    ? 'Connection stopped unexpectedly. Block traffic without VPN keeps traffic blocked until you reconnect, or use Repair VPN setup to lift the block.'
+                    // A killed helper can leave its DNS guard; Repair VPN setup clears it.
+                    : 'Connection stopped unexpectedly. Reconnect to retry; if sites stay unreachable, use Repair VPN setup.',
+              );
+            }
+          }
+          if (lease && retained && _lease == launch && !_disposed) {
+            _storageLost = true;
+            unawaited(
+              _disconnect().then((_) {
+                _state = 'failed';
+                _listener?.call(desktopError('storage_unavailable').message);
+              }),
+            );
+          }
+        }),
+      );
+    try {
+      if (cancellable) _checkGeneration(generation);
+      if (runtime) {
+        _metricsProcess = process;
+        _latestMetrics = {};
+        _metricsAt = null;
+      }
+      if (session) _vpnReplyProcess = process;
+      final response =
+          (lease || leased
+                  ? _readLine(_leaseOutput!)
+                  : reused
+                  ? (_vpnReply = Completer<CatalogMap>()).future
+                  : runtime
+                  ? _readRuntimeResponse(process, session: session)
+                  : _readResponse(process))
+              .timeout(
+                timeout ??
+                    (method == 'fetchSubscription'
+                        ? const Duration(seconds: 35)
+                        : method == 'prepareRoutingAssets'
+                        ? const Duration(seconds: 370)
+                        : method == 'runVPN'
+                        ? const Duration(seconds: 120)
+                        : _replyTimeout),
+              );
+      // A lease that missed a reply can no longer pair replies with requests;
+      // its exit reports the storage as lost.
+      if (leased)
+        unawaited(
+          response.then<void>(
+            (_) {},
+            onError: (Object _) {
+              process.kill();
+            },
+          ),
+        );
+      final write = Future<void>(() async {
+        process.stdin.writeln(request);
+        await process.stdin.flush();
+      });
+      final values = await Future.wait<Object?>([
+        response,
+        write,
+      ], eagerError: true);
+      final reply = catalogMap(values.first);
+      if (reply['success'] != true) {
+        final code = reply['error'];
+        const safe = {
+          'invalid_assets',
+          'invalid_geodata',
+          'missing_geodata',
+          'assets_missing',
+          'assets_unavailable',
+          'approval_required',
+          'invalid_target',
+          'storage_busy',
+          'storage_corrupt',
+          'storage_unavailable',
+          'storage_conflict',
+          'invalid_catalog',
+          'invalid_configuration',
+          'unsupported_profile',
+          'connection_failed',
+          'elevation_denied',
+          'elevation_failed',
+          'vpn_firewall_unavailable',
+          'vpn_guard_busy',
+          'invalid_url',
+          'fetch_failed',
+          'dns_failed',
+          'provider_unreachable',
+          'provider_error',
+          'rate_limited',
+          'subscription_denied',
+          'subscription_unavailable',
+          'hwid_limit',
+          'hwid_required',
+          'invalid_qr_image',
+          'invalid_request',
+          'invalid_backup',
+          'invalid_backup_password',
+          'recording_empty',
+          'recording_failed',
+        };
+        final failure = safe.contains(code)
+            ? code! as String
+            : runtime
+            ? 'connection_failed'
+            : 'operation_failed';
+        throw PlatformException(
+          code: failure,
+          message: desktopError(
+            failure,
+            missing: (reply['data'] as Map?)?['missing'],
+          ).message,
+          details: method == 'ping' ? reply['data'] : null,
+        );
+      }
+      if (runtime || session || lease || leased) {
+        retained = true;
+      } else if (await process.exitCode.timeout(const Duration(seconds: 3)) !=
+          0) {
+        throw desktopError('operation_failed');
+      }
+      return catalogMap(reply['data'] ?? {});
+    } on Object catch (error) {
+      // A worker ended by Stop must stop its caller's loop, not read as failed.
+      if (cancellable && generation != _generation)
+        throw desktopError('cancelled');
+      if (error is PlatformException) rethrow;
+      throw desktopError('operation_failed');
+    } finally {
+      _workers.remove(process);
+      if (!retained) {
+        if (timeout != null && !runtime && !lease) process.kill();
+        await _reap(launch);
+        if (_process == launch) _process = null;
+        if (_lease == launch) _lease = null;
+        if (_vpnSession == launch) _vpnSession = null;
+      }
+    }
+  }
+
+  Future<CatalogMap> _readResponse(Process process) async {
+    final output = StreamIterator(process.stdout);
+    try {
+      return await _readLine(output);
+    } finally {
+      await output.cancel();
+    }
+  }
+
+  // The core sends nothing after a reply until the next request.
+  Future<CatalogMap> _readLine(StreamIterator<List<int>> output) async {
+    final bytes = BytesBuilder(copy: false);
+    while (await output.moveNext()) {
+      final chunk = output.current;
+      if (bytes.length + chunk.length > 16 * 1024 * 1024 + 1)
+        throw desktopError('operation_failed');
+      final end = chunk.indexOf(10);
+      bytes.add(end < 0 ? chunk : chunk.sublist(0, end));
+      if (end >= 0)
+        return catalogMap(jsonDecode(utf8.decode(bytes.takeBytes())));
+    }
+    throw desktopError('operation_failed');
+  }
+
+  Future<CatalogMap> _readRuntimeResponse(
+    Process process, {
+    bool session = false,
+  }) {
+    final ready = Completer<CatalogMap>();
+    if (session) _vpnReply = ready;
+    final bytes = BytesBuilder(copy: false);
+    void failed() {
+      if (!ready.isCompleted)
+        ready.completeError(desktopError('operation_failed'));
+      if (session &&
+          _vpnReplyProcess == process &&
+          _vpnReply != null &&
+          !_vpnReply!.isCompleted) {
+        _vpnReply!.completeError(desktopError('operation_failed'));
+        _vpnReply = null;
+      }
+      process.kill();
+    }
+
+    process.stdout.listen(
+      (chunk) {
+        try {
+          var offset = 0;
+          while (offset < chunk.length) {
+            final end = chunk.indexOf(10, offset);
+            final stop = end < 0 ? chunk.length : end;
+            if (bytes.length + stop - offset > 16 * 1024 * 1024)
+              throw const FormatException();
+            bytes.add(chunk.sublist(offset, stop));
+            offset = end < 0 ? chunk.length : end + 1;
+            if (end < 0) continue;
+            final value = catalogMap(
+              jsonDecode(utf8.decode(bytes.takeBytes())),
+            );
+            final event = value['event'];
+            if (event != 'metrics' && event != 'logs' && session) {
+              final pending = _vpnReply;
+              if (_vpnReplyProcess != process ||
+                  pending == null ||
+                  pending.isCompleted)
+                throw const FormatException();
+              _vpnReply = null;
+              pending.complete(value);
+            } else if (!ready.isCompleted && !session) {
+              ready.complete(value);
+            } else if (event == 'logs' && value['data'] is Map) {
+              _appendLogs(catalogMap(value['data']));
+            } else {
+              if (event != 'metrics' || value['data'] is! Map)
+                throw const FormatException();
+              if (_metricsProcess == process) {
+                _latestMetrics = catalogMap(value['data']);
+                _metricsAt = DateTime.now();
+              }
+            }
+          }
+        } on Object {
+          failed();
+        }
+      },
+      onError: (Object _) => failed(),
+      onDone: () {
+        failed();
+      },
+      cancelOnError: true,
+    );
+    return ready.future;
+  }
+
+  Future<void> _reap(Future<Process>? launch) async {
+    if (launch == null) return;
+    final Process process;
+    try {
+      process = await launch;
+    } on Object {
+      return;
+    }
+    unawaited(process.stdin.close().catchError((Object _) {}));
+    try {
+      // The VPN broker waits for its elevated child and owned network cleanup.
+      await process.exitCode.timeout(_helperExitGrace);
+    } on TimeoutException {
+      process.kill();
+      try {
+        await process.exitCode.timeout(const Duration(seconds: 3));
+      } on TimeoutException {
+        // Shutdown and later stops must still complete.
+      }
+    }
+  }
+
+  Future<void> _stopProcess() => _stopping ??= () async {
+    final launch = _process;
+    if (launch != null &&
+        launch == _vpnSession &&
+        _vpnReply == null &&
+        !_disposed &&
+        !_storageLost) {
+      try {
+        await _native('stopVPN', {});
+      } on Object {
+        // The helper's routes and guards end with its broker. A failed stop
+        // must not leave Stop, intent and reconnect stuck behind it.
+        await _reap(launch);
+        if (_vpnSession == launch) _vpnSession = null;
+      }
+    } else {
+      await _reap(launch);
+      if (_vpnSession == launch) _vpnSession = null;
+    }
+    if (_process == launch) _process = null;
+    _metricsProcess = null;
+  }().whenComplete(() => _stopping = null);
+
+  Future<void> _disconnect() async {
+    _cancelCamera?.call();
+    _linkStopGeneration++;
+    _generation++;
+    _state = 'disconnecting';
+    for (final worker in _workers.toList()) {
+      worker.kill();
+    }
+    await _stopProcess();
+    await _operation?.future;
+    await _stopProcess(); // A launch can cross the first cancellation.
+    _state = 'disconnected';
+  }
+}

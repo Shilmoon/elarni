@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Elarni</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Scan a QR code to import a server or subscription.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Connect to local servers and subscriptions you choose, and test their connectivity.</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Configuration</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.json</string>
+				<string>public.plain-text</string>
+				<string>public.yaml</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.elarni.ios.import</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>elarni</string>
+				<string>happ</string>
+				<string>incy</string>
+				<string>vless</string>
+				<string>vmess</string>
+				<string>trojan</string>
+				<string>ss</string>
+				<string>socks</string>
+				<string>socks5</string>
+				<string>hysteria2</string>
+				<string>tuic</string>
+				<string>hy2</string>
+				<string>vpn</string>
+				<string>wireguard</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>tg</string>
+	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<key>ElarniAppGroup</key>
+	<string>group.com.elarni.ios</string>
+	<key>ElarniKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)com.elarni.ios.shared</string>
+	<key>UILaunchScreen</key>
+	<dict/>
+</dict>
+</plist>

@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package xray.proxy.tuic;
+option go_package = "github.com/xtls/xray-core/proxy/tuic";
+
+import "common/net/address.proto";
+
+message ClientConfig {
+  xray.common.net.IPOrDomain address = 1;
+  uint32 port = 2;
+  bytes uuid = 3;
+  string password = 4;
+  string congestion_control = 5;
+  bool udp_stream = 6;
+  int64 heartbeat = 7;
+  bool zero_rtt_handshake = 8;
+}

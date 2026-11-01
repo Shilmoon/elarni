@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Register this portable Elarni bundle for the current desktop user."""
+import argparse
+import os
+from pathlib import Path
+import shutil
+import subprocess
+
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--remove',action='store_true',help='Remove this user’s desktop registration; keep app data.')
+args=parser.parse_args()
+if os.geteuid()==0: raise SystemExit('Run this as your desktop user, without sudo.')
+bundle=Path(__file__).resolve().parent
+root=Path(os.environ.get('XDG_DATA_HOME',str(Path.home()/'.local/share')))
+if not root.is_absolute(): root=Path.home()/'.local/share'
+desktop=root/'applications/com.elarni.Elarni.desktop'
+icon=root/'icons/hicolor/512x512/apps/com.elarni.Elarni.png'
+config=Path(os.environ.get('XDG_CONFIG_HOME',str(Path.home()/'.config')))
+if not config.is_absolute(): config=Path.home()/'.config'
+autostart=config/'autostart/com.elarni.Elarni.desktop'
+executable=str(bundle/'elarni')
+quoted='"'+''.join(('\\'+char if char in '"\\`$' else '%%' if char=='%' else char) for char in executable)+'"'
+if args.remove:
+    desktop.unlink(missing_ok=True);icon.unlink(missing_ok=True)
+    # Launch at login writes the same quoting; an entry for another copy stays.
+    try:
+        if 'Exec='+quoted.replace('\\','\\\\') in autostart.read_text().splitlines(): autostart.unlink()
+    except FileNotFoundError: pass
+else:
+    if any(char in executable for char in '\r\n'): raise SystemExit('Move the bundle to a path without line breaks.')
+    # Desktop files apply string-value escaping before Exec quoting.
+    command=(quoted+' %u').replace('\\','\\\\')
+    template=(bundle/'com.elarni.Elarni.desktop').read_text()
+    content=template.replace('Exec=elarni %u','Exec='+command)
+    desktop.parent.mkdir(parents=True,exist_ok=True)
+    desktop.write_text(content)
+    icon.parent.mkdir(parents=True,exist_ok=True)
+    shutil.copyfile(bundle/'data/elarni.png',icon)
+if shutil.which('update-desktop-database'):
+    subprocess.run(['update-desktop-database',str(desktop.parent)],check=True)
+print('Desktop registration removed.' if args.remove else 'Elarni registered. Keep this bundle at its current location.')

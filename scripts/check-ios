@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$root"
+elarni_python=$(command -v python3 || command -v python)
+if [ -z "${ELARNI_CHECK_REPORT:-}" ]; then
+  exec "$elarni_python" scripts/check_report.py -- sh "$root/scripts/check-ios" "$@"
+fi
+if [ "$#" -ne 1 ]; then
+  echo 'usage: scripts/check-ios SIMULATOR-UDID' >&2
+  exit 2
+fi
+sh scripts/build-ios-native iphonesimulator
+mkdir -p .build/ios/checks
+run=$(mktemp -d "$root/.build/ios/checks/run-XXXXXX")
+xcodebuild -quiet -project ios/Elarni/Elarni.xcodeproj -scheme Elarni \
+  -configuration Debug -destination "platform=iOS Simulator,id=$1" \
+  -derivedDataPath .build/ios/DerivedData -resultBundlePath "$run/Tests.xcresult" \
+  -parallel-testing-enabled NO -collect-test-diagnostics never \
+  CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- test
+xcrun xcresulttool get test-results summary --path "$run/Tests.xcresult" > "$run/summary.json"
+"$elarni_python" - "$run/summary.json" <<'PY'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+data = json.loads(path.read_text())
+print(f"iOS: {data['passedTests']} passed, {data['failedTests']} failed, {data['skippedTests']} skipped")
+print(f"Results: {path.parent}")
+if data['result'] != 'Passed' or data['totalTestCount'] < 21 or data['failedTests'] or data['skippedTests']:
+    raise SystemExit('Incomplete iOS acceptance: expected the native and UI suites, without skips.')
+PY

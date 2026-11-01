@@ -1,0 +1,1530 @@
+{
+  "@@locale": "en",
+  "noLogLinesYet": "No log lines yet. The core records them while it runs.",
+  "loggingOff": "Logging is off. Choose a level to record the core log.",
+  "saveEllipsis": "Save…",
+  "copy": "Copy",
+  "logLevel": "Level",
+  "logNotSaved": "The log could not be saved.",
+  "saved": "Saved",
+  "copied": "Copied",
+  "logLevelNotSaved": "The log level could not be saved.",
+  "logLevelAppliesNextConnection": "The level applies from the next connection.",
+  "close": "Close",
+  "logs": "Logs",
+  "logLevelDebug": "Debug",
+  "logLevelInfo": "Info",
+  "logLevelWarning": "Warning",
+  "logLevelError": "Error",
+  "logLevelOff": "Off",
+  "issueOperationFailedRemedy": "Refresh status and retry the selected server. Export diagnostics if it keeps failing.",
+  "issueOperationFailed": "The connection operation failed.",
+  "issueCancelledRemedy": "Your manual action takes priority.",
+  "issueCancelled": "The operation was cancelled.",
+  "issuePerAppTargetMissingRemedy": "Choose another target for it in Per-app routing.",
+  "issuePerAppTargetMissing": "An app in Per-app routing uses a server that no longer exists.",
+  "issueStorageUnavailableRemedy": "Restart Elarni. If this continues, restore an encrypted backup.",
+  "issueStorageUnavailable": "Elarni could not read or save its catalog.",
+  "issueBusyRemedy": "Wait for it to finish, then retry.",
+  "issueBusy": "Another operation is in progress.",
+  "issueVpnGuardStaleRemedy": "Use Repair VPN setup and allow the administrator permission request.",
+  "issueVpnGuardStale": "DNS is blocked by a crashed tunnel.",
+  "issueVpnGuardBusyRemedy": "Disconnect the other user or the system service, then retry.",
+  "issueVpnGuardBusy": "Another Elarni VPN is connected on this computer.",
+  "issueVpnFirewallUnavailableRemedy": "Install nftables (the nft command), then retry.",
+  "issueVpnFirewallUnavailable": "The VPN firewall tool is missing.",
+  "issueDisconnectUnconfirmedRemedy": "Refresh status before reconnecting, or use Repair VPN setup.",
+  "issueDisconnectUnconfirmed": "Disconnection could not be confirmed.",
+  "issueProviderUnavailableRemedy": "Retry the selected server. If the problem continues, use Repair VPN setup.",
+  "issueProviderUnavailable": "The VPN runtime is unavailable.",
+  "issueCheckFailedRemedy": "Retry the check. A timeout, target failure or authentication problem may need different action.",
+  "issueCheckFailed": "The connection check failed.",
+  "issueStatusUnavailableRemedy": "Refresh status. The last known state does not confirm the current connection.",
+  "issueStatusUnavailable": "Connection status is unavailable.",
+  "issuePreviousRestoredRemedy": "Check access before retrying another server.",
+  "issuePreviousRestored": "The replacement failed; the previous configuration was restored.",
+  "issueRecoveryRequiredRemedy": "Disconnect before retrying. If that fails, use Repair VPN setup.",
+  "issueRecoveryRequired": "The connection could not be restored safely.",
+  "issueInvalidConfigurationRemedy": "Review its settings or refresh the affected subscription.",
+  "issueInvalidConfiguration": "The selected configuration cannot be used.",
+  "issueInvalidRecoveryRemedy": "Choose the current server, allowed backups and connection-check targets again.",
+  "issueInvalidRecovery": "The recovery settings are incomplete or no longer valid.",
+  "issueMissingCredentialsRemedy": "Refresh or import the affected subscription again.",
+  "issueMissingCredentials": "The server credentials are unavailable.",
+  "issueRecoveryExhaustedRemedy": "Retry the selected server or review the backups you allowed.",
+  "issueRecoveryExhausted": "Automatic recovery could not find working access.",
+  "issueUnsupportedPolicyRemedy": "On macOS, checks require a full tunnel, no route exclusions or custom rules, and Xray TUN off. Your routing settings were preserved.",
+  "issueUnsupportedPolicy": "Automatic traffic checks do not support this routing setup.",
+  "issueConnectionFailedRemedy": "Retry this server and check its configuration or subscription.",
+  "issueConnectionFailed": "The selected server could not establish working access.",
+  "issueCheckTargetFailedRemedy": "Check the test URL and DNS settings. This does not prove the server is down.",
+  "issueCheckTargetFailed": "The connection check could not verify its target.",
+  "issueListenerUnavailableRemedy": "Close the conflicting app or change the listener port in Connection settings.",
+  "issueListenerUnavailable": "A local proxy port is occupied or unavailable.",
+  "issueVpnConfigurationFailedRemedy": "Review VPN permissions in system settings, then retry.",
+  "issueVpnConfigurationFailed": "The system could not prepare the VPN.",
+  "issuePermissionDeniedRemedy": "Retry and allow the system permission request.",
+  "issuePermissionDenied": "VPN permission was denied.",
+  "savingEllipsis": "Saving…",
+  "save": "Save",
+  "cancel": "Cancel",
+  "expectedResponseBodyOptional": "Expected response body (optional)",
+  "expectedHttpStatus": "Expected HTTP status",
+  "recoverySecondUrlOptional": "Optional for same-server recovery",
+  "checkUrl": "Check URL",
+  "secondCheckUrl": "Second check URL",
+  "recoveryChecksHelp": "Connection checks send a small request through the connection while recovery is enabled. Choose trusted URLs with a predictable response. Backups require two different check hosts.",
+  "recoveryTcpFirstHelp": "When a server on UDP or a port other than 443 stops answering, TCP 443 backups go first. If only Russian-entry servers get through, they go first.",
+  "recoveryBackupNumber": "Backup {number}",
+  "@recoveryBackupNumber": {
+    "placeholders": {
+      "number": {
+        "type": "Object"
+      }
+    }
+  },
+  "recoveryLatencyHelp": "Allowed servers from any subscription to compare. Recovery uses the fastest healthy one and switches only after a meaningful improvement. Choosing another server by hand makes it the primary and keeps these servers.",
+  "recoveryOrderedHelp": "Allowed backups from any subscription, tried in the order you select them. Choosing another server by hand makes it the primary and keeps these backups.",
+  "lowestLatency": "Lowest latency",
+  "recoveryUseAllowedBackups": "Use allowed backups",
+  "recoveryReconnectThisServer": "Reconnect to this server",
+  "recovery": "Recovery",
+  "recoveryIntro": "Your selected server stays selected. Switching to a backup requires your permission below. Stop cancels recovery.",
+  "connectionRecovery": "Connection recovery",
+  "recoveryChooseBackup": "Choose at least one allowed backup server.",
+  "recoveryTargetsSameHost": "Use two different check hosts for independent results.",
+  "recoveryTargetInvalid": "Enter a valid check URL and a successful HTTP status for target {number}.",
+  "@recoveryTargetInvalid": {
+    "placeholders": {
+      "number": {
+        "type": "Object"
+      }
+    }
+  },
+  "off": "Off",
+  "proxyNeedsScheme": "Use a socks5:// or http:// address.",
+  "proxyNotLocal": "Use a proxy on this device, such as 127.0.0.1.",
+  "proxyNeedsPort": "Add the proxy port, such as 127.0.0.1:1080.",
+  "proxyAddressOnly": "Use only the address and port, without a login or path.",
+  "proxyIsOwnPort": "That is Elarni's own proxy port. Use the other app's port.",
+  "routeEnforcementWithIncludeAll": "Enforce tunnel routes cannot be combined with Include all networks. Turn one of them off.",
+  "routeEnforcementWithBlock": "Enforce tunnel routes cannot be combined with Block traffic without VPN. Turn one of them off.",
+  "routeEnforcementDefaultRoutes": "Enforce tunnel routes needs specific included routes. Replace 0.0.0.0/0 and ::/0 with specific routes, or turn enforcement off.",
+  "providerAttentionLastReported": "Provider attention required · Last reported information",
+  "notDownloadedYet": "Not downloaded yet",
+  "refreshingLastReported": "Refreshing · Last reported information",
+  "refreshFailedLastReported": "Refresh failed · Last reported information",
+  "accountDisabledByProvider": "Account disabled by provider",
+  "remainingSemantics": "{label} remaining: {value}",
+  "@remainingSemantics": {
+    "placeholders": {
+      "label": {
+        "type": "Object"
+      },
+      "value": {
+        "type": "Object"
+      }
+    }
+  },
+  "openProviderPage": "Open provider page",
+  "messageFrom": "Message from {name}",
+  "@messageFrom": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "latencyMs": "{ms} ms",
+  "@latencyMs": {
+    "placeholders": {
+      "ms": {
+        "type": "Object"
+      }
+    }
+  },
+  "protocolTooltip": "Protocol: {protocol}",
+  "@protocolTooltip": {
+    "placeholders": {
+      "protocol": {
+        "type": "Object"
+      }
+    }
+  },
+  "notProvided": "Not provided",
+  "lessThanDayLeft": "Less than a day left",
+  "expired": "Expired",
+  "noExpiry": "No expiry",
+  "dataExhausted": "Data exhausted",
+  "amountLeft": "{amount} left",
+  "@amountLeft": {
+    "placeholders": {
+      "amount": {
+        "type": "Object"
+      }
+    }
+  },
+  "unlimited": "Unlimited",
+  "settings": "Settings",
+  "routing": "Routing",
+  "subscriptions": "Subscriptions",
+  "home": "Home",
+  "backToHome": "Back to Home",
+  "settingsGroupSupport": "Support",
+  "settingsGroupNetwork": "Network",
+  "settingsGroupPreferences": "Preferences",
+  "settingsCategory": "Settings category",
+  "helpFor": "Help for {title}",
+  "@helpFor": {
+    "placeholders": {
+      "title": {
+        "type": "Object"
+      }
+    }
+  },
+  "importingEllipsis": "Importing…",
+  "importAction": "Import",
+  "importScanQr": "Scan QR",
+  "importFromQrImage": "From QR image",
+  "importFromClipboard": "From clipboard",
+  "importFromFile": "From file",
+  "liveCameraPreview": "Live camera preview",
+  "scanQrCode": "Scan QR code",
+  "cameraUnavailable": "Camera unavailable. Check camera permissions and close other camera apps.",
+  "remindersUnavailable": "Subscription reminders are unavailable. Check notification permissions.",
+  "appPreferencesNotSaved": "Desktop preferences could not be saved.",
+  "appPreferencesNotLoaded": "Desktop preferences could not be loaded.",
+  "openElarniLink": "Open Elarni link?",
+  "select": "Select",
+  "daysLeft": "{days, plural, =1{1 day left} other{{days} days left}}",
+  "@daysLeft": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "gibibytes": "GiB",
+  "mebibytes": "MiB",
+  "kibibytes": "KiB",
+  "bytesCount": "{count} bytes",
+  "@bytesCount": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsGeneral": "General",
+  "settingsAppearance": "Appearance",
+  "settingsConnection": "Connection",
+  "settingsAdvanced": "Advanced",
+  "settingsServerTests": "Server tests",
+  "settingsBackupAndRepair": "Backup and repair",
+  "settingsSystemInfo": "System info",
+  "settingsRouteTable": "Route table",
+  "usageTime": "Time",
+  "usageData": "Data",
+  "desktopStatusNotUpdated": "Desktop status could not be updated.",
+  "linkAsksDisconnect": "A link asks Elarni to disconnect.",
+  "linkImportsRoutingProfile": "A link wants to import a routing profile.",
+  "linkImportsClientProfile": "A link wants to import a client profile.",
+  "disconnect": "Disconnect",
+  "appRoutingUses": "App routing uses {engine}. In bypass mode, unlisted or unidentified processes follow normal routing. In only-selected mode, they connect directly.",
+  "@appRoutingUses": {
+    "placeholders": {
+      "engine": {
+        "type": "String"
+      }
+    }
+  },
+  "systemWideVpn": "System-wide VPN",
+  "updateDraft": "Update draft",
+  "loadProfile": "Load profile",
+  "perAppProfileLoaded": "{platform} profile loaded. Review the apps and choose Save changes to apply.",
+  "@perAppProfileLoaded": {
+    "placeholders": {
+      "platform": {
+        "type": "Object"
+      }
+    }
+  },
+  "backToApps": "Back to apps",
+  "routingProfileJson": "Routing profile JSON",
+  "executableNamesOrPaths": "Executable names or full paths",
+  "loadRoutingProfileHelp": "Load a {platform} routing profile into this draft. Save changes applies it.",
+  "@loadRoutingProfileHelp": {
+    "placeholders": {
+      "platform": {
+        "type": "Object"
+      }
+    }
+  },
+  "executableRulesHelp": "One executable name or path per line, up to 256. A folder ending in / includes executables inside it.",
+  "routingProfileContents": "Routing profiles contain only the mode, executable rules and app targets other than servers. Share with another {platform} device; paths may need updating.",
+  "@routingProfileContents": {
+    "placeholders": {
+      "platform": {
+        "type": "Object"
+      }
+    }
+  },
+  "appRoutingNotFirewall": "DNS and local SOCKS/HTTP listeners keep their existing rules. App routing is not a firewall or a kill switch.",
+  "macMatchingHelp": "Selecting an .app includes every executable inside its bundle. Other names and paths are case-sensitive.",
+  "windowsMatchingHelp": "Windows matches .exe names and full paths case-insensitively. Select helper executables separately.",
+  "linuxMatchingHelp": "Linux matches executable names and paths case-sensitively. Select helper processes separately.",
+  "pasteRoutingProfile": "Paste routing profile",
+  "editExecutableRules": "Edit executable rules",
+  "howAppRoutingWorks": "How app routing works",
+  "done": "Done",
+  "chooseAppFile": "Choose app file",
+  "copyRoutingProfile": "Copy routing profile",
+  "perAppProfileCopied": "{platform} profile copied, including application names and paths.",
+  "@perAppProfileCopied": {
+    "placeholders": {
+      "platform": {
+        "type": "Object"
+      }
+    }
+  },
+  "profileAndExecutableTools": "Profile & executable tools",
+  "noMatchingApps": "No matching apps.",
+  "noAppsFound": "No apps found. Choose an app file below.",
+  "loadingApps": "Loading apps…",
+  "runningApps": "Running apps",
+  "installedAndRunningApps": "Installed and running apps",
+  "refreshAppList": "Refresh app list",
+  "searchApps": "Search apps",
+  "addApps": "Add apps",
+  "saveChanges": "Save changes",
+  "perAppTargetsHelp": "Each app can connect directly, follow your routing rules, be blocked, use a server from any subscription, or use a local SOCKS5 or HTTP proxy such as ByeByeDPI. VPN traffic only; DNS and local proxy rules are unchanged.",
+  "targetDirect": "Direct",
+  "targetFollowRouting": "Follow routing rules",
+  "otherApps": "Other apps",
+  "removeApp": "Remove {name}",
+  "@removeApp": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "details": "Details",
+  "executableRule": "Executable rule",
+  "appBundleIncludesHelpers": "App bundle · includes helpers",
+  "noAppsSelected": "No apps selected. Add apps to create a routing rule.",
+  "selectedApps": "Selected apps",
+  "perAppOnlySelected": "Only selected",
+  "perAppBypassSelected": "Bypass selected",
+  "perAppRouting": "Per-app routing",
+  "perAppRoutingIntro": "Choose which apps use the VPN. Applies to every subscription.",
+  "perAppOffHelp": "All apps follow your routing rules. Your app selections are kept.",
+  "perAppOnlyHelp": "Selected apps follow your routing rules unless you choose another target for them. All other apps connect directly.",
+  "perAppBypassHelp": "Selected apps connect directly unless you choose another target for them. Other apps follow your routing rules.",
+  "macRulesCaseSensitive": "Names and paths are case-sensitive. A path ending in / includes executables inside that folder.",
+  "macBundleRuleHelp": "This rule includes every executable inside the app bundle.",
+  "windowsRulesCaseInsensitive": "Executable names and paths are case-insensitive. Select other helper executables separately.",
+  "linuxRulesCaseSensitive": "Names and paths are case-sensitive. Select any helper executables separately.",
+  "appListUnavailable": "The app list is unavailable. Choose an app file or edit executable rules.",
+  "closeAppChooser": "Close app chooser",
+  "localProxyEllipsis": "Local proxy…",
+  "targetMissingServer": "Missing server",
+  "targetServer": "Server · {name}",
+  "@targetServer": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "targetLocalProxy": "Local proxy · {address}",
+  "@targetLocalProxy": {
+    "placeholders": {
+      "address": {
+        "type": "Object"
+      }
+    }
+  },
+  "perAppOperationFailed": "The operation failed. Try again; your draft is kept.",
+  "perAppLauncherRule": "Snap, Flatpak and script launchers start another program, so their rules match nothing. Start the app, then choose it from the app list.",
+  "useProxy": "Use proxy",
+  "proxyAddress": "Proxy address",
+  "localProxyHelp": "Another app's SOCKS5 or HTTP proxy, such as ByeByeDPI.",
+  "localProxy": "Local proxy",
+  "perAppOtherPlatformProfile": "This is a {profilePlatform} profile. Import a {platform} profile or select the apps on this device.",
+  "@perAppOtherPlatformProfile": {
+    "placeholders": {
+      "profilePlatform": {
+        "type": "Object"
+      },
+      "platform": {
+        "type": "Object"
+      }
+    }
+  },
+  "perAppUnsupportedProfile": "Unsupported per-app routing profile.",
+  "perAppProfileTooLarge": "The profile exceeds 512 KB.",
+  "perAppUnixPathsOnWindows": "macOS or Unix executable paths cannot be used in a Windows profile. Select the apps on this PC.",
+  "perAppMacBundlesOnLinux": "macOS app bundles cannot be used in a Linux profile. Select the Linux executables.",
+  "perAppWindowsPathsElsewhere": "Windows executable paths cannot be used in a {platform} profile. Select the apps on this device.",
+  "@perAppWindowsPathsElsewhere": {
+    "placeholders": {
+      "platform": {
+        "type": "Object"
+      }
+    }
+  },
+  "perAppAndroidPackages": "Use Android package names such as com.example.app. Select the apps on this device.",
+  "perAppInvalidProfile": "Use a supported mode and up to 256 names or paths, each at most 1024 bytes without control characters, with targets only for listed apps. An active mode needs at least one app.",
+  "perAppUnsupportedPlatform": "Unsupported profile platform.",
+  "targetBlock": "Block",
+  "validateAndSave": "Validate and save",
+  "rulesTab": "Rules",
+  "routingAndDns": "Routing and DNS",
+  "reduceRoutingDataHelp": "Applied when routing data refreshes. Keeps complete matching records and preserves originals; falls back to full files on failure.",
+  "reduceRoutingDataSize": "Reduce routing-data size",
+  "resolveWhenNeeded": "Resolve when needed",
+  "resolveIfNoRuleMatches": "Resolve if no rule matches",
+  "keepDomainNames": "Keep domain names",
+  "resolveDomainsForRouting": "Resolve domains for routing",
+  "ruleGroupOrder": "Rule group order",
+  "profileName": "Profile name",
+  "directDnsDomainsHint": "One domain, domain: suffix, full: name, or geosite: tag per line.",
+  "domainsUsingDirectDns": "Domains using direct DNS",
+  "explicitDomainRulesHelp": "Matching domains use direct DNS; all others use remote DNS. Off preserves legacy ordered fallback. DoH bootstrap connects through the selected proxy.",
+  "useExplicitDomainRules": "Use explicit domain rules",
+  "chooseDnsByDomain": "Choose DNS by domain",
+  "resolverIp": "Resolver IP",
+  "bootstrapIp": "Bootstrap IP",
+  "resolverType": "Resolver type",
+  "remoteDns": "Remote DNS",
+  "directDns": "Direct DNS",
+  "keepDomainIdentityHelp": "Uses Fake DNS. With real DNS, domain rules depend on supported HTTP/TLS/QUIC sniffing; encrypted hostnames and other protocols may require IP rules.",
+  "keepDomainIdentity": "Keep domain identity for routing",
+  "ipRulesHint": "One IPv4/IPv6 address, CIDR, or geoip: target per line.",
+  "ipAddressesAndNetworks": "IP addresses and networks",
+  "domainRulesHint": "One domain, full:, domain:, regexp:, or geosite: target per line.",
+  "domains": "Domains",
+  "addPreset": "Add preset",
+  "russianSitesPresetHelp": ".ru, .рф, .su and these services' other domains",
+  "russianSitesDirect": "Russian sites direct",
+  "connectDirectly": "Connect directly",
+  "unmatchedTraffic": "Unmatched traffic",
+  "routingChangeFailed": "Routing change failed. The last working profile was kept.",
+  "routingIpTargetsInvalid": "{field} needs IP addresses, valid CIDRs, or geoip: references.",
+  "@routingIpTargetsInvalid": {
+    "placeholders": {
+      "field": {
+        "type": "String"
+      }
+    }
+  },
+  "routingDnsNeedsResolver": "{dns} needs a resolver type and IP address.",
+  "@routingDnsNeedsResolver": {
+    "placeholders": {
+      "dns": {
+        "type": "String"
+      }
+    }
+  },
+  "routingDnsNeedsHttpsUrl": "{dns} needs an HTTPS URL without credentials or a fragment.",
+  "@routingDnsNeedsHttpsUrl": {
+    "placeholders": {
+      "dns": {
+        "type": "String"
+      }
+    }
+  },
+  "domesticDns": "Domestic DNS",
+  "directRules": "Direct rules",
+  "proxyRules": "Proxy rules",
+  "blockRules": "Block rules",
+  "ruleGroupBlock": "Block",
+  "ruleGroupDirect": "Direct",
+  "ruleGroupProxy": "Proxy",
+  "httpsUrl": "HTTPS URL",
+  "routingProfilesNotLoaded": "Routing profiles could not be loaded.",
+  "connectionStoppedUnexpectedly": "Connection stopped unexpectedly. Reconnect to retry.",
+  "groupSelectionFailed": "Group selection failed. The saved selection was restored.",
+  "serverIpPreferenceNotApplied": "Could not apply the server IP preference.",
+  "telegramNotOpened": "Telegram could not be opened. Check that it is installed.",
+  "couldNotImport": "Could not import. Use a subscription link, client configuration, or routing profile.",
+  "selectServerFirstRoutingLink": "Select a server first. This routing link turns its profile on for the selected server’s subscription.",
+  "unsupportedProfileTryJson": "This profile uses unsupported settings. Try the provider’s Xray JSON format.",
+  "subscriptionAddedFirstDownloadFailed": "Subscription added, but the first download failed. Refresh to retry.",
+  "clipboardEmpty": "The clipboard is empty. Copy a link or configuration first.",
+  "downloadPageNotOpened": "The download page could not be opened.",
+  "providerLinkNotOpened": "The provider link could not be opened.",
+  "continueAction": "Continue",
+  "approveUnsafeSubscription": "Approve unsafe subscription?",
+  "contactProvider": "Contact provider",
+  "vpnSetupNotRepaired": "VPN setup could not be repaired.",
+  "vpnSetupReset": "VPN setup reset. Connect to try again.",
+  "repair": "Repair",
+  "repairVpnMacBody": "Stops the connection and removes the saved macOS VPN setup. Connect recreates it using your selected server and settings.",
+  "repairVpnDesktopBody": "Stops the connection and closes the tunnel helper. On Windows it also removes a DNS block left by a helper that stopped unexpectedly, which asks for administrator permission. The next VPN connection starts a fresh helper and may ask for it too.",
+  "repairVpnSetupQuestion": "Repair VPN setup?",
+  "favoriteNotSaved": "The favorite could not be saved. Try again.",
+  "subscriptionsNotLoaded": "Subscriptions could not be loaded.",
+  "hideVpnIconBody": "This changes excluded network routes; it does not only hide interface chrome.",
+  "hideVpnIconQuestion": "Hide VPN icon?",
+  "settingNotApplied": "Setting could not be applied. {details}",
+  "@settingNotApplied": {
+    "placeholders": {
+      "details": {
+        "type": "Object"
+      }
+    }
+  },
+  "settingNotAppliedCheck": "Setting could not be applied. Check the current settings and tunnel state before reconnecting.",
+  "settingsReloaded": "Settings were reloaded. Make the change again.",
+  "pingFailedForNode": "Ping failed for this node.",
+  "pingIcmpRestoreFailed": "ICMP finished, but the previous tunnel connection could not be restored.",
+  "pingIcmpNoReplyRestored": "No ICMP reply. The previous tunnel connection was restored.",
+  "pingIcmpUnavailable": "ICMP is unavailable while system VPN is connected. Use TCP or HTTP testing.",
+  "pingDirectTcpUnsupported": "Skipped: Direct TCP is not supported by this endpoint’s transport. Use Proxy testing.",
+  "routeTableUnreadable": "The current route table could not be read.",
+  "systemInfoUnavailable": "System information is unavailable.",
+  "systemSettingsNotLoaded": "System settings could not be loaded.",
+  "allowWithoutLogin": "Allow without login",
+  "allowWithoutLoginBody": "In local-proxy mode, any program on this device, including malware and other users' programs, can then send traffic through your server on {ports}. LAN access turns off.",
+  "@allowWithoutLoginBody": {
+    "placeholders": {
+      "ports": {
+        "type": "Object"
+      }
+    }
+  },
+  "allowAppsWithoutLogin": "Allow apps without a login?",
+  "portSingle": "port {port}",
+  "@portSingle": {
+    "placeholders": {
+      "port": {
+        "type": "Object"
+      }
+    }
+  },
+  "portsPair": "ports {socks} and {http}",
+  "@portsPair": {
+    "placeholders": {
+      "socks": {
+        "type": "Object"
+      },
+      "http": {
+        "type": "Object"
+      }
+    }
+  },
+  "tunnelSettingsNotLoaded": "Tunnel settings could not be loaded.",
+  "chooseWritableLocation": "Choose a writable location and retry.",
+  "diagnosticsNotSaved": "Diagnostics could not be saved.",
+  "pingTested": "Tested {tested} of {total} nodes.",
+  "@pingTested": {
+    "placeholders": {
+      "tested": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "pingSkippedIncompatible": "Skipped {count}: incompatible with this test method.",
+  "@pingSkippedIncompatible": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "refreshFailedSentence": "Refresh failed.",
+  "lastWorkingServersKept": "The last working servers were kept.",
+  "catalogLimit": "Elarni keeps up to 1,024 subscriptions and 256 routing profiles. Delete some, then retry.",
+  "dismissMessage": "Dismiss message",
+  "addSubscriptionToStart": "Add a subscription or import a profile to get started.",
+  "noSubscriptionsYet": "No subscriptions yet",
+  "refreshProfiles": "Refresh profiles",
+  "routeTableHelp": "Current numeric IPv4 and IPv6 routes.",
+  "openServerList": "Open server list",
+  "expectedBodyHelp": "Exact text; leave empty for HTTP 204 or HEAD.",
+  "expectedResponseBody": "Expected response body",
+  "testUrl": "Test URL",
+  "httpRequest": "HTTP request",
+  "secondsTimeout": "{seconds} s timeout",
+  "@secondsTimeout": {
+    "placeholders": {
+      "seconds": {
+        "type": "Object"
+      }
+    }
+  },
+  "timeout": "Timeout",
+  "testMode": "Test mode",
+  "httpMethod": "HTTP method",
+  "currentRulesActiveTunnel": "Current rules / active tunnel",
+  "testType": "Test type",
+  "refreshingEllipsis": "Refreshing…",
+  "refresh": "Refresh",
+  "exportDiagnostics": "Export diagnostics",
+  "troubleshootConnection": "Troubleshoot connection",
+  "versions": "Versions",
+  "xrayCoreVersion": "Xray core {version}",
+  "@xrayCoreVersion": {
+    "placeholders": {
+      "version": {
+        "type": "Object"
+      }
+    }
+  },
+  "unavailable": "Unavailable",
+  "physicalMemory": "Physical memory",
+  "activeCpus": "Active CPUs",
+  "cpuCount": "CPU count",
+  "appArchitecture": "App architecture",
+  "operatingSystem": "Operating system",
+  "repairVpnSetup": "Repair VPN setup",
+  "reviewRepair": "Review repair",
+  "connectionRepair": "Connection repair",
+  "restoreBackupHelp": "Disconnect before replacing saved profiles and routing.",
+  "restoreBackup": "Restore backup",
+  "restore": "Restore",
+  "createEncryptedBackup": "Create encrypted backup",
+  "export": "Export",
+  "backups": "Backups",
+  "showMonitoringOnMain": "Show monitoring on main screen",
+  "monitoring": "Monitoring",
+  "enableSniffing": "Enable sniffing",
+  "udpMaxConnections": "UDP max connections",
+  "tcpMaxConnections": "TCP max connections",
+  "connectionIdleTimeout": "Connection idle timeout (seconds)",
+  "xrayMemoryLimit": "Xray memory limit (MB)",
+  "resources": "Resources",
+  "defaultMuxHelp": "Imported mux settings take precedence. This preference applies only to VLESS; it does not enable mux for Hysteria.",
+  "enableDefaultVlessMux": "Enable default VLESS mux",
+  "fragmentationSummary": "{packets} · {length} bytes · {interval} ms",
+  "@fragmentationSummary": {
+    "placeholders": {
+      "packets": {
+        "type": "Object"
+      },
+      "length": {
+        "type": "Object"
+      },
+      "interval": {
+        "type": "Object"
+      }
+    }
+  },
+  "fragmentationOptions": "Fragmentation options",
+  "edit": "Edit",
+  "fragmentationHelp": "VLESS over TCP or XHTTP with TLS or Reality. XHTTP over HTTP/3 and existing dialer chains are unsupported.",
+  "enableFragmentation": "Enable fragmentation",
+  "transport": "Transport",
+  "resolveServerHelp": "Keeps server IP addresses fixed until reconnect while preserving TLS names and transport headers.",
+  "resolveServerBeforeConnecting": "Resolve server before connecting",
+  "noEnabledRoutingProfiles": "No enabled routing profiles. Enable a profile in Routing.",
+  "editDns": "Edit DNS",
+  "routingProfiles": "Routing profiles",
+  "routingProfile": "Routing profile",
+  "providerProfile": "Provider profile",
+  "dnsSettingsHelp": "Choose which profile supplies DNS settings.",
+  "dnsSettings": "DNS settings",
+  "allowLanHelp": "Requires authentication. Use a trusted LAN: SOCKS5 and HTTP authentication do not encrypt the client connection.",
+  "allowLan": "Allow LAN connections (IPv4)",
+  "requireProxyAuthHelp": "Both listeners use the saved credentials. Disabling authentication also disables LAN access.",
+  "requireProxyAuth": "Require SOCKS5 and HTTP authentication",
+  "allowAppsWithoutLoginHelp": "In local-proxy mode, any program on this device could then use your proxy and your server. With the VPN on, the listeners still need a login. Also disables LAN access.",
+  "allowAppsWithoutLoginToggle": "Allow apps without a login",
+  "set": "Set",
+  "change": "Change",
+  "hide": "Hide",
+  "show": "Show",
+  "notConfigured": "Not configured",
+  "proxyLoginHelp": "Apps that use the SOCKS5 or HTTP proxy sign in with this username and password.",
+  "proxyLogin": "Proxy login",
+  "listenersHelp": "Listeners run while the tunnel is active on either backend. With the VPN on they always require a login: your saved credentials when authentication is on, otherwise a random one per connection, so other apps cannot use them.",
+  "socksAndHttpPorts": "SOCKS5 and HTTP ports",
+  "httpInbound": "HTTP inbound",
+  "useAppDefault": "Use app default",
+  "serverIpType": "Server IP type",
+  "shareLinkServers": "Share-link servers",
+  "defaultIpTypeHelp": "Used by servers without an override.",
+  "defaultIpType": "Default IP type",
+  "serverAddressing": "Server addressing",
+  "blockTrafficMacHelp": "macOS keeps all traffic inside the tunnel, including while it reconnects. Route exclusions do not apply.",
+  "blockTrafficDesktopHelp": "If the VPN stops unexpectedly, nothing leaves this device outside it until you reconnect or use Repair VPN setup. Disconnecting lifts the block. Needs System-wide VPN; cannot be combined with Enforce tunnel routes.",
+  "blockTrafficWithoutVpn": "Block traffic without VPN",
+  "connectWithoutAdminApprovalHelp": "The Elarni VPN service starts the VPN helper for this Windows account, so connecting asks for no approval. Turning this on or off asks for approval once.",
+  "connectWithoutAdminApproval": "Connect without administrator approval",
+  "systemWideVpnHelp": "Connects all apps. Administrator approval is requested on the first VPN connection in this app session. Turn off to use only the local proxy.",
+  "systemWideVpnServiceHelp": "Connects all apps. Administrator approval is requested on the first VPN connection in this app session, unless Connect without administrator approval is on. Turn off to use only the local proxy.",
+  "accentColor": "Accent color",
+  "dark": "Dark",
+  "light": "Light",
+  "followSystem": "Follow system",
+  "theme": "Theme",
+  "language": "Language",
+  "languageName": "English",
+  "@languageName": {
+    "description": "This language's own name, shown in the language list."
+  },
+  "feedUnreadable": "The feed could not be read.",
+  "upToDate": "Up to date",
+  "updateAvailable": "Elarni {version} is available",
+  "@updateAvailable": {
+    "placeholders": {
+      "version": {
+        "type": "Object"
+      }
+    }
+  },
+  "updateFeedHelp": "Elarni reads this address once a day and shows a notice on Home when it names a newer release. It never downloads or installs anything. Use a JSON file with \"version\" and \"url\", or a GitHub releases/latest API address; https only.",
+  "updateFeed": "Update feed",
+  "updates": "Updates",
+  "favoritesFirst": "Favorites first",
+  "alphabetical": "Alphabetical",
+  "providerOrder": "Provider order",
+  "serverOrder": "Server order",
+  "subscriptionExpiryRemindersHelp": "Once a day while Elarni is running, when a subscription expires within three days.",
+  "subscriptionExpiryReminders": "Subscription expiry reminders",
+  "subscriptionAutoUpdateHelp": "Updates all subscriptions while Elarni is running. Default: 4 hours.",
+  "subscriptionAutoUpdateHours": "Subscription auto-update (hours)",
+  "macDisconnectsWhenSleeping": "macOS disconnects when sleeping.",
+  "disconnectsWhenSleeps": "Disconnects when {platform} sleeps.",
+  "@disconnectsWhenSleeps": {
+    "placeholders": {
+      "platform": {
+        "type": "Object"
+      }
+    }
+  },
+  "disconnectOnSleep": "Disconnect on sleep",
+  "loginStateUnavailable": "Registration state is unavailable.",
+  "loginApprovalRequired": "Approval is required in macOS Login Items settings.",
+  "launchAtLogin": "Launch app at login",
+  "windowsWifiLocationHelp": "Windows keeps the Wi-Fi name from Elarni. Turn on Location services and Let desktop apps access your location in Settings › Privacy & security › Location.",
+  "noTrustedWifi": "None. Every Wi-Fi network connects.",
+  "trustedWifiNetworks": "Trusted Wi-Fi networks",
+  "untrustedWifiMacHelp": "Joining a Wi-Fi network that is not on your trusted list connects, even before you press Connect. Trusted networks and wired connections leave the VPN as it is. Disconnect pauses this until your next Connect.",
+  "untrustedWifiDesktopHelp": "Joining a Wi-Fi network that is not on your trusted list connects. Trusted networks, wired and mobile connections, and a connection you stopped stay as they are until the next network.",
+  "connectOnUntrustedWifi": "Connect on untrusted Wi-Fi",
+  "onDemandMacHelp": "On Demand controls automatic connection when network access resumes.",
+  "onDemandDesktopHelp": "On Demand reconnects after wake or a network interruption until you press Stop.",
+  "onDemand": "On Demand",
+  "recoveryBackupsSummary": "Use only your allowed backup servers.",
+  "recoveryFixedSummary": "Reconnect to the selected server only.",
+  "recoveryOffSummary": "Off. Your server choice is preserved.",
+  "configure": "Configure",
+  "none": "None",
+  "excludedRoutes": "Excluded routes",
+  "includedRoutes": "Included routes",
+  "compatibilityRouteExclusionsHelp": "Adds route exclusions used by the hide-icon workaround. Hiding the VPN icon is not verified.",
+  "compatibilityRouteExclusions": "Compatibility route exclusions",
+  "includeAllNetworksHelp": "VPN routes apply in System VPN mode. Include all networks captures both IP families and respects your exclusions.",
+  "includeAllNetworks": "Include all networks",
+  "enforceRoutesMacHelp": "Enforcement requires specific included routes; default routes such as 0.0.0.0/0 and ::/0 are unsupported. For a full tunnel, turn enforcement off and use Block traffic without VPN in Connection settings.",
+  "enforceRoutesDesktopHelp": "VPN routes apply in System VPN mode. Enforcement blocks physical bypass of specific included routes while connected.",
+  "enforceTunnelRoutes": "Enforce tunnel routes",
+  "advancedNetworkRoutes": "Advanced network routes",
+  "memoryLimitAutomatic": "automatic",
+  "megabytesValue": "{value} MB",
+  "@megabytesValue": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "gigabytesValue": "{value} GB",
+  "@gigabytesValue": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "extensionMemory": "Extension RSS: {value} MB",
+  "@extensionMemory": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "xrayHeap": "Xray heap: {heap} MB / {limit}",
+  "@xrayHeap": {
+    "placeholders": {
+      "heap": {
+        "type": "String"
+      },
+      "limit": {
+        "type": "String"
+      }
+    }
+  },
+  "softLimit": "(soft limit)",
+  "sessionsSummary": "Sessions: {tcp} TCP / {udp} UDP",
+  "@sessionsSummary": {
+    "placeholders": {
+      "tcp": {
+        "type": "Object"
+      },
+      "udp": {
+        "type": "Object"
+      }
+    }
+  },
+  "trafficSummary": "Traffic: {up} up / {down} down bytes",
+  "@trafficSummary": {
+    "placeholders": {
+      "up": {
+        "type": "Object"
+      },
+      "down": {
+        "type": "Object"
+      }
+    }
+  },
+  "packetsSummary": "Packets: {incoming} in / {outgoing} out",
+  "@packetsSummary": {
+    "placeholders": {
+      "incoming": {
+        "type": "Object"
+      },
+      "outgoing": {
+        "type": "Object"
+      }
+    }
+  },
+  "listenersSummary": "Configured {scope}: SOCKS5 {socks}; HTTP {http}.",
+  "@listenersSummary": {
+    "placeholders": {
+      "scope": {
+        "type": "String"
+      },
+      "socks": {
+        "type": "Object"
+      },
+      "http": {
+        "type": "String"
+      }
+    }
+  },
+  "listenLan": "LAN IPv4",
+  "listenLoopback": "loopback",
+  "httpOff": "off",
+  "testModeDouble": "Double",
+  "testModeDefault": "Default",
+  "proxyHead": "Proxy HEAD",
+  "proxyGet": "Proxy GET",
+  "directIcmp": "Direct ICMP",
+  "directTcp": "Direct TCP",
+  "testThroughProxy": "Proxy",
+  "automatic": "Automatic",
+  "useProfile": "Use profile",
+  "loginServiceNotFound": "macOS could not find this app as a login service.",
+  "loginNotRegistered": "Not registered.",
+  "loginRegistered": "Registered for your account.",
+  "searchServers": "Search servers",
+  "filterRecent": "Recent",
+  "filterFavorites": "Favorites",
+  "filterAll": "All",
+  "servers": "Servers",
+  "showAgain": "Show again",
+  "hiddenServersCount": "Hidden servers · {count}",
+  "@hiddenServersCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "noMatchingServers": "No matching servers",
+  "noServersInSubscription": "No servers in this subscription",
+  "delete": "Delete",
+  "selectUnreachable": "Select unreachable",
+  "selectedCount": "{count} selected",
+  "@selectedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "setByYourProvider": "Set by your provider",
+  "noCustomRouting": "No custom routing",
+  "refreshNamed": "Refresh {name}",
+  "@refreshNamed": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "accountDisabled": "Account disabled",
+  "rename": "Rename",
+  "shareLinksFormat": "Share links",
+  "originalSubscription": "Original subscription",
+  "subscriptionFormat": "Subscription format",
+  "downloadOptions": "Download options",
+  "shareSubscription": "Share subscription",
+  "accountDetails": "Account details",
+  "providerSupport": "Provider support",
+  "pinSubscription": "Pin subscription",
+  "unpinSubscription": "Unpin subscription",
+  "subscriptionActions": "Subscription actions",
+  "testSubscriptionNodes": "Test this subscription’s nodes",
+  "testAllNodes": "Test all nodes",
+  "useNodePingForIcmp": "Use a node’s Ping button for ICMP",
+  "testing": "Testing…",
+  "otherLocations": "Other locations",
+  "lowestLatencySemantics": "{ms, plural, other{Lowest latency: {ms} milliseconds}}",
+  "@lowestLatencySemantics": {
+    "placeholders": {
+      "ms": {
+        "type": "int"
+      }
+    }
+  },
+  "clearSearch": "Clear search",
+  "noServersYet": "No servers yet",
+  "showAllServers": "Show all servers",
+  "noSuccessfulConnections": "No successful connections yet",
+  "noFavoriteServers": "No favorite servers",
+  "onboardingStep3Proxy": "Press Connect. Only apps set to use the local proxy go through it; turn on System-wide VPN in Settings > Connection to connect all apps.",
+  "onboardingStep3Vpn": "Press Connect. Administrator approval is requested on the first VPN connection in this app session.",
+  "onboardingStep3Mac": "Press Connect. macOS asks once to allow the VPN configuration.",
+  "openFile": "Open file",
+  "pasteLink": "Paste link",
+  "onboardingStep2": "Add it here.",
+  "onboardingStep1": "Get a subscription link or QR code from your provider. Elarni has no servers of its own.",
+  "onboardingTitle": "Get connected in three steps",
+  "serverActions": "Server actions",
+  "open": "Open",
+  "openInTelegram": "Open in Telegram",
+  "checkExit": "Check exit",
+  "checking": "Checking…",
+  "serverConfig": "Server config",
+  "exitMismatch": "{server}'s name says {named}, but its exit is in {exit}.",
+  "@exitMismatch": {
+    "placeholders": {
+      "server": {
+        "type": "Object"
+      },
+      "named": {
+        "type": "Object"
+      },
+      "exit": {
+        "type": "Object"
+      }
+    }
+  },
+  "addFavorite": "Add favorite",
+  "removeFavorite": "Remove favorite",
+  "unknownLocation": "Unknown location",
+  "selectNamed": "Select {name}",
+  "@selectNamed": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteServer": "Delete server",
+  "hideServer": "Hide server",
+  "renameServer": "Rename server",
+  "ping": "Ping",
+  "skipped": "Skipped",
+  "localProxyMode": "Local proxy mode",
+  "selectServerToConnect": "Select a server to get connected.",
+  "chooseServer": "Choose a server",
+  "stateConnectionFailed": "Connection failed",
+  "stateReconnecting": "Reconnecting…",
+  "stateDisconnecting": "Disconnecting…",
+  "stateConnectedNoTraffic": "Connected · no traffic",
+  "stateConnected": "Connected",
+  "stateConnecting": "Connecting…",
+  "statePreparing": "Preparing…",
+  "stateReadyToConnect": "Ready to connect",
+  "stateDisconnected": "Disconnected",
+  "connectionStatusUnavailable": "Connection status unavailable",
+  "connect": "Connect",
+  "notNow": "Not now",
+  "download": "Download",
+  "requireLogin": "Require a login",
+  "anyProgramCanUseProxy": "Any program on this device can use it.",
+  "localProxyWithoutLogin": "Your local proxy accepts apps without a login",
+  "liftBlock": "Lift block",
+  "reconnect": "Reconnect",
+  "connectionStoppedUnexpectedlyShort": "The connection stopped unexpectedly.",
+  "trafficBlockedUntilReconnect": "Traffic blocked until you reconnect",
+  "deleteProfileAndRulesQuestion": "Delete {name} and its rules?",
+  "@deleteProfileAndRulesQuestion": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteRoutingProfileQuestion": "Delete routing profile?",
+  "reset": "Reset",
+  "replaceEditsQuestion": "Replace your edits to {name} with the subscription version?",
+  "@replaceEditsQuestion": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "resetRoutingProfileQuestion": "Reset routing profile?",
+  "resetToSubscriptionVersion": "Reset to subscription version",
+  "duplicate": "Duplicate",
+  "editJson": "Edit JSON",
+  "refreshRoutingData": "Refresh routing data",
+  "profileDetails": "Profile details",
+  "editRoutingAndDns": "Edit routing and DNS",
+  "actionsFor": "Actions for {name}",
+  "@actionsFor": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "enableProfile": "Enable {name}",
+  "@enableProfile": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "managedListsNeedAttention": "Managed lists need attention",
+  "downloadNeedsAttention": "Download needs attention",
+  "otherProfiles": "Other profiles",
+  "routingEmptyHelp": "Use Import to add a routing file, link, or QR code.",
+  "noRoutingProfiles": "No routing profiles",
+  "deviceIdHelp": "Elarni sends each provider a different device ID, made from a random key on this device. Providers can't link your IDs to each other. A renamed subscription, a changed refresh interval and your routing choice stay after a refresh.",
+  "registeredByProvider": "Registered · set by your provider",
+  "loading": "Loading",
+  "deviceId": "Device ID",
+  "everyHours": "{hours, plural, other{Every {hours} h}}",
+  "@everyHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "refreshes": "Refreshes",
+  "appSetting": "App setting",
+  "yourOverride": "Your override",
+  "updated": "Updated",
+  "providerNotice": "Provider notice",
+  "providerAsksKeepSettings": "Your provider asks you to keep its settings. You can still change them.",
+  "providerRouting": "Provider routing",
+  "providerRoutingDisabled": "Disabled",
+  "expires": "Expires",
+  "quota": "Quota",
+  "dataUsed": "Data used",
+  "online": "Online",
+  "offline": "Offline",
+  "providerStatus": "Provider status",
+  "detailAccount": "Account",
+  "accountDisabledValue": "Disabled",
+  "detailInformation": "Information",
+  "lastReportedProviderInfo": "Last reported provider information",
+  "statusReady": "Ready",
+  "statusDeviceLimit": "Provider device limit reached",
+  "statusDeviceRequired": "Provider requires device registration",
+  "statusRefreshing": "Refreshing",
+  "refreshFailed": "Refresh failed",
+  "statusApprovalRequired": "Approval required",
+  "riskPrivateTarget": "This subscription connects to a private or link-local network.",
+  "riskLoopbackTarget": "This subscription connects to this computer.",
+  "riskCleartextHttp": "This subscription uses an unencrypted HTTP connection.",
+  "connectionNotChecked": "Connection has not been checked",
+  "trafficPassesThroughServer": "Traffic passes through the server",
+  "recoveryInProgress": "Recovery in progress…",
+  "automaticChecksUnavailable": "Automatic checks unavailable for this routing setup",
+  "automaticCheckFailed": "Automatic connection check failed",
+  "latestAutomaticCheckPassed": "Latest automatic check passed",
+  "automaticTrafficChecksUnavailable": "Automatic traffic checks unavailable for this routing setup",
+  "serverPassedNoTraffic": "The server passed no traffic at {time}. Checking again each minute.",
+  "@serverPassedNoTraffic": {
+    "placeholders": {
+      "time": {
+        "type": "Object"
+      }
+    }
+  },
+  "connectionCheckUnavailable": "Connection check unavailable for this routing setup",
+  "checkingConnection": "Checking connection…",
+  "lastKnownState": "Last known state: {state}",
+  "@lastKnownState": {
+    "placeholders": {
+      "state": {
+        "type": "Object"
+      }
+    }
+  },
+  "refreshStatusToCheck": "Refresh status to check the connection",
+  "whitelistModeRussianFirst": "Whitelist mode: Russian-entry servers first",
+  "staleHttpCheckAt": "Stale HTTP check at {time}",
+  "@staleHttpCheckAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "connectionCheckPassedAt": "Connection check passed at {time}",
+  "@connectionCheckPassedAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "connectionCheckFailedAt": "Connection check failed at {time}",
+  "@connectionCheckFailedAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "probeTcpEndpoint": "TCP endpoint",
+  "probeIcmpEndpoint": "ICMP endpoint",
+  "probeActiveConnectionHttp": "Active connection HTTP",
+  "probeProxyHttp": "Proxy HTTP",
+  "timeUnavailable": "time unavailable",
+  "secondsAgo": "{seconds}s ago",
+  "@secondsAgo": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "minutesAgo": "{minutes}m ago",
+  "@minutesAgo": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "stale": "stale",
+  "connectedAt": "Connected {when}",
+  "@connectedAt": {
+    "placeholders": {
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "configurationChanged": "configuration changed",
+  "shortMonths": "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",
+  "expiredOn": "expired {date}",
+  "@expiredOn": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "expiresOn": "expires {date}",
+  "@expiresOn": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "exhausted": "Exhausted",
+  "profileCount": "{count, plural, =1{1 profile} other{{count} profiles}}",
+  "@profileCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "profileFromSubscription": "Subscription",
+  "profileCustom": "Custom",
+  "profileEdited": "Edited",
+  "youHaveVersion": "You have {version}. It keeps working; update when it suits you.",
+  "@youHaveVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "connectionStateSemantics": "Connection state: {state}",
+  "@connectionStateSemantics": {
+    "placeholders": {
+      "state": {
+        "type": "String"
+      }
+    }
+  },
+  "exitAt": "Exit: {country} · {ip}",
+  "@exitAt": {
+    "placeholders": {
+      "country": {
+        "type": "String"
+      },
+      "ip": {
+        "type": "String"
+      }
+    }
+  },
+  "unknownCountry": "unknown country",
+  "checkingExit": "Checking exit…",
+  "exitCheckFailed": "Exit check failed",
+  "unsupportedTest": "Unsupported test",
+  "testServerLatency": "Test server latency",
+  "serverCount": "{count, plural, =1{1 server} other{{count} servers}}",
+  "@serverCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "runtime": "Runtime",
+  "failureFetch": "Download failed",
+  "failureFetchText": "The download failed. Check this device’s network, then retry.",
+  "failureDns": "Address lookup failed",
+  "failureDnsText": "The address could not be looked up. Check this device’s network and DNS, then retry.",
+  "failureProviderUnreachable": "Provider unreachable",
+  "failureProviderUnreachableText": "{provider}’s server did not answer. Your network may block it, or it is down. Retry later or ask the provider for a mirror.",
+  "@failureProviderUnreachableText": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "failureProviderError": "Provider error",
+  "failureProviderErrorText": "{provider}’s server reported an error. Nothing is wrong with Elarni or this device; retry later.",
+  "@failureProviderErrorText": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "failureRateLimited": "Rate limited",
+  "failureRateLimitedText": "{provider} is limiting requests. Elarni retries later; wait before refreshing again.",
+  "@failureRateLimitedText": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "failureDenied": "Access refused",
+  "failureDeniedText": "{provider} refused the request. The subscription may have expired, run out of traffic or reached its device limit. Contact the provider.",
+  "@failureDeniedText": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "failureLinkRemoved": "Link removed",
+  "failureLinkRemovedText": "{provider} removed or changed this link. Ask the provider for a new one.",
+  "@failureLinkRemovedText": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "reductionStatus": "Reduction: {status}",
+  "@reductionStatus": {
+    "placeholders": {
+      "status": {
+        "type": "Object"
+      }
+    }
+  },
+  "routingDataStatus": "Routing data: {status}",
+  "@routingDataStatus": {
+    "placeholders": {
+      "status": {
+        "type": "Object"
+      }
+    }
+  },
+  "routingProfileGone": "This routing profile no longer exists.",
+  "routingProfileRemoved": "Routing profile removed",
+  "happRoutingJson": "Happ routing JSON",
+  "editNamed": "Edit {name}",
+  "@editNamed": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteFailed": "Delete failed.",
+  "deleteSubscriptionNamedQuestion": "Delete {name} and its stored nodes?",
+  "@deleteSubscriptionNamedQuestion": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteSubscriptionQuestion": "Delete subscription?",
+  "showFailed": "Show failed.",
+  "hiddenServers": "Hidden servers",
+  "deviceIdNotReset": "Device ID not reset.",
+  "deviceIdResetHelp": "{name} will see this device as new. If it limits devices, the new ID needs a free slot, and the old one may hold a slot until {name} removes it. Your other subscriptions keep their IDs.",
+  "@deviceIdResetHelp": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "resetDeviceIdQuestion": "Reset device ID for {name}?",
+  "@resetDeviceIdQuestion": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "hideFailed": "Hide failed.",
+  "serversStayHidden": "They stay hidden after refreshes. Show them again from Hidden servers.",
+  "serversRemovedFrom": "They are removed from {name}.",
+  "@serversRemovedFrom": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteCountQuestion": "Delete {count}?",
+  "@deleteCountQuestion": {
+    "placeholders": {
+      "count": {
+        "type": "Object"
+      }
+    }
+  },
+  "hideCountQuestion": "Hide {count}?",
+  "@hideCountQuestion": {
+    "placeholders": {
+      "count": {
+        "type": "Object"
+      }
+    }
+  },
+  "serverStaysHidden": "{name} stays hidden after refreshes. Show it again from Hidden servers.",
+  "@serverStaysHidden": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteNamedQuestion": "Delete {name}?",
+  "@deleteNamedQuestion": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteServerQuestion": "Delete server?",
+  "hideServerQuestion": "Hide server?",
+  "configNotSaved": "Config not saved. It must be valid Xray JSON for one server.",
+  "copyConfigFailed": "Could not copy the config.",
+  "nextRefreshReplacesEdits": "{name}’s next refresh replaces your edits.",
+  "@nextRefreshReplacesEdits": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "serverConfigUnavailable": "Server config unavailable.",
+  "refreshToShowConfig": "Refresh {name} to show this server’s config.",
+  "@refreshToShowConfig": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "providerHidesConfig": "The provider hides this server’s config.",
+  "renameFailed": "Rename failed.",
+  "emptyUsesProviderName": "Leave empty to use the provider’s name.",
+  "renameSubscription": "Rename subscription",
+  "downloadOptionsNotSaved": "Subscription download options could not be saved.",
+  "checkHostsAndRanges": "Check the host names and fragmentation ranges.",
+  "refreshWholeHours": "Refresh takes whole hours from 1 to 168.",
+  "fragmentIntervalRangeHelp": "0–1000, or a range such as 10-100",
+  "fragmentIntervalMs": "Fragment interval (ms)",
+  "fragmentLengthRangeHelp": "1–65535, or a range such as 80-250",
+  "fragmentLengthBytes": "Fragment length (bytes)",
+  "fragmentClientHello": "Fragment TLS ClientHello",
+  "httpHostHelp": "Provider host for domain fronting. HTTPS subscriptions only.",
+  "httpHostOptional": "HTTP Host (optional)",
+  "connectAddressHelp": "Provider host or IP; TLS still verifies the subscription hostname.",
+  "connectAddressOptional": "Connect address (optional)",
+  "userAgentHelp": "For providers that serve only the clients they recognize.",
+  "userAgentOptional": "User agent (optional)",
+  "fallbackHostsWarning": "Tried in order after download failures. The subscription path and token are sent to these hosts. Only add hosts supplied by your provider. HTTP 404 and 410 stop retries.",
+  "fallbackHostsHelp": "One host per line, up to eight. No scheme, port or path.",
+  "fallbackHosts": "Fallback hosts",
+  "refreshFollowAppHelp": "Leave empty to follow the app setting ({hours} h). 1–168.",
+  "@refreshFollowAppHelp": {
+    "placeholders": {
+      "hours": {
+        "type": "Object"
+      }
+    }
+  },
+  "refreshFollowProviderHelp": "Leave empty to follow the provider. 1–168.",
+  "providerHours": "Provider: {hours} h",
+  "@providerHours": {
+    "placeholders": {
+      "hours": {
+        "type": "Object"
+      }
+    }
+  },
+  "refreshEveryHoursOverride": "Refresh every (hours) · override",
+  "subscriptionDownloads": "Subscription downloads",
+  "sharingUnavailable": "Sharing unavailable. Refresh the subscription and check whether the provider allows sharing.",
+  "copyDetailsFailed": "Could not copy connection details.",
+  "anyoneCanUseDetails": "Anyone with this code or copied text can use these connection details.",
+  "configTooLargeForQr": "This configuration is too large for a QR code. Use Copy.",
+  "connectionQrCode": "Connection QR code",
+  "backupNotSaved": "Backup could not be saved.",
+  "backupNotRestored": "Backup could not be restored.",
+  "backupNotSavedCheck": "Backup could not be saved. Refresh subscriptions and check provider sharing restrictions.",
+  "restoreFailedCheck": "Restore failed. Check the password and backup file.",
+  "backupUnsupported": "This catalog cannot be backed up: a restore accepts at most 4,096 servers and names up to 1,024 bytes.",
+  "restoreRollbackFailed": "Restore failed and recovery is incomplete. Restart Elarni.",
+  "refreshBeforeBackup": "Refresh every subscription before creating a backup.",
+  "sharingDisabledByProvider": "A provider has disabled sharing and backups.",
+  "encryptedBackupSaved": "Encrypted backup saved.",
+  "backupRestored": "Backup restored. Refresh subscription and routing data before connecting.",
+  "chooseBackupAndRestore": "Choose backup and restore",
+  "saveBackup": "Save backup",
+  "backupPasswordRules": "Use at least 12 characters and matching passwords.",
+  "confirmPassword": "Confirm password",
+  "atLeast12Characters": "At least 12 characters",
+  "backupPassword": "Backup password",
+  "createBackupHelp": "Saves subscriptions, servers, group choices and routing in a password-protected file. Refresh subscriptions first; providers that disable sharing also disable backup. Keep the password: it cannot be recovered.",
+  "restoreBackupReplacesHelp": "Replaces subscriptions, servers and routing. Automatic failover is disabled. Refresh subscriptions and downloaded routing data afterward. Tunnel settings and login credentials stay on this device.",
+  "trustedWifiRules": "Use up to 64 names of at most 32 bytes each, without tabs.",
+  "oneNetworkPerLine": "One network name per line",
+  "oneCidrPerLine": "One CIDR per line",
+  "icmpDisconnectsTunnel": "Elarni will disconnect the tunnel for this test and restore it afterward.",
+  "runIcmpTestQuestion": "Run ICMP test?",
+  "credentialsNotApplied": "Credentials could not be applied.",
+  "saveAndEnable": "Save & enable",
+  "credentialRules": "Use 1–255 bytes per field, without control characters; usernames cannot contain a colon.",
+  "enterPassword": "Enter password",
+  "password": "Password",
+  "enterUsername": "Enter username",
+  "username": "Username",
+  "setProxyCredentials": "Set credentials for SOCKS5 and HTTP connections.",
+  "proxyCredentialsStored": "Stored securely for your account. Existing credentials are never displayed.",
+  "proxyAuthentication": "Proxy authentication",
+  "useValidRanges": "Use valid increasing ranges within the displayed limits.",
+  "fragmentIntervalHelp": "A value or range from 0 to 1000",
+  "intervalMs": "Interval (ms)",
+  "fragmentLengthHelp": "A value or range from 1 to 65535",
+  "fragmentPacketsHelp": "tlshello or a packet range, such as 1-3",
+  "fragmentPackets": "Packets",
+  "feedNotSaved": "The feed could not be saved.",
+  "feedNeedsHttps": "Enter an https:// address, or leave it empty to turn the check off.",
+  "feedEmptyTurnsOff": "Leave empty to turn the check off.",
+  "feedAddress": "Feed address",
+  "useDifferentPorts": "Use different ports between 1 and 65535.",
+  "httpPort": "HTTP port",
+  "socksPort": "SOCKS5 port",
+  "listenerPorts": "Listener ports",
+  "retrySelectedServer": "Retry selected server",
+  "checkConnection": "Check connection",
+  "refreshStatus": "Refresh status",
+  "diagnosticsContents": "Diagnostics contain connection state and selected runtime counters. Credentials, subscription URLs and browsing destinations are excluded. Nothing is uploaded.",
+  "recoveryTriesAllowedBackups": "Only your allowed backup servers may be tried.",
+  "recoveryStaysOnServer": "Recovery stays on your selected server.",
+  "passingCheckScope": "A passing check verifies one target at that time. It does not verify every app or website.",
+  "connectionStateLine": "Connection: {state}",
+  "@connectionStateLine": {
+    "placeholders": {
+      "state": {
+        "type": "Object"
+      }
+    }
+  },
+  "connectionTroubleshooting": "Connection troubleshooting",
+  "subscriptionProfile": "Subscription profile",
+  "customProfile": "Custom profile",
+  "originalVersion": "Original version",
+  "skippedGeodata": "Direct, Block and domestic DNS rules skip codes the geofiles lack: {codes}.",
+  "@skippedGeodata": {
+    "placeholders": {
+      "codes": {
+        "type": "String"
+      }
+    }
+  },
+  "geofileDetails": "{bytes} bytes · Original {original} bytes\nUpdated {updated}",
+  "@geofileDetails": {
+    "placeholders": {
+      "bytes": {
+        "type": "String"
+      },
+      "original": {
+        "type": "String"
+      },
+      "updated": {
+        "type": "String"
+      }
+    }
+  },
+  "unknown": "Unknown",
+  "managedListsError": "Managed lists: {error}",
+  "@managedListsError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "serverName": "Server name",
+  "diagnosticsSection": "Diagnostics",
+  "recordConnectionDiagnostics": "Record connection diagnostics",
+  "recordConnectionDiagnosticsHelp": "Records connection timing, byte counts and errors while connected, so a problem can be traced. No sites, addresses, credentials or content. Uses little CPU; changing it reconnects.",
+  "markAction": "Mark",
+  "markProblemNow": "Mark a problem now",
+  "markProblemNowHelp": "Also on the main screen while recording.",
+  "saveRecordingAsZip": "Save recording as ZIP",
+  "problemMarkedAt": "Problem marked at {time}. Export the recording when you are done.",
+  "@problemMarkedAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "markNotSaved": "The mark could not be saved.",
+  "recordingSaved": "Recording saved.",
+  "recordingEmpty": "Nothing is recorded yet. Turn on Record connection diagnostics, reproduce the problem, then export.",
+  "recordingNotSaved": "The recording could not be saved. Choose a writable location and retry.",
+  "recordingConnectionDiagnostics": "Recording connection diagnostics",
+  "markProblem": "Mark problem"
+}

@@ -1,0 +1,36 @@
+#!/bin/sh
+# Fast checks on the files a push changes, so CI's analysis and format failures show up in seconds:
+# flutter analyze on changed Dart files, gofmt on changed Go files, cargo fmt when Rust changed.
+# Enable once per clone: git config core.hooksPath scripts/git-hooks. Skip one push: git push --no-verify.
+# It reads the working tree, which matches the pushed commits when nothing is left uncommitted.
+set -eu
+zero=0000000000000000000000000000000000000000
+files=$(
+  while read -r _ local _ remote; do
+    [ "$local" = "$zero" ] && continue  # a deleted branch
+    if [ "$remote" != "$zero" ] && git cat-file -e "$remote^{commit}" 2>/dev/null; then
+      base=$remote
+    else
+      # A new branch: compare with main as last fetched.
+      base=$(git merge-base "$local" refs/remotes/origin/main 2>/dev/null) || continue
+    fi
+    git diff --name-only --diff-filter=ACMR "$base" "$local"
+  done | sort -u
+)
+[ -n "$files" ] || exit 0
+dart=$(printf '%s\n' "$files" | grep -E '^(lib|bin|test)/.*\.dart$' || true)
+go=$(printf '%s\n' "$files" | grep -E '^Vendor/.*\.go$' || true)
+rust=$(printf '%s\n' "$files" | grep -E '\.rs$|(^|/)Cargo\.toml$' || true)
+status=0
+if [ -n "$go" ]; then
+  unformatted=$(printf '%s\n' "$go" | xargs gofmt -l)
+  if [ -n "$unformatted" ]; then echo "pre-push: gofmt -w these files:"; echo "$unformatted"; status=1; fi
+fi
+if [ -n "$rust" ]; then
+  cargo fmt --all -- --check || { echo "pre-push: run cargo fmt --all"; status=1; }
+fi
+if [ -n "$dart" ]; then
+  # shellcheck disable=SC2086  # repository paths have no spaces
+  flutter analyze --no-pub $dart || { echo "pre-push: flutter analyze found problems"; status=1; }
+fi
+exit $status

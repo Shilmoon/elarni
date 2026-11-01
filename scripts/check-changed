@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Run only the checks that the working tree's changes can affect, in parallel.
+
+Passing checks print one line; failing checks print the tail of their output.
+Each check still writes its own .build/check-results report.
+"""
+import argparse
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
+
+root = Path(__file__).resolve().parent.parent
+python = sys.executable
+COMMANDS = {
+    'go': ['sh', 'scripts/check-tests', 'go'],
+    'rust': ['sh', 'scripts/check-tests', 'rust'],
+    'flutter': ['sh', 'scripts/check-tests', 'flutter'],
+    'swift': ['sh', 'scripts/check-tests', 'swift'],
+    'windows': [python, 'scripts/check-windows'],
+    'scripts': [python, 'scripts/check_report.py', '--', python, '-m', 'unittest', 'discover', '-s', 'scripts', '-p', '*_test.py'],
+    'lint': ['sh', 'scripts/check-tests', 'lint'],
+    'race': ['sh', 'scripts/check-tests', 'race'],
+}
+QUIET = ('.md', '.txt', 'LICENSE', '.gitignore', '.gitattributes')
+# Go's timing tests (TestRealtimeFlowSkipsDownloadQueues) miss their bounds while other suites load the CPU,
+# so go (about 30 s) runs alone before the rest start.
+ALONE_FIRST = 'go'
+
+
+def changed(base):
+    def git(*args):
+        output = subprocess.run(['git', '-C', str(root), *args], check=True, capture_output=True).stdout
+        return [path for path in output.decode().split('\0') if path]
+    return sorted(set(git('diff', '--name-only', '--no-renames', '-z', base)) |
+                  set(git('ls-files', '--others', '--exclude-standard', '-z')))
+
+
+def select(paths):
+    selected, unmapped = set(), []
+    for path in paths:
+        hits = set()
+        if path.startswith(('Vendor/Xray-core/', 'Vendor/libXray/')) or path in ('go.work', 'go.work.sum'):
+            hits |= {'go', 'windows', 'swift'}
+        if path.startswith(('native/', 'Vendor/tun2proxy/')) or path in ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml'):
+            hits |= {'rust', 'swift'}
+            if not path.startswith(('native/elarni-packet-bridge/', 'Vendor/tun2proxy/')):
+                hits.add('windows')
+        if path.startswith(('lib/', 'bin/')) or path in ('pubspec.yaml', 'pubspec.lock', 'analysis_options.yaml'):
+            hits |= {'flutter', 'windows'}
+        if path.startswith('test/'):
+            # The desktop flow also picks the windows_*.png codes from its file dialog.
+            desktop = path.startswith('test/windows_proxy') or path.startswith('test/windows_') and path.endswith('.png')
+            hits |= {'flutter', 'windows'} if desktop else {'flutter'}
+        if path.startswith(('macos/', 'ios/')):
+            hits.add('swift')
+        if path == 'scripts/check-tests':
+            hits |= {'go', 'rust', 'flutter', 'swift'}
+        elif path == 'scripts/check-windows':
+            hits.add('windows')
+        elif path.startswith('scripts/'):
+            hits.add('scripts')
+        # CI runs the desktop flow off macOS and the Swift checks only on macOS.
+        hits.discard('windows' if sys.platform == 'darwin' else 'swift')
+        if hits:
+            selected |= hits
+        elif not (path.endswith(QUIET) or path.startswith(('docs/', '.'))):
+            unmapped.append(path)
+    return sorted(selected), unmapped
+
+
+def everything():
+    # Every check CI runs on this OS; the static and race checks run only on Linux.
+    names = set(COMMANDS) - {'windows' if sys.platform == 'darwin' else 'swift'}
+    return sorted(names if sys.platform.startswith('linux') else names - {'lint', 'race'})
+
+
+def tail(text, lines=80):
+    return '\n'.join(text.rstrip().splitlines()[-lines:])
+
+
+def main():
+    # A legacy console code page cannot encode every character a check prints;
+    # crashing here would orphan the checks still running.
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(errors='replace')
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument('--base', default='HEAD', help='compare against this commit (default: HEAD)')
+    parser.add_argument('--all', action='store_true', help='run every check CI runs on this OS, changed or not')
+    parser.add_argument('--dry-run', action='store_true', help='print the selected checks without running them')
+    arguments = parser.parse_args()
+    selected, unmapped = (everything(), []) if arguments.all else select(changed(arguments.base))
+    if unmapped:
+        print('No local check covers: ' + ', '.join(unmapped), file=sys.stderr)
+    if arguments.dry_run:
+        print(*selected)
+        return 0
+    if not selected:
+        print('Nothing to check.')
+        return 0
+    environment = dict(os.environ, ELARNI_FLUTTER_REPORTER='failures-only', CARGO_TERM_QUIET='true')
+    environment.pop('ELARNI_CHECK_REPORT', None)
+    started = time.monotonic()
+    waiting, pending = list(selected), {}
+    failed = []
+    while waiting or pending:
+        for name in list(waiting):
+            if name == ALONE_FIRST or (ALONE_FIRST not in waiting and ALONE_FIRST not in pending):
+                waiting.remove(name)
+                log = tempfile.TemporaryFile()
+                pending[name] = (subprocess.Popen(COMMANDS[name], cwd=root, env=environment, stdout=log, stderr=subprocess.STDOUT), log, time.monotonic())
+        for name, (process, log, began) in list(pending.items()):
+            code = process.poll()
+            if code is None:
+                continue
+            del pending[name]
+            log.seek(0)
+            output = log.read().decode(errors='replace')
+            report = next((line.split(': ', 1)[1] for line in output.splitlines() if line.startswith('Check report: ')), '')
+            print(f"{'PASS' if code == 0 else 'FAIL'} {name} {time.monotonic() - began:.0f}s {report}".rstrip(), flush=True)
+            if code:
+                failed.append(name)
+                print(tail(output), flush=True)
+        time.sleep(.2)
+    print(f"{'FAILED: ' + ' '.join(failed) if failed else 'All passed'} in {time.monotonic() - started:.0f}s")
+    return 1 if failed else 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

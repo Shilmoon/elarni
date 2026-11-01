@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Package an exported Developer ID app with native notarization and stapling."""
+import argparse
+import json
+from pathlib import Path
+import plistlib
+import subprocess
+import sys
+import tempfile
+
+from release_support import prepare_output, require_files, version, write_manifest
+
+
+def run(*arguments):
+    subprocess.run([str(value) for value in arguments], check=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument('--app', type=Path, help='Existing exported app; original is never modified')
+    source.add_argument('--archive', type=Path, help='Xcode archive to export using --export-options')
+    parser.add_argument('--export-options', type=Path, help='Xcode Developer ID export options plist')
+    parser.add_argument('--notary-profile', help='Existing notarytool Keychain profile name')
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--unsigned', action='store_true', help='Create a clearly labeled development candidate')
+    parser.add_argument('--development', action='store_true',
+                        help='Verify an Apple Development signature; it runs only on Macs in its profile')
+    parser.add_argument('--dmg', action='store_true', help='Also build a drag-to-Applications disk image')
+    args = parser.parse_args()
+    if sys.platform != 'darwin':
+        parser.error('macOS packaging requires Xcode and native Apple tools')
+    if args.archive and (not args.export_options or args.unsigned or args.development):
+        parser.error('Archive export requires Developer ID export options; other modes take --app')
+    if (args.unsigned or args.development) and args.notary_profile:
+        parser.error('Unsigned and development candidates cannot be notarized')
+    if args.unsigned and args.development:
+        parser.error('Choose either --unsigned or --development')
+    if not args.unsigned and not args.development and not args.notary_profile:
+        parser.error('Production packaging requires --notary-profile')
+    if args.output.resolve().is_relative_to((args.app or args.archive).resolve()):
+        parser.error('Output must be outside the input app or archive')
+    prepare_output(args.output)
+    with tempfile.TemporaryDirectory(prefix='elarni-package-') as temporary:
+        stage = Path(temporary)
+        if args.archive:
+            options = plistlib.loads(args.export_options.read_bytes())
+            if options.get('method') != 'developer-id':
+                raise ValueError('Export method must be developer-id')
+            run('xcodebuild', '-exportArchive', '-archivePath', args.archive,
+                '-exportOptionsPlist', args.export_options, '-exportPath', stage / 'export')
+            apps = list((stage / 'export').glob('*.app'))
+            if len(apps) != 1:
+                raise ValueError('Expected one exported app')
+            original = apps[0]
+        else:
+            original = args.app
+        require_files(original, ['Contents/Info.plist', 'Contents/MacOS/Elarni',
+            'Contents/MacOS/elarni-core', 'Contents/MacOS/elarni-cli',
+            'Contents/Resources/elarni-cli',
+            'Contents/Helpers/ElarniCLI.app/Contents/Info.plist',
+            'Contents/Helpers/ElarniCLI.app/Contents/MacOS/elarni-cli',
+            'Contents/Resources/LICENSE', 'Contents/Resources/NOTICE', 'Contents/Resources/THIRD_PARTY_NOTICES',
+            'Contents/Resources/GOZXING_LICENSE.txt', 'Contents/Resources/XERRORS_LICENSE.txt',
+            'Contents/Frameworks/App.framework/Versions/A/App',
+            'Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets/AssetManifest.bin',
+            'Contents/Frameworks/FlutterMacOS.framework/Versions/A/FlutterMacOS',
+            'Contents/PlugIns/ElarniPacketTunnel.appex/Contents/Info.plist',
+            'Contents/PlugIns/ElarniPacketTunnel.appex/Contents/MacOS/ElarniPacketTunnel'])
+        cli = original / 'Contents/Helpers/ElarniCLI.app'
+        cli_info = plistlib.loads((cli / 'Contents/Info.plist').read_bytes())
+        if (cli_info.get('CFBundleIdentifier') != 'com.elarni.mac.cli' or
+                cli_info.get('CFBundleExecutable') != 'elarni-cli' or
+                cli_info.get('LSBackgroundOnly') is not True or
+                (original / 'Contents/MacOS/elarni-cli').resolve() !=
+                (original / 'Contents/Resources/elarni-cli').resolve()):
+            raise ValueError('CLI must retain its separate background bundle identity')
+        expected_version, expected_build = version().split('+')
+        for relative in ['Contents/Info.plist', 'Contents/PlugIns/ElarniPacketTunnel.appex/Contents/Info.plist']:
+            info = plistlib.loads((original / relative).read_bytes())
+            if (info.get('CFBundleShortVersionString'), info.get('CFBundleVersion')) != (expected_version, expected_build):
+                raise ValueError('Bundle version differs from pubspec.yaml: ' + relative)
+        for relative in ['Contents/MacOS/Elarni', 'Contents/MacOS/elarni-core',
+                         'Contents/Helpers/ElarniCLI.app/Contents/MacOS/elarni-cli',
+                         'Contents/Frameworks/App.framework/Versions/A/App',
+                         'Contents/Frameworks/FlutterMacOS.framework/Versions/A/FlutterMacOS',
+                         'Contents/PlugIns/ElarniPacketTunnel.appex/Contents/MacOS/ElarniPacketTunnel']:
+            run('lipo', original / relative, '-verify_arch', 'arm64')
+        app = stage / 'Elarni.app'
+        run('ditto', original, app)
+        if args.development:
+            run('codesign', '--verify', '--deep', '--strict', app)
+            detail = subprocess.check_output(['codesign', '-dvv', str(app)], stderr=subprocess.STDOUT, text=True)
+            if 'Authority=Apple Development:' not in detail:
+                raise ValueError('Expected an Apple Development signature')
+        elif not args.unsigned:
+            run('codesign', '--verify', '--deep', '--strict', app)
+            detail = subprocess.check_output(['codesign', '-dvv', str(app)], stderr=subprocess.STDOUT, text=True)
+            if 'Authority=Developer ID Application:' not in detail or 'runtime' not in detail:
+                raise ValueError('Expected Developer ID Application signature with hardened runtime')
+            submission = stage / 'notary.zip'
+            run('ditto', '-c', '-k', '--keepParent', app, submission)
+            result = subprocess.check_output(['xcrun', 'notarytool', 'submit', str(submission),
+                        '--keychain-profile', args.notary_profile, '--wait', '--output-format', 'json'], text=True)
+            receipt = json.loads(result)
+            (args.output / 'notarization.json').write_text(json.dumps(receipt, indent=2) + '\n')
+            if receipt.get('id'):
+                run('xcrun', 'notarytool', 'log', receipt['id'], '--keychain-profile', args.notary_profile,
+                    args.output / 'notarization-log.json')
+            if receipt.get('status') != 'Accepted':
+                raise ValueError('Notarization was not accepted; inspect retained receipt/log')
+            run('xcrun', 'stapler', 'staple', app)
+            run('xcrun', 'stapler', 'validate', app)
+            run('spctl', '--assess', '--type', 'execute', '--verbose', app)
+        name = ('Elarni-' + version().replace('+', '-') + '-macos-arm64' +
+                ('-UNSIGNED' if args.unsigned else '-DEVELOPMENT' if args.development else ''))
+        archive = args.output / (name + '.zip')
+        run('ditto', '-c', '-k', '--keepParent', app, archive)
+        run('unzip', '-tq', archive)
+        artifacts = [archive]
+        if args.dmg:
+            image = stage / 'image'
+            image.mkdir()
+            run('ditto', app, image / 'Elarni.app')
+            (image / 'Applications').symlink_to('/Applications')
+            disk = args.output / (name + '.dmg')
+            run('hdiutil', 'create', '-volname', 'Elarni', '-srcfolder', image, '-format', 'UDZO', disk)
+            run('hdiutil', 'verify', disk)
+            artifacts.append(disk)
+        print(json.dumps(write_manifest(args.output, artifacts, 'macos-arm64',
+                         'unsigned-candidate' if args.unsigned else
+                         'apple-development' if args.development else 'developer-id-notarized'), indent=2))
+
+
+if __name__ == '__main__':
+    main()

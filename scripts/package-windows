@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Validate and archive the complete x64 bundle; optionally sign a staged copy."""
+import argparse
+import json
+from pathlib import Path
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import zipfile
+
+from release_support import ROOT, prepare_output, require_files, version, windows_product_version, write_manifest
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--bundle', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--unsigned', action='store_true', help='Create a clearly labeled development candidate')
+    parser.add_argument('--diagnostics', action='store_true', help='Label a development flight-recorder candidate')
+    parser.add_argument('--signtool', default='signtool')
+    parser.add_argument('--certificate-thumbprint', help='Installed certificate; no private key/password is read by this script')
+    parser.add_argument('--timestamp-url', help='RFC3161 URL supplied by your certificate provider')
+    parser.add_argument('--msi', action='store_true', help='Also build a per-machine MSI with WiX Toolset v5')
+    parser.add_argument('--wix', default='wix')
+    args = parser.parse_args()
+    if args.diagnostics and not args.unsigned:
+        parser.error('Diagnostic candidates must be explicitly unsigned development builds')
+    if args.unsigned and (args.certificate_thumbprint or args.timestamp_url):
+        parser.error('Unsigned candidates cannot use signing options')
+    if bool(args.certificate_thumbprint) != bool(args.timestamp_url):
+        parser.error('Signing requires both certificate thumbprint and timestamp URL')
+    if not args.unsigned and sys.platform != 'win32':
+        parser.error('Authenticode signing/verification requires Windows')
+    if args.output.resolve().is_relative_to(args.bundle.resolve()):
+        parser.error('Output must be outside the input bundle')
+    # A clean Windows lacks the VC++ runtime that elarni.exe and elarni_domain.dll import.
+    vc_runtime = ['msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll']
+    binaries = ['elarni.exe', 'elarni-core.exe', 'elarni-cli.exe', 'elarni_domain.dll',
+                'flutter_windows.dll', 'wintun.dll'] + vc_runtime
+    diagnostic_files = ['Export diagnostics.cmd', 'DIAGNOSTICS.txt', 'BUILD-INFO.json']
+    if args.diagnostics:
+        require_files(args.bundle, diagnostic_files)
+    require_files(args.bundle, binaries + ['LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES',
+                  'GOZXING_LICENSE.txt', 'XERRORS_LICENSE.txt', 'WIREGUARD_WINDOWS_LICENSE.txt',
+                  'WINTUN_LICENSE.txt', 'data/icudtl.dat', 'data/app.so', 'data/flutter_assets/AssetManifest.bin'])
+    for name in binaries:
+        with (args.bundle / name).open('rb') as binary:
+            header = binary.read(64)
+            if len(header) != 64 or header[:2] != b'MZ':
+                raise ValueError('Expected x64 PE binary: ' + name)
+            binary.seek(struct.unpack_from('<I', header, 60)[0])
+            if binary.read(6) != b'PE\0\0\x64\x86':
+                raise ValueError('Expected x64 PE binary: ' + name)
+    # The archive and MSI take pubspec's version, so a stale build would ship under the new number.
+    built = windows_product_version(args.bundle / 'elarni.exe')
+    if built != version():
+        raise ValueError('Bundle version differs from pubspec.yaml: elarni.exe is ' + str(built))
+    # Only the elarni_diagnostics core carries the export command.
+    markers = [name for name in diagnostic_files if (args.bundle / name).exists()]
+    if b'--diagnostics-export' in (args.bundle / 'elarni-core.exe').read_bytes():
+        markers.append('elarni-core.exe')
+    if markers and not args.diagnostics:
+        parser.error('Diagnostic build detected (' + ', '.join(markers) + '); package it with --unsigned --diagnostics')
+    prepare_output(args.output)
+    name = 'Elarni-' + version().replace('+', '-') + '-windows-x64' + ('-DIAGNOSTICS' if args.diagnostics else '') + ('-UNSIGNED' if args.unsigned else '')
+    with tempfile.TemporaryDirectory(prefix='elarni-package-') as temporary:
+        staged = Path(temporary) / name
+        shutil.copytree(args.bundle, staged)
+        if not args.unsigned:
+            for binary in sorted(staged.rglob('*')):
+                if binary.suffix.lower() not in ('.exe', '.dll'):
+                    continue
+                # Keep the official Wintun and Microsoft publisher signatures unchanged.
+                if args.certificate_thumbprint and binary.name.lower() not in ['wintun.dll'] + vc_runtime:
+                    subprocess.run([args.signtool, 'sign', '/sha1', args.certificate_thumbprint,
+                                    '/fd', 'SHA256', '/tr', args.timestamp_url, '/td', 'SHA256', str(binary)], check=True)
+                subprocess.run([args.signtool, 'verify', '/pa', '/all', str(binary)], check=True)
+        archive = args.output / (name + '.zip')
+        with zipfile.ZipFile(archive, 'x', compression=zipfile.ZIP_DEFLATED) as package:
+            for path in sorted(staged.rglob('*')):
+                if path.is_file():
+                    package.write(path, path.relative_to(staged.parent))
+        with zipfile.ZipFile(archive) as package:
+            if package.testzip() is not None:
+                raise ValueError('Archive integrity check failed')
+        artifacts = [archive]
+        if args.msi:
+            installer = args.output / (name + '.msi')
+            # MSI versions are numeric major.minor.build; the pubspec build number is dropped.
+            subprocess.run([args.wix, 'build', str(ROOT / 'windows/installer/Elarni.wxs'), '-arch', 'x64',
+                            '-d', 'Version=' + version().split('+')[0], '-d', 'Bundle=' + str(staged),
+                            '-o', str(installer)], check=True)
+            installer.with_suffix('.wixpdb').unlink(missing_ok=True)
+            if not args.unsigned:
+                if args.certificate_thumbprint:
+                    subprocess.run([args.signtool, 'sign', '/sha1', args.certificate_thumbprint, '/fd', 'SHA256',
+                                    '/tr', args.timestamp_url, '/td', 'SHA256', str(installer)], check=True)
+                subprocess.run([args.signtool, 'verify', '/pa', str(installer)], check=True)
+            artifacts.append(installer)
+    print(json.dumps(write_manifest(args.output, artifacts, 'windows-x64',
+                     'unsigned-candidate' if args.unsigned else 'authenticode-verified'), indent=2))
+
+
+if __name__ == '__main__':
+    main()

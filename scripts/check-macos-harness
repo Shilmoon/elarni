@@ -1,0 +1,14 @@
+#!/bin/sh
+# Validates the disposable-suite runner and real network oracle using loopback only.
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$root"
+if [ -z "${ELARNI_CHECK_REPORT:-}" ]; then
+  exec python3 scripts/check_report.py -- sh "$root/scripts/check-macos-harness" "$@"
+fi
+mkdir -p .build/checks
+swiftc -swift-version 5 -parse-as-library \
+  macos/Checks/AcceptanceNetwork.swift macos/Checks/AcceptanceNetworkChecks.swift \
+  -o .build/checks/acceptance-network
+ELARNI_ACCEPTANCE_PROBE_CHECK="$root/.build/checks/acceptance-network" \
+  python3 -m unittest discover -s macos/Checks -p 'acceptance_harness_test.py' -v

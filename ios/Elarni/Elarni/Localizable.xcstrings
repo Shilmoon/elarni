@@ -1,0 +1,6762 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "" : {
+      "shouldTranslate" : false
+    },
+    " Profiles with several outbounds are shared from their own page." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : " Профилями с несколькими исходящими подключениями делятся с их собственной страницы."
+          }
+        }
+      }
+    },
+    " The last working servers were kept." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : " Последние рабочие серверы сохранены."
+          }
+        }
+      }
+    },
+    " Turn on On Demand in Settings › General so iOS reconnects it automatically." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : " Включите «По требованию» в разделе «Настройки › Общие», чтобы iOS переподключала его автоматически."
+          }
+        }
+      }
+    },
+    "%@" : {
+      "shouldTranslate" : false
+    },
+    "%@ %@" : {
+      "shouldTranslate" : false
+    },
+    "%@ details" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: подробности"
+          }
+        }
+      }
+    },
+    "%@ is gone from %@. Connected to %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ удалён из %2$@. Подключено к %3$@."
+          }
+        }
+      }
+    },
+    "%@ is limiting requests. Elarni retries later; wait before refreshing again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Провайдер «%@» ограничивает запросы. Elarni повторит позже; подождите, прежде чем обновлять снова."
+          }
+        }
+      }
+    },
+    "%@ left" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Осталось %@"
+          }
+        }
+      }
+    },
+    "%@ refused the request. The subscription may have expired, run out of traffic or reached its device limit. Contact the provider." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Провайдер «%@» отклонил запрос. Возможно, подписка истекла, закончился трафик или достигнут лимит устройств. Свяжитесь с провайдером."
+          }
+        }
+      }
+    },
+    "%@ removed or changed this link. Ask the provider for a new one." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Провайдер «%@» удалил или изменил эту ссылку. Попросите у провайдера новую."
+          }
+        }
+      }
+    },
+    "%@ stays hidden after refreshes. Show it again from Hidden servers." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«%@» останется скрытым после обновлений. Вернуть его можно в «Скрытых серверах»."
+          }
+        }
+      }
+    },
+    "%@ will see this device as new. If it limits devices, the new ID needs a free slot, and the old one may hold a slot until %@ removes it. Your other subscriptions keep their IDs." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для «%1$@» это устройство станет новым. Если провайдер ограничивает число устройств, новому ID нужно свободное место, а старый может занимать место, пока провайдер «%1$@» его не удалит. Остальные подписки сохранят свои ID."
+          }
+        }
+      }
+    },
+    "%@ · %@" : {
+      "shouldTranslate" : false
+    },
+    "%@ · Local group" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · Локальная группа"
+          }
+        }
+      }
+    },
+    "%@'s name says %@, but its exit is in %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В названии «%1$@» указано: %2$@, но выход — %3$@."
+          }
+        }
+      }
+    },
+    "%@, prefix length %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@, длина префикса %2$@"
+          }
+        }
+      }
+    },
+    "%@’s server did not answer. Your network may block it, or it is down. Retry later or ask the provider for a mirror." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер провайдера «%@» не ответил. Возможно, ваша сеть его блокирует или он не работает. Повторите позже или попросите у провайдера зеркало."
+          }
+        }
+      }
+    },
+    "%@’s server reported an error. Nothing is wrong with Elarni or this device; retry later." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер провайдера «%@» сообщил об ошибке. С Elarni и этим устройством всё в порядке; повторите позже."
+          }
+        }
+      }
+    },
+    "%lld" : {
+      "shouldTranslate" : false
+    },
+    "%lld milliseconds" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld millisecond"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld milliseconds"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld миллисекунды"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld миллисекунд"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld миллисекунда"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld миллисекунды"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld ms" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld мс"
+          }
+        }
+      }
+    },
+    "%lld s timeout" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тайм-аут %lld с"
+          }
+        }
+      }
+    },
+    "%lld selected" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрано: %lld"
+          }
+        }
+      }
+    },
+    "%lld servers" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld server"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld servers"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld сервера"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld серверов"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld сервер"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld сервера"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    ".ru, .рф, .su and these services' other domains" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : ".ru, .рф, .su и другие домены этих сервисов"
+          }
+        }
+      }
+    },
+    "1.1.1.1" : {
+      "shouldTranslate" : false
+    },
+    "A link asks Elarni to disconnect." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ссылка просит Elarni отключиться."
+          }
+        }
+      }
+    },
+    "A link or file wants to add profiles to Elarni." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ссылка или файл хочет добавить профили в Elarni."
+          }
+        }
+      }
+    },
+    "A previous update was interrupted. Disconnect to finish catalog recovery." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предыдущее обновление было прервано. Отключитесь, чтобы завершить восстановление каталога."
+          }
+        }
+      }
+    },
+    "Accent color" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Цвет акцента"
+          }
+        }
+      }
+    },
+    "Accessible" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступно"
+          }
+        }
+      }
+    },
+    "Account enabled" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Аккаунт включён"
+          }
+        }
+      }
+    },
+    "Active CPUs" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Активные процессоры"
+          }
+        }
+      }
+    },
+    "Active connection HTTP" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "HTTP через активное подключение"
+          }
+        }
+      }
+    },
+    "Add DNS host" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить DNS-хост"
+          }
+        }
+      }
+    },
+    "Add domain list" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить список доменов"
+          }
+        }
+      }
+    },
+    "Add it here." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавьте её здесь."
+          }
+        }
+      }
+    },
+    "Add preset" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить набор"
+          }
+        }
+      }
+    },
+    "Add server" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить сервер"
+          }
+        }
+      }
+    },
+    "Advanced" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дополнительно"
+          }
+        }
+      }
+    },
+    "Advanced network routes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дополнительные сетевые маршруты"
+          }
+        }
+      }
+    },
+    "All" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все"
+          }
+        }
+      }
+    },
+    "All locations" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все местоположения"
+          }
+        }
+      }
+    },
+    "All servers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все серверы"
+          }
+        }
+      }
+    },
+    "Allow LAN connections (IPv4)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешить подключения из локальной сети (IPv4)"
+          }
+        }
+      }
+    },
+    "Allow camera access in Settings to scan a QR code, or import an image." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешите доступ к камере в Настройках, чтобы сканировать QR-код, или импортируйте изображение."
+          }
+        }
+      }
+    },
+    "Allow notifications for Elarni in iPhone Settings to receive expiry reminders." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешите уведомления для Elarni в настройках iPhone, чтобы получать напоминания об окончании подписки."
+          }
+        }
+      }
+    },
+    "Allowed servers in fallback order" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешённые серверы в порядке резервирования"
+          }
+        }
+      }
+    },
+    "Alphabetical" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По алфавиту"
+          }
+        }
+      }
+    },
+    "Any" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Любое"
+          }
+        }
+      }
+    },
+    "App architecture" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Архитектура приложения"
+          }
+        }
+      }
+    },
+    "App setting" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройка приложения"
+          }
+        }
+      }
+    },
+    "Appearance" : {
+      "comment" : "Shown at run time through LocalizedStringKey; keep it although Xcode marks it stale.",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оформление"
+          }
+        }
+      }
+    },
+    "Apps & routes" : {
+      "comment" : "Shown at run time through LocalizedStringKey; keep it although Xcode marks it stale.",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приложения и маршруты"
+          }
+        }
+      }
+    },
+    "Assignments" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Назначения"
+          }
+        }
+      }
+    },
+    "Auto-update" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автообновление"
+          }
+        }
+      }
+    },
+    "Automatic" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автоматически"
+          }
+        }
+      }
+    },
+    "Automatic recovery" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автовосстановление"
+          }
+        }
+      }
+    },
+    "Automatic recovery was turned off because an allowed server was removed. Review the servers in Settings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автовосстановление выключено, потому что разрешённый сервер был удалён. Проверьте серверы в настройках."
+          }
+        }
+      }
+    },
+    "Automatic refresh is paused until this is resolved." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автообновление приостановлено, пока это не будет решено."
+          }
+        }
+      }
+    },
+    "Available" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступно"
+          }
+        }
+      }
+    },
+    "Backend" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бэкенд"
+          }
+        }
+      }
+    },
+    "Backup and repair" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Резервная копия и исправление"
+          }
+        }
+      }
+    },
+    "Backup password" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пароль копии"
+          }
+        }
+      }
+    },
+    "Backup restored. Check your server selection and routing before connecting." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Резервная копия восстановлена. Перед подключением проверьте выбранный сервер и маршрутизацию."
+          }
+        }
+      }
+    },
+    "Backup selected" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Резервная копия выбрана"
+          }
+        }
+      }
+    },
+    "Backups work with the desktop app and contain subscriptions, server credentials, favorites, selection, and routing. They exclude tunnel settings, listener credentials, and test history. Restore replaces the catalog, disables automatic recovery, and requests new source approvals. Disconnect first." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Резервные копии совместимы с настольным приложением и содержат подписки, учётные данные серверов, избранное, выбор и маршрутизацию. В них нет настроек туннеля, учётных данных слушателей и истории проверок. Восстановление заменяет каталог, отключает автовосстановление и требует заново подтвердить источники. Сначала отключитесь."
+          }
+        }
+      }
+    },
+    "Block" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Блокировать"
+          }
+        }
+      }
+    },
+    "Block traffic without VPN" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Блокировать трафик без VPN"
+          }
+        }
+      }
+    },
+    "Blue" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Синий"
+          }
+        }
+      }
+    },
+    "CPU count" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Число процессоров"
+          }
+        }
+      }
+    },
+    "Cancel" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отмена"
+          }
+        }
+      }
+    },
+    "Cancel tests" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отменить проверки"
+          }
+        }
+      }
+    },
+    "Check exit" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить выход"
+          }
+        }
+      }
+    },
+    "Check inconclusive; connection retained" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка не дала результата; подключение сохранено"
+          }
+        }
+      }
+    },
+    "Check the ports, routes, fragmentation ranges, and connection limits." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверьте порты, маршруты, диапазоны фрагментации и лимиты подключений."
+          }
+        }
+      }
+    },
+    "Check your subscription in Elarni before it expires." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверьте подписку в Elarni, пока она не истекла."
+          }
+        }
+      }
+    },
+    "Checking VPN status" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка состояния VPN"
+          }
+        }
+      }
+    },
+    "Choose a UTF-8 configuration, supported QR image, or encrypted Elarni backup." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите конфигурацию в UTF-8, поддерживаемое изображение с QR-кодом или зашифрованную резервную копию Elarni."
+          }
+        }
+      }
+    },
+    "Choose a server before connecting." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите сервер перед подключением."
+          }
+        }
+      }
+    },
+    "Choose a server to show again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите сервер, который нужно снова показать."
+          }
+        }
+      }
+    },
+    "Choose an image containing a configuration QR code, or scan with the camera." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите изображение с QR-кодом конфигурации или отсканируйте его камерой."
+          }
+        }
+      }
+    },
+    "Choose direct DNS by domain" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбирать прямой DNS по домену"
+          }
+        }
+      }
+    },
+    "Choose the selected server and allowed servers from the same subscription. Automatic selection needs at least two servers and health targets with different hostnames." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите основной и разрешённые серверы из одной подписки. Для автовыбора нужны как минимум два сервера и цели проверки с разными именами хостов."
+          }
+        }
+      }
+    },
+    "Clear search" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Очистить поиск"
+          }
+        }
+      }
+    },
+    "Comparing allowed servers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сравнение разрешённых серверов"
+          }
+        }
+      }
+    },
+    "Configuration notice" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Замечание о конфигурации"
+          }
+        }
+      }
+    },
+    "Configure the app and VPN extension with the same Apple Developer team, App Group, and Keychain group in Xcode." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройте в Xcode для приложения и VPN-расширения одну и ту же команду Apple Developer, App Group и группу Keychain."
+          }
+        }
+      }
+    },
+    "Configured excluded routes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настроенные исключённые маршруты"
+          }
+        }
+      }
+    },
+    "Configured included routes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настроенные включённые маршруты"
+          }
+        }
+      }
+    },
+    "Confirm password for export" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подтвердите пароль для экспорта"
+          }
+        }
+      }
+    },
+    "Confirm the subscription is current, choose another server, and check its IP preference. If a test fails, verify the HTTP target and expected response in Server tests." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Убедитесь, что подписка действует, выберите другой сервер и проверьте его настройку IP. Если проверка не проходит, проверьте HTTP-цель и ожидаемый ответ в разделе «Проверка серверов»."
+          }
+        }
+      }
+    },
+    "Connect" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключить"
+          }
+        }
+      }
+    },
+    "Connect Elarni" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключить Elarni"
+          }
+        }
+      }
+    },
+    "Connect address" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адрес подключения"
+          }
+        }
+      }
+    },
+    "Connect compares up to 10 allowed servers for at most one minute, using the median of three proxy tests. It keeps a healthy connection and uses allowed backups after a confirmed outage. Disconnect before comparing again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "При подключении сравнивается до 10 разрешённых серверов не дольше минуты по медиане трёх проверок через прокси. Рабочее подключение сохраняется, а разрешённые резервные серверы используются после подтверждённого сбоя. Перед новым сравнением отключитесь."
+          }
+        }
+      }
+    },
+    "Connect on untrusted Wi-Fi" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключаться в недоверенных сетях Wi-Fi"
+          }
+        }
+      }
+    },
+    "Connect on untrusted Wi-Fi connects when iPhone joins a Wi-Fi network outside your trusted list, even before you tap Connect. Trusted Wi-Fi and mobile data leave the VPN as it is. Disconnect pauses it until your next Connect." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«Подключаться в недоверенных сетях Wi-Fi» подключает VPN, когда iPhone входит в сеть Wi-Fi не из доверенного списка, даже до нажатия «Подключить». В доверенных сетях Wi-Fi и в мобильной сети VPN остаётся как есть. «Отключить» приостанавливает это до следующего «Подключить»."
+          }
+        }
+      }
+    },
+    "Connected" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключено"
+          }
+        }
+      }
+    },
+    "Connected · no traffic" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключено · нет трафика"
+          }
+        }
+      }
+    },
+    "Connected, awaiting check" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключено, ожидание проверки"
+          }
+        }
+      }
+    },
+    "Connected; traffic check unavailable with these routes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключено; проверка трафика недоступна с этими маршрутами"
+          }
+        }
+      }
+    },
+    "Connecting" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключение"
+          }
+        }
+      }
+    },
+    "Connection" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключение"
+          }
+        }
+      }
+    },
+    "Connection idle timeout (seconds)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тайм-аут простоя соединения (секунды)"
+          }
+        }
+      }
+    },
+    "Connection needs attention" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключение требует внимания"
+          }
+        }
+      }
+    },
+    "Connection recording" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запись подключения"
+          }
+        }
+      }
+    },
+    "Connection recovery" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановление подключения"
+          }
+        }
+      }
+    },
+    "Connection repair" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исправление подключения"
+          }
+        }
+      }
+    },
+    "Connects to the server selected in Elarni." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключается к серверу, выбранному в Elarni."
+          }
+        }
+      }
+    },
+    "Constrained" : {
+      "comment" : "Shown at run time through LocalizedStringKey; keep it although Xcode marks it stale.",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Экономия данных"
+          }
+        }
+      }
+    },
+    "Continue" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продолжить"
+          }
+        }
+      }
+    },
+    "Continue only if you trust this subscription provider. Approval applies to this destination chain." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продолжайте, только если доверяете этому провайдеру подписки. Подтверждение действует для этой цепочки адресов."
+          }
+        }
+      }
+    },
+    "Copied" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировано"
+          }
+        }
+      }
+    },
+    "Copy" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Копировать"
+          }
+        }
+      }
+    },
+    "Couldn’t complete the operation" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось выполнить операцию"
+          }
+        }
+      }
+    },
+    "Couldn’t confirm the switch. The server’s address could not be found. Check the address with your provider, or this network’s DNS." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось подтвердить переключение: адрес сервера не найден. Уточните адрес у провайдера или проверьте DNS этой сети."
+          }
+        }
+      }
+    },
+    "Couldn’t read QR image" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось прочитать изображение с QR-кодом"
+          }
+        }
+      }
+    },
+    "Country" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Страна"
+          }
+        }
+      }
+    },
+    "Create encrypted backup" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создать зашифрованную копию"
+          }
+        }
+      }
+    },
+    "Create rules for direct, proxy, and blocked traffic, or import a provider’s routing profile." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создайте правила для прямого, проксируемого и блокируемого трафика или импортируйте профиль маршрутизации провайдера."
+          }
+        }
+      }
+    },
+    "Current network path" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Текущий сетевой путь"
+          }
+        }
+      }
+    },
+    "Current rules / active tunnel" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Текущие правила / активный туннель"
+          }
+        }
+      }
+    },
+    "DNS" : {
+      "shouldTranslate" : false
+    },
+    "DNS over HTTPS" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DNS over HTTPS"
+          }
+        }
+      }
+    },
+    "DNS settings" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки DNS"
+          }
+        }
+      }
+    },
+    "Dark" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тёмная"
+          }
+        }
+      }
+    },
+    "Data" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Трафик"
+          }
+        }
+      }
+    },
+    "Data exhausted" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Трафик исчерпан"
+          }
+        }
+      }
+    },
+    "Data remaining" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Остаток трафика"
+          }
+        }
+      }
+    },
+    "Debug" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отладка"
+          }
+        }
+      }
+    },
+    "Default" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обычный"
+          }
+        }
+      }
+    },
+    "Default DNS uses 1.1.1.1. Configure remote DNS, direct DNS, Fake DNS, and domain rules in a routing profile, then assign it to a subscription." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DNS по умолчанию — 1.1.1.1. Удалённый и прямой DNS, Fake DNS и правила доменов настраиваются в профиле маршрутизации, который затем назначается подписке."
+          }
+        }
+      }
+    },
+    "Default IP type" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тип IP по умолчанию"
+          }
+        }
+      }
+    },
+    "Delete" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить"
+          }
+        }
+      }
+    },
+    "Delete %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить %@"
+          }
+        }
+      }
+    },
+    "Delete %@?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить %@?"
+          }
+        }
+      }
+    },
+    "Delete profile" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить профиль"
+          }
+        }
+      }
+    },
+    "Delete routing profile" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить профиль маршрутизации"
+          }
+        }
+      }
+    },
+    "Delete server" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить сервер"
+          }
+        }
+      }
+    },
+    "Delete subscription" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить подписку"
+          }
+        }
+      }
+    },
+    "Delete this routing profile?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить этот профиль маршрутизации?"
+          }
+        }
+      }
+    },
+    "Delete this server?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить этот сервер?"
+          }
+        }
+      }
+    },
+    "Delete this subscription and its servers?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить эту подписку и её серверы?"
+          }
+        }
+      }
+    },
+    "Destinations: %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адреса: %@."
+          }
+        }
+      }
+    },
+    "Details" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подробнее"
+          }
+        }
+      }
+    },
+    "Device" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Устройство"
+          }
+        }
+      }
+    },
+    "Device ID" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ID устройства"
+          }
+        }
+      }
+    },
+    "Diagnostics" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диагностика"
+          }
+        }
+      }
+    },
+    "Direct" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Напрямую"
+          }
+        }
+      }
+    },
+    "Direct DNS" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прямой DNS"
+          }
+        }
+      }
+    },
+    "Direct ICMP" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прямой ICMP"
+          }
+        }
+      }
+    },
+    "Direct TCP" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прямой TCP"
+          }
+        }
+      }
+    },
+    "Direct, Block and domestic DNS rules skip codes the geofiles lack: %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Правила «Напрямую», «Блокировать» и прямого DNS пропускают коды, которых нет в геофайлах: %@."
+          }
+        }
+      }
+    },
+    "Disabled" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выключено"
+          }
+        }
+      }
+    },
+    "Disconnect" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключить"
+          }
+        }
+      }
+    },
+    "Disconnect Elarni" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключить Elarni"
+          }
+        }
+      }
+    },
+    "Disconnect Elarni?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключить Elarni?"
+          }
+        }
+      }
+    },
+    "Disconnect also cancels pending work and disables on-demand reconnect. Import links use the same importer as the clipboard. Subscriptions still request source approval when needed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«Отключить» также отменяет незавершённые задачи и выключает переподключение «По требованию». Ссылки импорта обрабатываются так же, как буфер обмена. Подписки по-прежнему запрашивают подтверждение источника, когда это нужно."
+          }
+        }
+      }
+    },
+    "Disconnect before testing other servers, direct TCP, or ICMP. While connected, test the selected server to check the current VPN path." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключитесь, прежде чем проверять другие серверы, прямой TCP или ICMP. Во время подключения проверяйте выбранный сервер, чтобы проверить текущий путь VPN."
+          }
+        }
+      }
+    },
+    "Disconnect on sleep" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключаться в режиме сна"
+          }
+        }
+      }
+    },
+    "Disconnect to test these servers." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключитесь, чтобы проверить эти серверы."
+          }
+        }
+      }
+    },
+    "Disconnected" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключено"
+          }
+        }
+      }
+    },
+    "Disconnecting" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключение"
+          }
+        }
+      }
+    },
+    "Disconnects Elarni and keeps On Demand from reconnecting it." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключает Elarni и не даёт «По требованию» подключить его снова."
+          }
+        }
+      }
+    },
+    "Disconnects Elarni when it runs, and connects it otherwise." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключает Elarni, если он работает, и подключает в противном случае."
+          }
+        }
+      }
+    },
+    "Dismiss" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закрыть"
+          }
+        }
+      }
+    },
+    "Domain list" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Список доменов"
+          }
+        }
+      }
+    },
+    "Domain list refreshed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Список доменов обновлён."
+          }
+        }
+      }
+    },
+    "Domain lists refreshed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Списки доменов обновлены."
+          }
+        }
+      }
+    },
+    "Domains" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Домены"
+          }
+        }
+      }
+    },
+    "Domains using direct DNS" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Домены с прямым DNS"
+          }
+        }
+      }
+    },
+    "Done" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готово"
+          }
+        }
+      }
+    },
+    "Double" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Двойной"
+          }
+        }
+      }
+    },
+    "Download format" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Формат загрузки"
+          }
+        }
+      }
+    },
+    "Download options" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Параметры загрузки"
+          }
+        }
+      }
+    },
+    "Downloaded" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загружено"
+          }
+        }
+      }
+    },
+    "Due subscriptions and routing data refresh while the app is open. iOS can suspend the app in the background. Expiry reminders use local notifications." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подписки и данные маршрутизации обновляются по расписанию, пока приложение открыто. В фоне iOS может приостановить приложение. Напоминания об окончании подписки приходят локальными уведомлениями."
+          }
+        }
+      }
+    },
+    "Duplicate" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дублировать"
+          }
+        }
+      }
+    },
+    "Each value must be 1–255 UTF-8 bytes with no control characters. The username cannot contain a colon. Saving enables authentication and reconnects an active VPN. Credentials are kept in the shared Keychain." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каждое значение — от 1 до 255 байт UTF-8 без управляющих символов. Имя пользователя не может содержать двоеточие. Сохранение включает аутентификацию и переподключает активный VPN. Учётные данные хранятся в общей связке ключей."
+          }
+        }
+      }
+    },
+    "Edit DNS: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Изменить DNS: %@"
+          }
+        }
+      }
+    },
+    "Edit JSON" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Изменить JSON"
+          }
+        }
+      }
+    },
+    "Edit routing" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Изменить маршрутизацию"
+          }
+        }
+      }
+    },
+    "Edit rules and DNS" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Изменить правила и DNS"
+          }
+        }
+      }
+    },
+    "Edited" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Изменено"
+          }
+        }
+      }
+    },
+    "Elarni" : {
+      "shouldTranslate" : false
+    },
+    "Elarni VPN" : {
+      "shouldTranslate" : false
+    },
+    "Elarni connection lost" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elarni: соединение потеряно"
+          }
+        }
+      }
+    },
+    "Elarni disconnected" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elarni отключён"
+          }
+        }
+      }
+    },
+    "Elarni disconnected without a Stop from you. Tap Connect to reconnect." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elarni отключился, хотя вы не нажимали «Остановить». Нажмите «Подключить», чтобы подключиться снова."
+          }
+        }
+      }
+    },
+    "Elarni notices" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уведомления Elarni"
+          }
+        }
+      }
+    },
+    "Elarni sends each provider a different device ID, made from a random key on this device. Providers can't link your IDs to each other. A renamed subscription, a changed refresh interval and your routing choice stay after a refresh." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elarni отправляет каждому провайдеру свой ID устройства, созданный из случайного ключа на этом устройстве. Провайдеры не могут связать ваши ID между собой. Переименованная подписка, изменённый интервал обновления и ваш выбор маршрутизации сохраняются после обновления."
+          }
+        }
+      }
+    },
+    "Elarni was updated" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elarni был обновлён"
+          }
+        }
+      }
+    },
+    "Enable default VLESS mux" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включить mux для VLESS по умолчанию"
+          }
+        }
+      }
+    },
+    "Enable fragmentation" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включить фрагментацию"
+          }
+        }
+      }
+    },
+    "Enable sniffing" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включить сниффинг"
+          }
+        }
+      }
+    },
+    "Enabled" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включено"
+          }
+        }
+      }
+    },
+    "Enforce routes is for specific networks and cannot be combined with Block traffic without VPN or a default /0 route." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«Принудительные маршруты» предназначены для отдельных сетей и не совмещаются с «Блокировать трафик без VPN» или маршрутом по умолчанию /0."
+          }
+        }
+      }
+    },
+    "Enforce tunnel routes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Принудительные маршруты туннеля"
+          }
+        }
+      }
+    },
+    "Error" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ошибки"
+          }
+        }
+      }
+    },
+    "Evergreen" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вечнозелёный"
+          }
+        }
+      }
+    },
+    "Every %lld h" : {
+      "localizations" : {
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Каждые %lld ч"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Каждые %lld ч"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Каждый %lld ч"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Каждые %lld ч"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Every %lld hours" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Every hour"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Every %lld hours"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Каждые %lld часа"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Каждые %lld часов"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Каждый %lld час"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Каждые %lld часа"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Exact domains" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Точные домены"
+          }
+        }
+      }
+    },
+    "Excluded routes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исключённые маршруты"
+          }
+        }
+      }
+    },
+    "Exit" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Точка выхода"
+          }
+        }
+      }
+    },
+    "Exit check failed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось проверить выход"
+          }
+        }
+      }
+    },
+    "Exit: %@ · %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выход: %1$@ · %2$@"
+          }
+        }
+      }
+    },
+    "Expected HTTP status" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ожидаемый HTTP-статус"
+          }
+        }
+      }
+    },
+    "Expected body (optional)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ожидаемое тело ответа (необязательно)"
+          }
+        }
+      }
+    },
+    "Expected response body" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ожидаемое тело ответа"
+          }
+        }
+      }
+    },
+    "Expected status" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ожидаемый статус"
+          }
+        }
+      }
+    },
+    "Expensive" : {
+      "comment" : "Shown at run time through LocalizedStringKey; keep it although Xcode marks it stale.",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Платная сеть"
+          }
+        }
+      }
+    },
+    "Expired" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Срок истёк"
+          }
+        }
+      }
+    },
+    "Expiry reminders could not be updated. Check notification access in iPhone Settings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось обновить напоминания об окончании подписки. Проверьте доступ к уведомлениям в настройках iPhone."
+          }
+        }
+      }
+    },
+    "Export diagnostics" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Экспорт диагностики"
+          }
+        }
+      }
+    },
+    "Failed" : {
+      "comment" : "Shown at run time through LocalizedStringKey; keep it although Xcode marks it stale.",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не пройдена"
+          }
+        }
+      }
+    },
+    "Fallback hosts" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Резервные хосты"
+          }
+        }
+      }
+    },
+    "Favorite" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В избранное"
+          }
+        }
+      }
+    },
+    "Favorites" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Избранные"
+          }
+        }
+      }
+    },
+    "Favorites first" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сначала избранные"
+          }
+        }
+      }
+    },
+    "File" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл"
+          }
+        }
+      }
+    },
+    "Follow system" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Как в системе"
+          }
+        }
+      }
+    },
+    "Fragment interval" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Интервал фрагментов"
+          }
+        }
+      }
+    },
+    "Fragment length" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Длина фрагмента"
+          }
+        }
+      }
+    },
+    "GNU General Public License" : {
+      "shouldTranslate" : false
+    },
+    "Gateways" : {
+      "comment" : "Shown at run time through LocalizedStringKey; keep it although Xcode marks it stale.",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шлюзы"
+          }
+        }
+      }
+    },
+    "General" : {
+      "comment" : "Shown at run time through LocalizedStringKey; keep it although Xcode marks it stale.",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Общие"
+          }
+        }
+      }
+    },
+    "GeoIP URL" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адрес GeoIP"
+          }
+        }
+      }
+    },
+    "GeoSite URL" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адрес GeoSite"
+          }
+        }
+      }
+    },
+    "Get a subscription link or QR code from your provider. Elarni has no servers of its own." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Получите у провайдера ссылку на подписку или QR-код. У Elarni нет собственных серверов."
+          }
+        }
+      }
+    },
+    "Get connected in three steps" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключитесь в три шага"
+          }
+        }
+      }
+    },
+    "Go heap" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Куча Go"
+          }
+        }
+      }
+    },
+    "Group" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Группа"
+          }
+        }
+      }
+    },
+    "HTTP Host" : {
+      "shouldTranslate" : false
+    },
+    "HTTP inbound" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "HTTP-вход"
+          }
+        }
+      }
+    },
+    "HTTP method" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Метод HTTP"
+          }
+        }
+      }
+    },
+    "HTTP or HTTPS URL" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "URL с HTTP или HTTPS"
+          }
+        }
+      }
+    },
+    "HTTP port" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Порт HTTP"
+          }
+        }
+      }
+    },
+    "HTTP request" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "HTTP-запрос"
+          }
+        }
+      }
+    },
+    "HTTPS URL" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адрес HTTPS"
+          }
+        }
+      }
+    },
+    "Health check failed %lld of 3" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка не пройдена: %lld из 3"
+          }
+        }
+      }
+    },
+    "Healthy" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Работает"
+          }
+        }
+      }
+    },
+    "Hidden servers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скрытые серверы"
+          }
+        }
+      }
+    },
+    "Hidden servers · %lld" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скрытые серверы · %lld"
+          }
+        }
+      }
+    },
+    "Hide" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скрыть"
+          }
+        }
+      }
+    },
+    "Hide %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скрыть %@"
+          }
+        }
+      }
+    },
+    "Hide %@?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скрыть %@?"
+          }
+        }
+      }
+    },
+    "Hide server" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скрыть сервер"
+          }
+        }
+      }
+    },
+    "Hide this server?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скрыть этот сервер?"
+          }
+        }
+      }
+    },
+    "Home" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Главная"
+          }
+        }
+      }
+    },
+    "Hostname" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Имя хоста"
+          }
+        }
+      }
+    },
+    "ICMP endpoint" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Узел ICMP"
+          }
+        }
+      }
+    },
+    "IP addresses and networks" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IP-адреса и сети"
+          }
+        }
+      }
+    },
+    "IP preference" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предпочтение IP"
+          }
+        }
+      }
+    },
+    "IPv4" : {
+      "shouldTranslate" : false
+    },
+    "IPv4 or IPv6 address" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адрес IPv4 или IPv6"
+          }
+        }
+      }
+    },
+    "IPv6" : {
+      "shouldTranslate" : false
+    },
+    "Idle timeout: 30–3,600 seconds. Connection limits: 1–4,096. The iPhone runtime uses a 30 MiB soft Go heap target; total extension memory also includes native buffers and framework overhead." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тайм-аут простоя: 30–3600 секунд. Лимиты подключений: 1–4096. На iPhone среда выполнения держит мягкую цель кучи Go в 30 МиБ; общая память расширения включает также нативные буферы и накладные расходы фреймворков."
+          }
+        }
+      }
+    },
+    "If a connection fails" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Если подключение не удаётся"
+          }
+        }
+      }
+    },
+    "If iOS asks, allow the VPN configuration. Camera access is needed only for scanning; local-network permission is needed when accessing a local server or provider." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Если iOS спросит, разрешите конфигурацию VPN. Доступ к камере нужен только для сканирования, а разрешение на локальную сеть — для обращения к локальному серверу или провайдеру."
+          }
+        }
+      }
+    },
+    "If it contains the selected server, the VPN will disconnect. Provider routing owned by this subscription is removed too." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Если в ней выбранный сервер, VPN отключится. Маршрутизация провайдера из этой подписки тоже будет удалена."
+          }
+        }
+      }
+    },
+    "If no match" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Если нет совпадения"
+          }
+        }
+      }
+    },
+    "Import" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импорт"
+          }
+        }
+      }
+    },
+    "Import QR image" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импорт изображения с QR-кодом"
+          }
+        }
+      }
+    },
+    "Import a provider link or local server configuration." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импортируйте ссылку провайдера или локальную конфигурацию сервера."
+          }
+        }
+      }
+    },
+    "Import file" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импорт файла"
+          }
+        }
+      }
+    },
+    "Import from clipboard" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импорт из буфера обмена"
+          }
+        }
+      }
+    },
+    "Import this link?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импортировать эту ссылку?"
+          }
+        }
+      }
+    },
+    "In Apple Shortcuts, add a URL action with one of these links, followed by Open URLs. Opening a connection command brings Elarni to the foreground and uses your saved server." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В приложении «Команды» добавьте действие «URL» с одной из этих ссылок, а за ним — «Открыть URL». Команда подключения выводит Elarni на передний план и использует сохранённый сервер."
+          }
+        }
+      }
+    },
+    "Inbound credentials" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Учётные данные входящих подключений"
+          }
+        }
+      }
+    },
+    "Include subdomains" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "С поддоменами"
+          }
+        }
+      }
+    },
+    "Included routes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включённые маршруты"
+          }
+        }
+      }
+    },
+    "Including subdomains" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "С поддоменами"
+          }
+        }
+      }
+    },
+    "Independent second target" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Независимая вторая цель"
+          }
+        }
+      }
+    },
+    "Info" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Информация"
+          }
+        }
+      }
+    },
+    "Inherit" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Наследовать"
+          }
+        }
+      }
+    },
+    "Interfaces" : {
+      "comment" : "Shown at run time through LocalizedStringKey; keep it although Xcode marks it stale.",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Интерфейсы"
+          }
+        }
+      }
+    },
+    "Internet traffic is blocked until the VPN reconnects. Open Elarni to reconnect." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Интернет-трафик заблокирован, пока VPN не переподключится. Откройте Elarni, чтобы переподключиться."
+          }
+        }
+      }
+    },
+    "Interval range (ms)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диапазон интервала (мс)"
+          }
+        }
+      }
+    },
+    "It contacts a private network address." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Она обращается к адресу частной сети."
+          }
+        }
+      }
+    },
+    "It contacts this device." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Она обращается к этому устройству."
+          }
+        }
+      }
+    },
+    "Keep domain identity with Fake DNS" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранять домены с помощью Fake DNS"
+          }
+        }
+      }
+    },
+    "Keep names" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не разрешать имена"
+          }
+        }
+      }
+    },
+    "Keep selected server" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оставлять выбранный сервер"
+          }
+        }
+      }
+    },
+    "Keep-alive" : {
+      "shouldTranslate" : false
+    },
+    "Keys, addresses, host names and user names are hidden before a line is kept." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ключи, адреса, имена хостов и пользователей скрываются до сохранения строки."
+          }
+        }
+      }
+    },
+    "Last check" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последняя проверка"
+          }
+        }
+      }
+    },
+    "Last successful test" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последняя успешная проверка"
+          }
+        }
+      }
+    },
+    "Last test" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последняя проверка"
+          }
+        }
+      }
+    },
+    "Last update failed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последнее обновление не удалось"
+          }
+        }
+      }
+    },
+    "Latency" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Задержка"
+          }
+        }
+      }
+    },
+    "Leave empty to follow the app setting (%lld h). 1–168." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оставьте пустым, чтобы следовать настройке приложения (%lld ч). 1–168."
+          }
+        }
+      }
+    },
+    "Leave empty to follow the provider (%lld h). 1–168." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оставьте пустым, чтобы следовать провайдеру (%lld ч). 1–168."
+          }
+        }
+      }
+    },
+    "Leave empty to identify as Elarni. Some providers serve only the clients they recognize." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оставьте пустым, чтобы представляться как Elarni. Некоторые провайдеры обслуживают только знакомые им клиенты."
+          }
+        }
+      }
+    },
+    "Leave the name empty to use the provider’s name." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оставьте имя пустым, чтобы использовать имя от провайдера."
+          }
+        }
+      }
+    },
+    "Length range" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диапазон длины"
+          }
+        }
+      }
+    },
+    "Level" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уровень"
+          }
+        }
+      }
+    },
+    "Licenses and notices" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лицензии и уведомления"
+          }
+        }
+      }
+    },
+    "Light" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Светлая"
+          }
+        }
+      }
+    },
+    "List URL" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адрес списка"
+          }
+        }
+      }
+    },
+    "Listener credentials" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Учётные данные слушателей"
+          }
+        }
+      }
+    },
+    "Listeners run inside the VPN extension. LAN access requires authentication. Use different SOCKS and HTTP ports." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Слушатели работают внутри VPN-расширения. Для доступа из локальной сети нужна аутентификация. Используйте разные порты SOCKS и HTTP."
+          }
+        }
+      }
+    },
+    "Lists refresh daily while the app is open. Failed downloads retain the last valid rules. Edit lists in the Advanced section of Edit rules and DNS." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Списки обновляются раз в день, пока приложение открыто. При неудачной загрузке остаются последние рабочие правила. Списки редактируются в разделе «Дополнительно» экрана «Изменить правила и DNS»."
+          }
+        }
+      }
+    },
+    "Loading" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка"
+          }
+        }
+      }
+    },
+    "Local group" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Локальная группа"
+          }
+        }
+      }
+    },
+    "Local groups have no subscription link. Choose the servers to share as links." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У локальных групп нет ссылки подписки. Выберите серверы, которыми поделиться ссылками."
+          }
+        }
+      }
+    },
+    "Local proxy" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Локальный прокси"
+          }
+        }
+      }
+    },
+    "Logging is off. Choose a level to record the core log." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Журнал выключен. Выберите уровень, чтобы записывать журнал ядра."
+          }
+        }
+      }
+    },
+    "Logs" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Журнал"
+          }
+        }
+      }
+    },
+    "Low Power Mode" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Режим энергосбережения"
+          }
+        }
+      }
+    },
+    "Lowest latency" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Наименьшая задержка"
+          }
+        }
+      }
+    },
+    "Lowest latency on Connect" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Наименьшая задержка при подключении"
+          }
+        }
+      }
+    },
+    "Lowest latency: %lld milliseconds" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Lowest latency: %lld millisecond"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Lowest latency: %lld milliseconds"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Наименьшая задержка: %lld миллисекунды"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Наименьшая задержка: %lld миллисекунд"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Наименьшая задержка: %lld миллисекунда"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Наименьшая задержка: %lld миллисекунды"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Managed domain lists" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Управляемые списки доменов"
+          }
+        }
+      }
+    },
+    "Manual" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вручную"
+          }
+        }
+      }
+    },
+    "Mark a problem now" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отметить проблему сейчас"
+          }
+        }
+      }
+    },
+    "Match" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Совпадение"
+          }
+        }
+      }
+    },
+    "Matching domains use direct DNS; the others use remote DNS. Off preserves ordered fallback." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подходящие домены используют прямой DNS, остальные — удалённый. Если выключено, остаётся порядок с запасным вариантом."
+          }
+        }
+      }
+    },
+    "Message" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение"
+          }
+        }
+      }
+    },
+    "Model" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель"
+          }
+        }
+      }
+    },
+    "Monitoring" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мониторинг"
+          }
+        }
+      }
+    },
+    "Name" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Название"
+          }
+        }
+      }
+    },
+    "Needs your approval" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нужно ваше подтверждение"
+          }
+        }
+      }
+    },
+    "Network" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сеть"
+          }
+        }
+      }
+    },
+    "Never" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Никогда"
+          }
+        }
+      }
+    },
+    "New profile" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый профиль"
+          }
+        }
+      }
+    },
+    "New routing profile" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый профиль маршрутизации"
+          }
+        }
+      }
+    },
+    "Newest first" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сначала новые"
+          }
+        }
+      }
+    },
+    "Next refresh" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Следующее обновление"
+          }
+        }
+      }
+    },
+    "No" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет"
+          }
+        }
+      }
+    },
+    "No enabled routing profiles. Enable a profile in Routing." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет включённых профилей маршрутизации. Включите профиль в разделе «Маршрутизация»."
+          }
+        }
+      }
+    },
+    "No expiry" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бессрочно"
+          }
+        }
+      }
+    },
+    "No log lines yet. The core records them while it runs." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Записей пока нет. Ядро пишет их во время работы."
+          }
+        }
+      }
+    },
+    "No matching servers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет подходящих серверов"
+          }
+        }
+      }
+    },
+    "No server selected" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер не выбран"
+          }
+        }
+      }
+    },
+    "No subscriptions" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет подписок"
+          }
+        }
+      }
+    },
+    "No supported server configuration was found. Check the link or file format and try again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поддерживаемая конфигурация сервера не найдена. Проверьте ссылку или формат файла и повторите."
+          }
+        }
+      }
+    },
+    "None" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет"
+          }
+        }
+      }
+    },
+    "Not configured" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не настроено"
+          }
+        }
+      }
+    },
+    "Not downloaded" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не загружено"
+          }
+        }
+      }
+    },
+    "Not downloaded yet" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ещё не загружено"
+          }
+        }
+      }
+    },
+    "Not provided" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не указано"
+          }
+        }
+      }
+    },
+    "Nothing is recorded yet. Turn on Record connection diagnostics, reproduce the problem, then export." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока ничего не записано. Включите «Записывать диагностику подключения», воспроизведите проблему и экспортируйте запись."
+          }
+        }
+      }
+    },
+    "Notice" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уведомление"
+          }
+        }
+      }
+    },
+    "OK" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ОК"
+          }
+        }
+      }
+    },
+    "Off" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выкл."
+          }
+        }
+      }
+    },
+    "Off — allowed servers changed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выкл. — разрешённые серверы изменились"
+          }
+        }
+      }
+    },
+    "On" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вкл."
+          }
+        }
+      }
+    },
+    "On Demand" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По требованию"
+          }
+        }
+      }
+    },
+    "One hostname per line, up to 8. Your subscription token will also be sent to these hosts. Add only hosts you trust." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По одному имени хоста на строку, не больше 8. Токен вашей подписки тоже будет отправляться на эти хосты. Добавляйте только хосты, которым доверяете."
+          }
+        }
+      }
+    },
+    "One network name per line. Joining one of these leaves the VPN as it is." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По одному имени сети на строку. При подключении к одной из них VPN остаётся как есть."
+          }
+        }
+      }
+    },
+    "One target per line. Domains support domain:, full:, regexp:, and geosite:. Networks support IPv4, IPv6, CIDR, and geoip:." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По одной цели на строку. Для доменов поддерживаются domain:, full:, regexp: и geosite:, для сетей — IPv4, IPv6, CIDR и geoip:."
+          }
+        }
+      }
+    },
+    "Online" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В сети"
+          }
+        }
+      }
+    },
+    "Open Settings" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть Настройки"
+          }
+        }
+      }
+    },
+    "Open file" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть файл"
+          }
+        }
+      }
+    },
+    "Open provider page" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть страницу провайдера"
+          }
+        }
+      }
+    },
+    "Open server list" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть список серверов"
+          }
+        }
+      }
+    },
+    "Operating system" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Операционная система"
+          }
+        }
+      }
+    },
+    "Operation in progress" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполняется операция"
+          }
+        }
+      }
+    },
+    "Orange" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оранжевый"
+          }
+        }
+      }
+    },
+    "Ordered fallback" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Резервные по порядку"
+          }
+        }
+      }
+    },
+    "Original" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оригинал"
+          }
+        }
+      }
+    },
+    "Other locations" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Другие местоположения"
+          }
+        }
+      }
+    },
+    "Other provider fields are preserved. Edit JSON is available for the complete profile." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Остальные поля провайдера сохраняются. Весь профиль можно изменить в JSON."
+          }
+        }
+      }
+    },
+    "Outdated" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Устарело"
+          }
+        }
+      }
+    },
+    "Packets (tlshello or range)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пакеты (tlshello или диапазон)"
+          }
+        }
+      }
+    },
+    "Packets received" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пакетов получено"
+          }
+        }
+      }
+    },
+    "Packets sent" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пакетов отправлено"
+          }
+        }
+      }
+    },
+    "Passed" : {
+      "comment" : "Shown at run time through LocalizedStringKey; keep it although Xcode marks it stale.",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пройдена"
+          }
+        }
+      }
+    },
+    "Password" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пароль"
+          }
+        }
+      }
+    },
+    "Paste link" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вставить ссылку"
+          }
+        }
+      }
+    },
+    "Physical memory" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Физическая память"
+          }
+        }
+      }
+    },
+    "Pin subscription" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закрепить подписку"
+          }
+        }
+      }
+    },
+    "Point the camera at a configuration QR code." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Наведите камеру на QR-код конфигурации."
+          }
+        }
+      }
+    },
+    "Policy" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Политика"
+          }
+        }
+      }
+    },
+    "Preferences" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предпочтения"
+          }
+        }
+      }
+    },
+    "Press Connect. iOS asks once to allow the VPN configuration." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нажмите «Подключить». iOS один раз попросит разрешить конфигурацию VPN."
+          }
+        }
+      }
+    },
+    "Primary health target" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Основная цель проверки"
+          }
+        }
+      }
+    },
+    "Problem marked at %@. Export the recording in Troubleshooting when you are done." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проблема отмечена в %@. Когда закончите, экспортируйте запись в разделе «Диагностика»."
+          }
+        }
+      }
+    },
+    "Profile name" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Название профиля"
+          }
+        }
+      }
+    },
+    "Protection" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Защита"
+          }
+        }
+      }
+    },
+    "Protocol" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Протокол"
+          }
+        }
+      }
+    },
+    "Provider" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Провайдер"
+          }
+        }
+      }
+    },
+    "Provider defaults" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Значения провайдера"
+          }
+        }
+      }
+    },
+    "Provider device limit reached" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Достигнут лимит устройств у провайдера"
+          }
+        }
+      }
+    },
+    "Provider notice" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение провайдера"
+          }
+        }
+      }
+    },
+    "Provider order" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Как у провайдера"
+          }
+        }
+      }
+    },
+    "Provider profile" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Профиль провайдера"
+          }
+        }
+      }
+    },
+    "Provider requires device registration" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Провайдер требует регистрации устройства"
+          }
+        }
+      }
+    },
+    "Provider routing" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Маршрутизация провайдера"
+          }
+        }
+      }
+    },
+    "Provider routing can intentionally send some traffic directly. Check routing and excluded networks before interpreting a successful HTTP check as proof that all traffic uses the proxy." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Маршрутизация провайдера может намеренно направлять часть трафика напрямую. Проверьте маршрутизацию и исключённые сети, прежде чем считать успешную HTTP-проверку доказательством того, что весь трафик идёт через прокси."
+          }
+        }
+      }
+    },
+    "Provider state" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Состояние расширения"
+          }
+        }
+      }
+    },
+    "Proxy" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прокси"
+          }
+        }
+      }
+    },
+    "Proxy GET" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GET через прокси"
+          }
+        }
+      }
+    },
+    "Proxy HEAD" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "HEAD через прокси"
+          }
+        }
+      }
+    },
+    "Proxy HTTP" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "HTTP через прокси"
+          }
+        }
+      }
+    },
+    "Proxy rules and servers need codes the geofiles lack: %@. Fix the profile or its geofile links." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Правилам прокси и серверам нужны коды, которых нет в геофайлах: %@. Исправьте профиль или ссылки на его геофайлы."
+          }
+        }
+      }
+    },
+    "Proxy unmatched traffic" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проксировать остальной трафик"
+          }
+        }
+      }
+    },
+    "Purple" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фиолетовый"
+          }
+        }
+      }
+    },
+    "QR code for %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QR-код для %@"
+          }
+        }
+      }
+    },
+    "Reaches the internet in" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выходит в интернет"
+          }
+        }
+      }
+    },
+    "Reading QR image…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чтение изображения с QR-кодом…"
+          }
+        }
+      }
+    },
+    "Ready" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готова"
+          }
+        }
+      }
+    },
+    "Ready while app is open" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готово, пока приложение открыто"
+          }
+        }
+      }
+    },
+    "Recent" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недавние"
+          }
+        }
+      }
+    },
+    "Recent issues" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недавние проблемы"
+          }
+        }
+      }
+    },
+    "Recent servers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недавние серверы"
+          }
+        }
+      }
+    },
+    "Reconnecting" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переподключение"
+          }
+        }
+      }
+    },
+    "Record connection diagnostics" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Записывать диагностику подключения"
+          }
+        }
+      }
+    },
+    "Records connection timing, byte counts and errors while connected, so a problem can be traced. No sites, addresses, credentials or content. Uses little battery. Mark a problem on the main screen and export the recording from Troubleshooting." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока есть подключение, записывает время соединений, объёмы трафика и ошибки, чтобы проблему можно было отследить. Без сайтов, адресов, учётных данных и содержимого. Почти не расходует батарею. Отметьте проблему на главном экране и экспортируйте запись в разделе «Диагностика»."
+          }
+        }
+      }
+    },
+    "Recovered" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановлено"
+          }
+        }
+      }
+    },
+    "Recovery attempt %lld of 6" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Попытка восстановления %lld из 6"
+          }
+        }
+      }
+    },
+    "Recovery requires Block traffic without VPN and no bypass or provider routing rules." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для восстановления нужны «Блокировать трафик без VPN» и отсутствие правил обхода и маршрутизации провайдера."
+          }
+        }
+      }
+    },
+    "Recovery runs while the app is open, with at most 6 attempts over 2 minutes. Verified traffic checks and fallback require Include all networks, both default routes, and no bypass or provider routing rules. Keep selected server can reconnect with custom routes without claiming verified traffic. On Demand in General settings controls iOS background reconnects." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановление работает, пока приложение открыто: не более 6 попыток за 2 минуты. Проверке трафика и переходу на резервные серверы нужны «Включать все сети», оба маршрута по умолчанию и отсутствие правил обхода и маршрутизации провайдера. «Оставлять выбранный сервер» может переподключаться с пользовательскими маршрутами, не подтверждая трафик. Фоновым переподключением iOS управляет «По требованию» в общих настройках."
+          }
+        }
+      }
+    },
+    "Recovery stopped. Disconnect to reconcile the previous connection." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановление остановлено. Отключитесь, чтобы согласовать предыдущее подключение."
+          }
+        }
+      }
+    },
+    "Recovery time limit reached. Disconnect, then tap Connect to retry." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Время на восстановление истекло. Отключитесь, затем нажмите «Подключить», чтобы повторить."
+          }
+        }
+      }
+    },
+    "Reduce routing-data size" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уменьшать размер данных маршрутизации"
+          }
+        }
+      }
+    },
+    "Reduced to the codes in use" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сокращено до используемых кодов"
+          }
+        }
+      }
+    },
+    "Refresh" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновить"
+          }
+        }
+      }
+    },
+    "Refresh %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновить «%@»"
+          }
+        }
+      }
+    },
+    "Refresh all lists" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновить все списки"
+          }
+        }
+      }
+    },
+    "Refresh all routing data" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновить все данные маршрутизации"
+          }
+        }
+      }
+    },
+    "Refresh every (hours) · override" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновлять каждые (часы) · своё значение"
+          }
+        }
+      }
+    },
+    "Refresh list" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновить список"
+          }
+        }
+      }
+    },
+    "Refresh status" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновить состояние"
+          }
+        }
+      }
+    },
+    "Refreshes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновление"
+          }
+        }
+      }
+    },
+    "Refreshing" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновляется"
+          }
+        }
+      }
+    },
+    "Registered · set by your provider" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зарегистрировано · задано провайдером"
+          }
+        }
+      }
+    },
+    "Remote DNS" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалённый DNS"
+          }
+        }
+      }
+    },
+    "Remove" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Убрать"
+          }
+        }
+      }
+    },
+    "Remove Elarni’s saved VPN configuration?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить сохранённую конфигурацию VPN Elarni?"
+          }
+        }
+      }
+    },
+    "Remove favorite" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Убрать из избранного"
+          }
+        }
+      }
+    },
+    "Remove host" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить хост"
+          }
+        }
+      }
+    },
+    "Remove list" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить список"
+          }
+        }
+      }
+    },
+    "Rename" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переименовать"
+          }
+        }
+      }
+    },
+    "Rename server" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переименовать сервер"
+          }
+        }
+      }
+    },
+    "Rename subscription" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переименовать подписку"
+          }
+        }
+      }
+    },
+    "Repair VPN configuration" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исправить конфигурацию VPN"
+          }
+        }
+      }
+    },
+    "Repair VPN setup" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исправить настройку VPN"
+          }
+        }
+      }
+    },
+    "Repair configuration" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исправить конфигурацию"
+          }
+        }
+      }
+    },
+    "Repair removes only Elarni’s saved iOS VPN configuration. Your catalog and credentials remain. Disconnect first, then connect afterward to create the configuration again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исправление удаляет только сохранённую конфигурацию VPN Elarni в iOS. Каталог и учётные данные остаются. Сначала отключитесь, а потом подключитесь, чтобы создать конфигурацию заново."
+          }
+        }
+      }
+    },
+    "Repair removes only this app’s saved iOS VPN configuration. Your catalog and credentials remain. Connect afterward to create the configuration again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исправление удаляет только сохранённую конфигурацию VPN этого приложения в iOS. Каталог и учётные данные остаются. Потом подключитесь, чтобы создать конфигурацию заново."
+          }
+        }
+      }
+    },
+    "Replace with backup" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заменить резервной копией"
+          }
+        }
+      }
+    },
+    "Replace your current subscriptions and routing?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заменить текущие подписки и маршрутизацию?"
+          }
+        }
+      }
+    },
+    "Replace your edits with the provider’s version?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заменить ваши правки версией провайдера?"
+          }
+        }
+      }
+    },
+    "Require SOCKS5 and HTTP authentication" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Требовать аутентификацию SOCKS5 и HTTP"
+          }
+        }
+      }
+    },
+    "Reset" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сбросить"
+          }
+        }
+      }
+    },
+    "Reset device ID" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сбросить ID устройства"
+          }
+        }
+      }
+    },
+    "Reset device ID for %@?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сбросить ID устройства для «%@»?"
+          }
+        }
+      }
+    },
+    "Reset edits" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сбросить правки"
+          }
+        }
+      }
+    },
+    "Reset to provider version" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вернуть версию провайдера"
+          }
+        }
+      }
+    },
+    "Resolve domains for routing" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешать домены для маршрутизации"
+          }
+        }
+      }
+    },
+    "Resolve server before connecting" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешать адрес сервера перед подключением"
+          }
+        }
+      }
+    },
+    "Resolve these hostnames to the addresses you specify. Hostnames must be unique." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эти имена хостов разрешаются в указанные вами адреса. Имена хостов не должны повторяться."
+          }
+        }
+      }
+    },
+    "Resolver or bootstrap IP" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IP резолвера или начального DNS"
+          }
+        }
+      }
+    },
+    "Resolver type" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тип резолвера"
+          }
+        }
+      }
+    },
+    "Resources" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ресурсы"
+          }
+        }
+      }
+    },
+    "Restore backup" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановить копию"
+          }
+        }
+      }
+    },
+    "Retry connection" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повторить подключение"
+          }
+        }
+      }
+    },
+    "Retry limit reached. Tap Connect to retry." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Попытки исчерпаны. Нажмите «Подключить», чтобы повторить."
+          }
+        }
+      }
+    },
+    "Route table" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Таблица маршрутов"
+          }
+        }
+      }
+    },
+    "Routing" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Маршрутизация"
+          }
+        }
+      }
+    },
+    "Routing JSON" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "JSON маршрутизации"
+          }
+        }
+      }
+    },
+    "Routing data" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные маршрутизации"
+          }
+        }
+      }
+    },
+    "Routing profile" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Профиль маршрутизации"
+          }
+        }
+      }
+    },
+    "Routing profiles" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Профили маршрутизации"
+          }
+        }
+      }
+    },
+    "Rule order" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Порядок правил"
+          }
+        }
+      }
+    },
+    "Rules" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Правила"
+          }
+        }
+      }
+    },
+    "Russian sites direct" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Российские сайты напрямую"
+          }
+        }
+      }
+    },
+    "SOCKS port" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Порт SOCKS"
+          }
+        }
+      }
+    },
+    "Save" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить"
+          }
+        }
+      }
+    },
+    "Save recording as ZIP" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить запись в ZIP"
+          }
+        }
+      }
+    },
+    "Save to Files" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить в Файлы"
+          }
+        }
+      }
+    },
+    "Saving these settings reconnects an active VPN." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранение этих настроек переподключит активный VPN."
+          }
+        }
+      }
+    },
+    "Scan QR code" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сканировать QR-код"
+          }
+        }
+      }
+    },
+    "Scroll to servers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прокрутить к серверам"
+          }
+        }
+      }
+    },
+    "Search results" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Результаты поиска"
+          }
+        }
+      }
+    },
+    "Search servers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск серверов"
+          }
+        }
+      }
+    },
+    "Section" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Раздел"
+          }
+        }
+      }
+    },
+    "Secure storage is unavailable." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Защищённое хранилище недоступно."
+          }
+        }
+      }
+    },
+    "Secure storage is unavailable. Use a correctly signed build and reopen the app." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Защищённое хранилище недоступно. Используйте правильно подписанную сборку и откройте приложение заново."
+          }
+        }
+      }
+    },
+    "Security" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Безопасность"
+          }
+        }
+      }
+    },
+    "Select a server first. This routing link turns its profile on for the selected server’s subscription." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сначала выберите сервер. Эта ссылка маршрутизации включает свой профиль для подписки выбранного сервера."
+          }
+        }
+      }
+    },
+    "Select servers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрать серверы"
+          }
+        }
+      }
+    },
+    "Select unreachable" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрать недоступные"
+          }
+        }
+      }
+    },
+    "Selected" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбран"
+          }
+        }
+      }
+    },
+    "Server" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер"
+          }
+        }
+      }
+    },
+    "Server addressing" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адресация серверов"
+          }
+        }
+      }
+    },
+    "Server options" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Параметры серверов"
+          }
+        }
+      }
+    },
+    "Server order" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Порядок серверов"
+          }
+        }
+      }
+    },
+    "Server tests" : {
+      "comment" : "Shown at run time through LocalizedStringKey; keep it although Xcode marks it stale.",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка серверов"
+          }
+        }
+      }
+    },
+    "Servers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Серверы"
+          }
+        }
+      }
+    },
+    "Servers may come from any subscription. Choosing another server by hand makes it the primary and keeps these backups. When a server on UDP or a port other than 443 stops answering, TCP 443 backups go first. If only Russian-entry servers get through, they go first." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Серверы могут быть из любой подписки. Если выбрать другой сервер вручную, он станет основным, а эти резервные сохранятся. Когда перестаёт отвечать сервер на UDP или на порту, отличном от 443, первыми идут резервные на TCP 443. Если проходят только серверы со входом в России, первыми идут они."
+          }
+        }
+      }
+    },
+    "Set by your provider" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Задано провайдером"
+          }
+        }
+      }
+    },
+    "Settings" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки"
+          }
+        }
+      }
+    },
+    "Share" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поделиться"
+          }
+        }
+      }
+    },
+    "Share %lld links" : {
+      "localizations" : {
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Поделиться %lld ссылками"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Поделиться %lld ссылками"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Поделиться %lld ссылкой"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Поделиться %lld ссылками"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Share 1 link" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поделиться 1 ссылкой"
+          }
+        }
+      }
+    },
+    "Share QR code" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поделиться QR-кодом"
+          }
+        }
+      }
+    },
+    "Share configuration" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поделиться конфигурацией"
+          }
+        }
+      }
+    },
+    "Share links" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ссылки"
+          }
+        }
+      }
+    },
+    "Share routing profile" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поделиться профилем маршрутизации"
+          }
+        }
+      }
+    },
+    "Share servers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поделиться серверами"
+          }
+        }
+      }
+    },
+    "Share-link servers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Серверы из ссылок"
+          }
+        }
+      }
+    },
+    "Shared credentials" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Общие учётные данные"
+          }
+        }
+      }
+    },
+    "Shortcuts" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ярлыки"
+          }
+        }
+      }
+    },
+    "Show" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать"
+          }
+        }
+      }
+    },
+    "Show again" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать снова"
+          }
+        }
+      }
+    },
+    "Show monitoring on main screen" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показывать мониторинг на главном экране"
+          }
+        }
+      }
+    },
+    "Size reduction" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уменьшение размера"
+          }
+        }
+      }
+    },
+    "Sort" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сортировка"
+          }
+        }
+      }
+    },
+    "Static DNS hosts" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Статические DNS-хосты"
+          }
+        }
+      }
+    },
+    "Status" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Состояние"
+          }
+        }
+      }
+    },
+    "Status unavailable" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Состояние недоступно"
+          }
+        }
+      }
+    },
+    "Stop" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Остановить"
+          }
+        }
+      }
+    },
+    "Stopped" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Остановлено"
+          }
+        }
+      }
+    },
+    "Subscription" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подписка"
+          }
+        }
+      }
+    },
+    "Subscription approval" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подтверждение подписки"
+          }
+        }
+      }
+    },
+    "Subscription expiry" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Окончание подписок"
+          }
+        }
+      }
+    },
+    "Subscription expiry reminders" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Напоминания об окончании подписок"
+          }
+        }
+      }
+    },
+    "Subscriptions" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подписки"
+          }
+        }
+      }
+    },
+    "Success with older settings" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Успешно со старыми настройками"
+          }
+        }
+      }
+    },
+    "Support" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поддержка"
+          }
+        }
+      }
+    },
+    "Supported" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поддерживается"
+          }
+        }
+      }
+    },
+    "System info" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "О системе"
+          }
+        }
+      }
+    },
+    "TCP endpoint" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Узел TCP"
+          }
+        }
+      }
+    },
+    "TCP max connections" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Максимум TCP-соединений"
+          }
+        }
+      }
+    },
+    "TCP sessions" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сеансы TCP"
+          }
+        }
+      }
+    },
+    "Teal" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бирюзовый"
+          }
+        }
+      }
+    },
+    "Test URL" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адрес для проверки"
+          }
+        }
+      }
+    },
+    "Test mode" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Режим проверки"
+          }
+        }
+      }
+    },
+    "Test selected server" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить выбранный сервер"
+          }
+        }
+      }
+    },
+    "Test server" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить сервер"
+          }
+        }
+      }
+    },
+    "Test servers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка серверов"
+          }
+        }
+      }
+    },
+    "Test type" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тип проверки"
+          }
+        }
+      }
+    },
+    "Test visible servers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить показанные серверы"
+          }
+        }
+      }
+    },
+    "Tested" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверено"
+          }
+        }
+      }
+    },
+    "Testing" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка"
+          }
+        }
+      }
+    },
+    "Text follows your iPhone’s text size. Motion follows Reduce Motion in Accessibility settings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Размер текста следует настройке iPhone, а анимация — параметру «Уменьшение движения» в настройках универсального доступа."
+          }
+        }
+      }
+    },
+    "The VPN could not confirm cleanup. Tap Disconnect and check the VPN status in iPhone Settings before reconnecting." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VPN не смог подтвердить очистку. Нажмите «Отключить» и проверьте состояние VPN в настройках iPhone, прежде чем подключаться снова."
+          }
+        }
+      }
+    },
+    "The VPN extension did not report its state. Refresh status or disconnect and try again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VPN-расширение не сообщило своё состояние. Обновите состояние или отключитесь и повторите."
+          }
+        }
+      }
+    },
+    "The VPN stopped unexpectedly. Open Elarni to reconnect." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VPN неожиданно остановился. Откройте Elarni, чтобы переподключиться."
+          }
+        }
+      }
+    },
+    "The address could not be looked up. Check this device’s network and DNS, then retry." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось определить адрес. Проверьте сеть и DNS этого устройства и повторите."
+          }
+        }
+      }
+    },
+    "The camera is unavailable. Import a QR image instead." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Камера недоступна. Импортируйте изображение с QR-кодом."
+          }
+        }
+      }
+    },
+    "The catalog changed or could not be read. Refresh the screen and retry." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каталог изменился или не читается. Обновите экран и повторите."
+          }
+        }
+      }
+    },
+    "The clipboard is empty. Copy a link or configuration first." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Буфер обмена пуст. Сначала скопируйте ссылку или конфигурацию."
+          }
+        }
+      }
+    },
+    "The configuration could not be processed. Check its format and values, then try again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось обработать конфигурацию. Проверьте её формат и значения и повторите."
+          }
+        }
+      }
+    },
+    "The connection could not be restored. Disconnect before trying again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось восстановить подключение. Отключитесь перед повторной попыткой."
+          }
+        }
+      }
+    },
+    "The connection through this server failed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключение через этот сервер не удалось."
+          }
+        }
+      }
+    },
+    "The last download failed. Servers from the previous download are kept." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последняя загрузка не удалась. Серверы из предыдущей загрузки сохранены."
+          }
+        }
+      }
+    },
+    "The last download failed. The previous list is kept." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последняя загрузка не удалась. Предыдущий список сохранён."
+          }
+        }
+      }
+    },
+    "The new server could not connect. The previous connection was retained." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый сервер не смог подключиться. Предыдущее подключение сохранено."
+          }
+        }
+      }
+    },
+    "The notice could not be loaded." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить текст."
+          }
+        }
+      }
+    },
+    "The operation could not be completed. Check the configuration and try again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось выполнить операцию. Проверьте конфигурацию и повторите."
+          }
+        }
+      }
+    },
+    "The operation timed out. Refresh status before retrying." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Время операции истекло. Обновите состояние перед повторной попыткой."
+          }
+        }
+      }
+    },
+    "The provider" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Провайдер"
+          }
+        }
+      }
+    },
+    "The provider is limiting requests. Elarni retries later; wait before refreshing again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Провайдер ограничивает запросы. Elarni повторит позже; подождите, прежде чем обновлять снова."
+          }
+        }
+      }
+    },
+    "The provider refused the request. The subscription may have expired, run out of traffic or reached its device limit. Contact the provider." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Провайдер отклонил запрос. Возможно, подписка истекла, закончился трафик или достигнут лимит устройств. Свяжитесь с провайдером."
+          }
+        }
+      }
+    },
+    "The provider removed or changed this link. Ask the provider for a new one." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Провайдер удалил или изменил эту ссылку. Попросите у провайдера новую."
+          }
+        }
+      }
+    },
+    "The provider’s device limit has been reached. Manage registered devices in your provider account." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Достигнут лимит устройств у провайдера. Управляйте зарегистрированными устройствами в аккаунте провайдера."
+          }
+        }
+      }
+    },
+    "The provider’s routing profile could not be applied." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось применить профиль маршрутизации провайдера."
+          }
+        }
+      }
+    },
+    "The provider’s server did not answer. Your network may block it, or it is down. Retry later or ask the provider for a mirror." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер провайдера не ответил. Возможно, ваша сеть его блокирует или он не работает. Повторите позже или попросите у провайдера зеркало."
+          }
+        }
+      }
+    },
+    "The provider’s server reported an error. Nothing is wrong with Elarni or this device; retry later." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер провайдера сообщил об ошибке. С Elarni и этим устройством всё в порядке; повторите позже."
+          }
+        }
+      }
+    },
+    "The recording could not be updated. Check free storage and try again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось обновить запись. Проверьте свободное место и повторите."
+          }
+        }
+      }
+    },
+    "The server could not be reached." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер недоступен."
+          }
+        }
+      }
+    },
+    "The server or connection changed during the test." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер или подключение изменились во время проверки."
+          }
+        }
+      }
+    },
+    "The server passed no traffic at %@. Checking again each minute." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер не передавал трафик в %@. Повторная проверка каждую минуту."
+          }
+        }
+      }
+    },
+    "The server test could not release its resources. Close and reopen the app before another test." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка сервера не смогла освободить ресурсы. Закройте и снова откройте приложение перед следующей проверкой."
+          }
+        }
+      }
+    },
+    "The server test timed out." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Время проверки сервера истекло."
+          }
+        }
+      }
+    },
+    "The subscription address or download options are invalid. Check the URL and provider-supported formats." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адрес подписки или параметры загрузки неверны. Проверьте URL и поддерживаемые провайдером форматы."
+          }
+        }
+      }
+    },
+    "The subscription could not be downloaded. Check the provider address and try again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить подписку. Проверьте адрес провайдера и повторите."
+          }
+        }
+      }
+    },
+    "The subscription uses unencrypted HTTP." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подписка использует незашифрованный HTTP."
+          }
+        }
+      }
+    },
+    "The test address could not be resolved." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось разрешить адрес проверки."
+          }
+        }
+      }
+    },
+    "The test address returned an unexpected response." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адрес проверки вернул неожиданный ответ."
+          }
+        }
+      }
+    },
+    "The test could not run." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось выполнить проверку."
+          }
+        }
+      }
+    },
+    "The test target did not return the expected response. Check the target and server settings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Цель проверки не вернула ожидаемый ответ. Проверьте цель и настройки сервера."
+          }
+        }
+      }
+    },
+    "Theme" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тема"
+          }
+        }
+      }
+    },
+    "They are removed from %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Они будут удалены из %@."
+          }
+        }
+      }
+    },
+    "They stay hidden after refreshes. Show them again from Hidden servers." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Они останутся скрытыми после обновлений. Вернуть их можно в «Скрытых серверах»."
+          }
+        }
+      }
+    },
+    "Third-party notices" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уведомления сторонних компонентов"
+          }
+        }
+      }
+    },
+    "This configuration is too large for a single QR code. Copy it or save it to Files." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта конфигурация слишком велика для одного QR-кода. Скопируйте её или сохраните в Файлы."
+          }
+        }
+      }
+    },
+    "This export may contain private server credentials. Share it only with people you trust." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот экспорт может содержать секретные учётные данные серверов. Делитесь им только с теми, кому доверяете."
+          }
+        }
+      }
+    },
+    "This profile contains desktop process rules. Remove those rules or use domain and IP routing on iPhone." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Профиль содержит правила для процессов настольной системы. Удалите их или используйте на iPhone маршрутизацию по доменам и IP."
+          }
+        }
+      }
+    },
+    "This provider requires device registration. Open your provider account or contact support." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот провайдер требует регистрации устройства. Откройте аккаунт у провайдера или обратитесь в поддержку."
+          }
+        }
+      }
+    },
+    "This routing profile is too large for iPhone: its rules and lists exceed 2 MB. Remove some rules or managed lists." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот профиль маршрутизации слишком велик для iPhone: правила и списки занимают больше 2 МБ. Удалите часть правил или управляемых списков."
+          }
+        }
+      }
+    },
+    "This server" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот сервер"
+          }
+        }
+      }
+    },
+    "This subscription exceeds the supported size. Ask the provider for a smaller feed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подписка превышает поддерживаемый размер. Попросите у провайдера список поменьше."
+          }
+        }
+      }
+    },
+    "This test type does not support this server." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот тип проверки не поддерживает этот сервер."
+          }
+        }
+      }
+    },
+    "Time" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Время"
+          }
+        }
+      }
+    },
+    "Timed out." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Время истекло."
+          }
+        }
+      }
+    },
+    "Timeout" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тайм-аут"
+          }
+        }
+      }
+    },
+    "To change one server, open it from Home and use IP preference." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чтобы изменить один сервер, откройте его на главной и используйте «Предпочтение IP»."
+          }
+        }
+      }
+    },
+    "Toggle" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переключить"
+          }
+        }
+      }
+    },
+    "Toggle Elarni" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переключить Elarni"
+          }
+        }
+      }
+    },
+    "Traffic" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Трафик"
+          }
+        }
+      }
+    },
+    "Transport" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Транспорт"
+          }
+        }
+      }
+    },
+    "Transport overrides" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переопределение транспорта"
+          }
+        }
+      }
+    },
+    "Troubleshoot connection" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диагностика подключения"
+          }
+        }
+      }
+    },
+    "Troubleshooting" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диагностика"
+          }
+        }
+      }
+    },
+    "Trusted Wi-Fi" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доверенные Wi-Fi"
+          }
+        }
+      }
+    },
+    "Trusted Wi-Fi networks" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доверенные сети Wi-Fi"
+          }
+        }
+      }
+    },
+    "Try another search or change the server filters." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Попробуйте другой запрос или измените фильтры серверов."
+          }
+        }
+      }
+    },
+    "Turn on Record connection diagnostics in Advanced settings, reproduce the problem, mark it, then save the recording for support." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включите «Записывать диагностику подключения» в разделе «Дополнительно», воспроизведите проблему, отметьте её и сохраните запись для поддержки."
+          }
+        }
+      }
+    },
+    "UDP" : {
+      "shouldTranslate" : false
+    },
+    "UDP max connections" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Максимум UDP-соединений"
+          }
+        }
+      }
+    },
+    "UDP sessions" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сеансы UDP"
+          }
+        }
+      }
+    },
+    "UDP sessions refused at the limit" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сеансы UDP, отклонённые из-за лимита"
+          }
+        }
+      }
+    },
+    "Unavailable" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недоступно"
+          }
+        }
+      }
+    },
+    "Unavailable server" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недоступный сервер"
+          }
+        }
+      }
+    },
+    "Unfavorite" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Убрать из избранного"
+          }
+        }
+      }
+    },
+    "Unlimited" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Безлимит"
+          }
+        }
+      }
+    },
+    "Updated" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновлено"
+          }
+        }
+      }
+    },
+    "Uploaded" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправлено"
+          }
+        }
+      }
+    },
+    "Use a different hostname. Only repeated classified timeouts at both targets permit cycling through your allowed servers." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Используйте другое имя хоста. Перебор разрешённых серверов начинается только после повторных классифицированных тайм-аутов на обеих целях."
+          }
+        }
+      }
+    },
+    "Use a nonempty name without control characters." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Укажите непустое имя без управляющих символов."
+          }
+        }
+      }
+    },
+    "Use a password of 12–1,024 UTF-8 bytes. Keep it safe: a lost password cannot be recovered." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Используйте пароль длиной от 12 до 1024 байт UTF-8. Храните его надёжно: утерянный пароль не восстановить."
+          }
+        }
+      }
+    },
+    "Use a trusted public HTTPS source with one domain per line, a hosts file, or supported domain rules. A DNS list chooses domains for direct DNS. Private-network URLs are rejected." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Используйте надёжный публичный HTTPS-источник: по одному домену на строку, файл hosts или поддерживаемые правила доменов. Список для DNS выбирает домены для прямого DNS. Адреса из частных сетей отклоняются."
+          }
+        }
+      }
+    },
+    "Use domains for" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать домены для"
+          }
+        }
+      }
+    },
+    "Use last successful server" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последний успешный сервер"
+          }
+        }
+      }
+    },
+    "Use profile" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Как в профиле"
+          }
+        }
+      }
+    },
+    "Use server" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрать сервер"
+          }
+        }
+      }
+    },
+    "Use up to 64 names of at most 32 bytes each, without tabs." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не больше 64 имён, каждое до 32 байт, без табуляций."
+          }
+        }
+      }
+    },
+    "User agent" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "User agent"
+          }
+        }
+      }
+    },
+    "Username" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Имя пользователя"
+          }
+        }
+      }
+    },
+    "VPN configuration removed. Connect to create it again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Конфигурация VPN удалена. Подключитесь, чтобы создать её заново."
+          }
+        }
+      }
+    },
+    "VPN connections require a signed app on your iPhone. Import, routing, and settings are available in Simulator." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для VPN-подключений нужно подписанное приложение на iPhone. В симуляторе доступны импорт, маршрутизация и настройки."
+          }
+        }
+      }
+    },
+    "Version" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Версия"
+          }
+        }
+      }
+    },
+    "Wait for the current operation to finish, or stop the connection." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дождитесь окончания текущей операции или остановите подключение."
+          }
+        }
+      }
+    },
+    "Waiting for network" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ожидание сети"
+          }
+        }
+      }
+    },
+    "Waiting for provider metrics…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ожидание показателей расширения…"
+          }
+        }
+      }
+    },
+    "Waiting to retry" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ожидание повтора"
+          }
+        }
+      }
+    },
+    "Warning" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предупреждения"
+          }
+        }
+      }
+    },
+    "Weekly" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Еженедельно"
+          }
+        }
+      }
+    },
+    "When needed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "При необходимости"
+          }
+        }
+      }
+    },
+    "When off, traffic that does not match a rule goes directly to its destination." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Если выключено, трафик, не подпавший ни под одно правило, идёт напрямую."
+          }
+        }
+      }
+    },
+    "While connected, proxy tests check the selected VPN path. Disconnect to test other servers, direct TCP, or ICMP. Results expire after five minutes or a configuration change." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "При подключении проверки через прокси проверяют путь выбранного VPN. Отключитесь, чтобы проверить другие серверы, прямой TCP или ICMP. Результаты устаревают через пять минут или после изменения конфигурации."
+          }
+        }
+      }
+    },
+    "Whitelist mode: Russian-entry servers first" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Режим белого списка: сначала серверы со входом в России"
+          }
+        }
+      }
+    },
+    "With real DNS, domain rules depend on supported traffic sniffing. Encrypted hostnames and other protocols may need IP rules." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "С обычным DNS правила по доменам зависят от поддерживаемого распознавания трафика. Для зашифрованных имён и других протоколов могут понадобиться правила по IP."
+          }
+        }
+      }
+    },
+    "Xray core" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ядро Xray"
+          }
+        }
+      }
+    },
+    "Yes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Да"
+          }
+        }
+      }
+    },
+    "Your override" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваше значение"
+          }
+        }
+      }
+    },
+    "Your provider asks you to keep its settings. You can still change them." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Провайдер просит не менять его настройки. Изменить их всё равно можно."
+          }
+        }
+      }
+    },
+    "Your routing, your choice" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваша маршрутизация, ваш выбор"
+          }
+        }
+      }
+    },
+    "https://" : {
+      "shouldTranslate" : false
+    },
+    "iOS has no supported system routing-table API. These are Elarni’s configured networks." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В iOS нет поддерживаемого API системной таблицы маршрутов. Здесь показаны сети, настроенные в Elarni."
+          }
+        }
+      }
+    },
+    "iOS keeps all traffic inside the tunnel, including while it reconnects." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iOS держит весь трафик внутри туннеля, в том числе во время переподключения."
+          }
+        }
+      }
+    },
+    "iOS status" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Состояние в iOS"
+          }
+        }
+      }
+    },
+    "iOS stopped the VPN because %@. Open Elarni to reconnect." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iOS остановила VPN: %@. Откройте Elarni, чтобы переподключиться."
+          }
+        }
+      }
+    },
+    "iPhone supports domain and IP rules. Desktop executable rules cannot identify other apps on iOS. Use network rules for the traffic you want to route." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone поддерживает правила по доменам и IP. Правила для исполняемых файлов настольной системы не распознают другие приложения в iOS. Для нужного трафика используйте сетевые правила."
+          }
+        }
+      }
+    },
+    "its subscription" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "своей подписки"
+          }
+        }
+      }
+    },
+    "no network was available" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "сеть была недоступна"
+          }
+        }
+      }
+    },
+    "the connection failed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "подключение не удалось"
+          }
+        }
+      }
+    },
+    "the connection was idle" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "подключение простаивало"
+          }
+        }
+      }
+    },
+    "the network changed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "сеть изменилась"
+          }
+        }
+      }
+    },
+    "this group" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "этой группы"
+          }
+        }
+      }
+    },
+    "unknown country" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "неизвестная страна"
+          }
+        }
+      }
+    },
+    "· %lld servers" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "· %lld server"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "· %lld servers"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "· %lld сервера"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "· %lld серверов"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "· %lld сервер"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "· %lld сервера"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

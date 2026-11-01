@@ -1,0 +1,286 @@
+name: Development checks
+
+on:
+  push:
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
+  pull_request:
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    # The self-hosted runner on the Linux server: the warm Ubuntu 22.04 container of
+    # scripts/check-linux-container keeps apt packages, toolchains, caches and an incremental
+    # checkout, and runs every Linux check at once (check-changed --all) on 16 threads.
+    name: linux checks and release
+    runs-on: [self-hosted, elarni-linux]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          # The container fetches the commit from this checkout, which a shallow clone cannot always serve.
+          fetch-depth: 0
+      - name: Linux checks
+        run: python3 scripts/check-linux-container
+      - name: Linux release candidate
+        run: |
+          python3 scripts/check-linux-container -- bash -c '
+            set -e
+            flutter build linux --release --target=lib/main.dart
+            mkdir -p .build
+            # The build above provides the Flutter Linux engine in linux/flutter/ephemeral.
+            clang++ -std=c++14 -Wall -Werror -Ilinux/flutter/ephemeral \
+              -DAPPLICATION_ID="\"com.elarni.Elarni\"" test/linux_desktop_host_test.cc \
+              -Llinux/flutter/ephemeral -lflutter_linux_gtk \
+              $(pkg-config --cflags --libs gtk+-3.0 ayatana-appindicator3-0.1 gstreamer-app-1.0) \
+              -o .build/linux-desktop-host-test
+            LD_LIBRARY_PATH=linux/flutter/ephemeral python scripts/check_report.py -- .build/linux-desktop-host-test
+            python scripts/check-server-cores
+            rm -rf .build/release-candidate .build/release-source .build/release-dependencies
+            python scripts/check_report.py -- python scripts/package-linux --output .build/release-candidate
+            python scripts/check_report.py -- python scripts/package-source --output .build/release-source
+            python scripts/check_report.py -- python scripts/package-dependencies --output .build/release-dependencies
+            cp -r .build/release-candidate .build/release-source .build/release-dependencies /out/'
+      - name: Select the Android checks
+        # Android builds the Go core, the Rust domain and its own sources; other changes cannot break it.
+        # Branches skip it when none of those changed since main; main and manual runs always build.
+        # The emulator acceptance (about 20 minutes) runs only on main and manual runs: dispatch the workflow to try a branch.
+        id: android
+        run: |
+          main=false
+          if [ "$GITHUB_REF" = refs/heads/main ] || [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then main=true; fi
+          echo emulators=$main >> "$GITHUB_OUTPUT"
+          if [ $main = true ] ||
+             git diff --name-only "$(git merge-base origin/main HEAD)" HEAD | grep -E \
+               '^(android/|Vendor/|native/|include/|go\.work|Cargo\.|rust-toolchain\.toml|\.github/workflows/|scripts/(check-android|build-android-native|prepare-android-linux|tuic_fixture\.py|check-linux-container|check_report\.py)$)' > /dev/null
+          then echo run=true; else echo run=false; fi >> "$GITHUB_OUTPUT"
+      - name: Android unsigned release build
+        if: steps.android.outputs.run == 'true'
+        # The SDK and Gradle caches live in container volumes; the first run downloads them.
+        run: |
+          python3 scripts/check-linux-container -- bash -c '
+            set -e
+            python scripts/prepare-android-linux
+            python scripts/check_report.py -- python scripts/build-android-native
+            python scripts/check_report.py -- android/gradlew -p android :app:assembleRelease --no-daemon --console=plain
+            mkdir -p /out/android-release && cp android/app/build/outputs/apk/release/*.apk /out/android-release/'
+      - name: Android acceptance on emulators
+        if: steps.android.outputs.emulators == 'true'
+        # x86_64 twins of the Mac's AVDs over the server's KVM; check-android builds x86_64 for them. Two API 30
+        # instances split its slower suites. The release acceptance (signed APK, 10-minute Doze) stays on the Mac.
+        env:
+          # Each emulator's qemu reaches about 5 GB; three peaked at 16.3 GB, which pushes the Windows VM partly to swap.
+          ELARNI_LINUX_MEMORY: 17g
+        run: |
+          python3 scripts/check-linux-container -- bash -c '
+            set -e
+            python scripts/prepare-android-linux --emulators
+            python scripts/check-android --avd Elarni_API_36_16K --avd Elarni_API_30 --avd Elarni_API_30'
+      # Artifact storage is billed: while the account's billing is blocked, uploads fail
+      # ("storage quota has been hit"), and the runner's checkout keeps the files until the next run.
+      - name: Retain candidates (not production releases)
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: unsigned-candidate-linux
+          path: |
+            .build/check-results/release-candidate/
+            .build/check-results/release-source/
+            .build/check-results/release-dependencies/
+            .build/check-results/android-release/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+      - name: Retain synthetic check results
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: checks-linux
+          path: |
+            .build/check-results/*/summary.json
+            .build/check-results/*/output.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+
+  checks:
+    name: ${{ matrix.os }} ${{ matrix.part }}
+    # Windows runs on the self-hosted VM on the Linux server (scripts/windows-ci-vm), which keeps its own caches.
+    runs-on: ${{ startsWith(matrix.os, 'windows') && fromJSON('["self-hosted", "elarni-windows"]') || matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Hosted runners have 2 (Windows) or 3 (macOS) cores, so their checks stay one after another:
+        # all at once, the timing tests flake.
+        os: [windows-2022, macos-15]
+        # Tests and release candidates build independently; separate jobs overlap them.
+        part: [checks, release]
+        include:
+          # The iPhone app needs Xcode 26.4 or newer, which runs only on macOS 26.
+          - os: macos-26
+            part: ios
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Restored Go caches speed up builds; tests still run fresh on every push.
+      GOFLAGS: -count=1
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          # Self-hosted runners keep ignored build outputs (Rust target, Flutter build) for incremental builds.
+          clean: ${{ runner.environment == 'github-hosted' }}
+      - name: Remove untracked files, keep build outputs
+        if: runner.environment == 'self-hosted'
+        # Old reports would pile up and be uploaded again; the packaging scripts refuse a non-empty output folder.
+        run: git clean -fdq && rm -rf .build/check-results .build/release-candidate .build/diagnostics-windows
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: 2026.9.8
+          # A self-hosted runner keeps its installs; restoring the 2 GB cache over them took 6 minutes.
+          cache: ${{ runner.environment == 'github-hosted' }}
+      - name: Install the Rust toolchain selected by the repository
+        run: rustup show
+      - name: Locate Go and pub caches
+        if: runner.environment == 'github-hosted'
+        id: caches
+        run: |
+          echo "PUB_CACHE=$RUNNER_TEMP/pub-cache" >> "$GITHUB_ENV"
+          echo "go-build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "go-mod=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+      - name: Restore Go and pub caches
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ steps.caches.outputs.go-build }}
+            ${{ steps.caches.outputs.go-mod }}
+            ${{ runner.temp }}/pub-cache
+          # Per part: test and release builds fill the Go cache with different packages.
+          key: deps-${{ runner.os }}-${{ matrix.part }}-${{ hashFiles('**/go.sum', 'pubspec.lock') }}
+          restore-keys: |
+            deps-${{ runner.os }}-${{ matrix.part }}-
+            deps-${{ runner.os }}-
+      - name: Restore Rust caches
+        if: matrix.part == 'checks' && runner.environment == 'github-hosted'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            . -> target
+            . -> .build/windows-check/bundle with spaces/rust
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Fetch Flutter dependencies
+        run: flutter pub get
+      - name: Check report process integration
+        if: matrix.part == 'checks'
+        run: python scripts/check_report.py -- python -m unittest discover -s scripts -p check_report_test.py -v
+      - name: Change selection checks
+        if: matrix.part == 'checks'
+        run: python scripts/check_report.py -- python -m unittest discover -s scripts -p check_changed_test.py -v
+      - name: Install WiX Toolset v5
+        if: runner.os == 'Windows'
+        run: |
+          dotnet tool update --global wix --version 5.0.2
+          echo "$USERPROFILE\\.dotnet\\tools" >> "$GITHUB_PATH"
+      - name: Packaging process checks
+        if: matrix.part == 'checks'
+        run: python scripts/check_report.py -- python -m unittest discover -s scripts -p package_release_test.py -v
+      - name: Flutter analysis and widget checks
+        if: matrix.part == 'checks'
+        run: sh scripts/check-tests flutter
+      - name: Rust checks
+        if: matrix.part == 'checks'
+        run: sh scripts/check-tests rust
+      - name: Go checks
+        if: matrix.part == 'checks'
+        run: sh scripts/check-tests go
+      - name: Shared desktop integration
+        if: matrix.part == 'checks' && runner.os != 'macOS'
+        run: python scripts/check-windows
+      - name: Prepare macOS native tools
+        if: runner.os == 'macOS' && matrix.part != 'ios'
+        run: |
+          cargo install cbindgen --version 0.29.4 --locked --root .toolchains/cbindgen
+          ln -s "$(mise where go)" .toolchains/go
+      - name: Swift and native FFI checks
+        if: matrix.part == 'checks' && runner.os == 'macOS'
+        run: sh scripts/check-tests swift
+      - name: Newest server core gate
+        if: matrix.part == 'release'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/check-server-cores
+      - name: Windows release build
+        if: matrix.part == 'release' && runner.os == 'Windows'
+        run: flutter build windows --release --target=lib/main.dart
+      - name: Pinned Wintun load
+        if: matrix.part == 'release' && runner.os == 'Windows'
+        env:
+          # The Windows build extracted the pinned archive; setting this makes the test fail instead of skip.
+          ELARNI_TEST_WINTUN: ${{ github.workspace }}\build\windows\x64\native\wintun\bin\amd64\wintun.dll
+        run: python scripts/check_report.py -- go test -run '^TestWintunLoadRequiresThePinnedBuild$' ./Vendor/libXray/cmd/elarni-core
+      - name: Windows routing metadata boundary
+        if: matrix.part == 'release' && runner.os == 'Windows'
+        run: |
+          python scripts/check_report.py -- cmake --build build/windows/x64 --config Release --target elarni_routing_checks
+          python scripts/check_report.py -- build/windows/x64/checks/Release/elarni_routing_checks.exe
+      - name: macOS unsigned Release build
+        if: matrix.part == 'release' && runner.os == 'macOS'
+        run: |
+          flutter build macos --release --config-only --target=lib/main.dart
+          python scripts/check_report.py -- xcodebuild -quiet -workspace macos/Runner.xcworkspace -scheme Runner -configuration Release -derivedDataPath .build/release-macos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES build
+      - name: Package Windows candidate
+        if: matrix.part == 'release' && runner.os == 'Windows'
+        run: python scripts/check_report.py -- python scripts/package-windows --bundle build/windows/x64/runner/Release --output .build/release-candidate --unsigned --msi
+      - name: Package macOS candidate
+        if: matrix.part == 'release' && runner.os == 'macOS'
+        run: python scripts/check_report.py -- python scripts/package-macos --app .build/release-macos/Build/Products/Release/Elarni.app --output .build/release-candidate --unsigned --dmg
+      - name: Windows diagnostic candidate
+        if: matrix.part == 'release' && runner.os == 'Windows'
+        run: python scripts/check_report.py -- python scripts/build-diagnostics-windows --bundle build/windows/x64/runner/Release --output .build/diagnostics-windows
+      - name: macOS unsigned diagnostic build
+        if: matrix.part == 'release' && runner.os == 'macOS'
+        # scripts/build-diagnostics-macos needs the team's signing identity; this builds its configuration unsigned.
+        run: python scripts/check_report.py -- xcodebuild -quiet -workspace macos/Runner.xcworkspace -scheme Runner -configuration Debug -derivedDataPath .build/diagnostics-macos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES ELARNI_DIAGNOSTICS_SUFFIX=-diagnostics 'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG ELARNI_DIAGNOSTICS' build
+      - name: iOS unsigned device build
+        if: matrix.part == 'ios'
+        run: |
+          rustup target add aarch64-apple-ios
+          sh scripts/build-ios-native iphoneos
+          python scripts/check_report.py -- xcodebuild -quiet -project ios/Elarni/Elarni.xcodeproj -scheme Elarni -configuration Debug -destination 'generic/platform=iOS' -derivedDataPath .build/ios/Device CODE_SIGNING_ALLOWED=NO build
+      # Uploads fail while billing is blocked; see the linux job.
+      - name: Retain candidates (not production releases)
+        if: matrix.part == 'release'
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: unsigned-candidate-${{ matrix.os }}
+          path: |
+            .build/release-candidate/
+            .build/release-source/
+            .build/release-dependencies/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+      - name: Retain synthetic check results
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: checks-${{ matrix.os }}-${{ matrix.part }}
+          path: |
+            .build/check-results/*/summary.json
+            .build/check-results/*/output.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14

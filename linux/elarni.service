@@ -1,0 +1,37 @@
+[Unit]
+Description=Elarni headless VPN and local controls
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+# Unconfigured hosts skip the unit instead of restarting it forever.
+ConditionPathExists=/etc/elarni/keyring-password
+
+[Service]
+Type=simple
+User=root
+UMask=0077
+StateDirectory=elarni
+StateDirectoryMode=0700
+RuntimeDirectory=elarni
+RuntimeDirectoryMode=0700
+Environment=HOME=/var/lib/elarni
+Environment=XDG_DATA_HOME=/var/lib/elarni/data
+Environment=XDG_CONFIG_HOME=/var/lib/elarni/config
+Environment=XDG_CACHE_HOME=/var/lib/elarni/cache
+Environment=XDG_RUNTIME_DIR=/run/elarni
+ExecStart=/usr/bin/dbus-run-session -- /opt/elarni/elarni-cli --socket /run/elarni/control.sock daemon --keyring-password-file /etc/elarni/keyring-password
+Restart=always
+RestartSec=5s
+TimeoutStopSec=30s
+KillMode=control-group
+# Root is needed for routes and nftables; nothing else about the host is.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

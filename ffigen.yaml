@@ -1,0 +1,10 @@
+name: ElarniNativeBindings
+description: Generated Elarni domain C ABI bindings.
+output: lib/src/generated/elarni_ffi.g.dart
+headers:
+  entry-points:
+    - include/elarni_ffi.h
+  include-directives:
+    - include/elarni_ffi.h
+compiler-opts:
+  - '-Iinclude'

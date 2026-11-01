@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""Exercise the real Linux Secret Service with a disposable home and private D-Bus."""
+import argparse
+import json
+import os
+from pathlib import Path
+import runpy
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+Core = runpy.run_path(str(ROOT/'scripts/check-linux-vpn'))['Core']
+
+
+def session(core):
+    def request(method, payload, success=True):
+        client=Core(core)
+        try: return client.request(method,payload,success=success)
+        finally: client.close()
+    control=str(Path(os.environ['XDG_RUNTIME_DIR'])/'keyring')
+    os.environ['GNOME_KEYRING_CONTROL']=control
+    daemon = subprocess.Popen(['gnome-keyring-daemon','--foreground','--components=secrets','--control-directory',control,'--unlock'],
+                              stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    daemon.stdin.write(b'elarni-disposable-keyring'); daemon.stdin.close()
+    def dbus(method, *args):
+        return subprocess.run(['gdbus','call','--session','--dest','org.freedesktop.secrets',
+                               '--object-path','/org/freedesktop/secrets','--method',method,*args],
+                              capture_output=True,text=True,timeout=5)
+    def wait_service():
+        deadline=time.monotonic()+10
+        while time.monotonic()<deadline:
+            ready=subprocess.run(['gdbus','call','--session','--dest','org.freedesktop.DBus',
+                '--object-path','/org/freedesktop/DBus','--method','org.freedesktop.DBus.GetConnectionUnixProcessID',
+                'org.freedesktop.secrets'],capture_output=True,text=True,timeout=5)
+            if ready.returncode==0 and str(daemon.pid) in ready.stdout: break
+            time.sleep(.1)
+        else: raise AssertionError('Private Secret Service did not start')
+    try:
+        wait_service()
+        owner=Core(core)
+        owner.request('acquireCatalog',{})
+        other=Core(core)
+        other.request('acquireCatalog',{},success=False)
+        other.close()
+        assert request('loadCatalog',{})['revision']==''
+        catalog={'secret':'elarni-synthetic-private-profile','version':1}
+        saved=request('saveCatalog',{'revision':'','catalog':catalog})
+        path=Path(os.environ['XDG_DATA_HOME'])/'Elarni/catalog.enc'
+        encrypted=path.read_bytes()
+        assert encrypted.startswith(b'RVL1') and b'elarni-synthetic-private-profile' not in encrypted
+        assert path.stat().st_mode & 0o777 == 0o600
+        owner.close()
+        owner=Core(core)
+        owner.request('acquireCatalog',{})
+        loaded=request('loadCatalog',{})
+        assert loaded['catalog']==catalog and loaded['revision']==saved['revision']
+        request('saveCatalog',{'revision':'','catalog':{'changed':True}},success=False)
+        assert path.read_bytes()==encrypted, 'Stale writer changed the catalog'
+        # Inject faults only into this disposable writer. The real Secret
+        # Service and committed catalog retain their ordinary implementation.
+        update={'apiVersion':1,'method':'saveCatalog',
+                'payload':{'revision':saved['revision'],'catalog':{'interrupted':True}}}
+        for injection in ('error=EIO','signal=SIGKILL'):
+            writer=subprocess.Popen(['strace','-f','-qq','-o','/dev/null','-e','trace=rename,renameat,renameat2',
+                '-e','inject=rename,renameat,renameat2:'+injection,str(core)],
+                stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=True)
+            try:
+                writer.stdin.write(json.dumps(update)+'\n');writer.stdin.flush()
+                writer.wait(timeout=10)
+                output,diagnostic=writer.communicate(timeout=2)
+            finally:
+                if writer.poll() is None:
+                    os.killpg(writer.pid,signal.SIGKILL);writer.communicate(timeout=10)
+            if injection=='error=EIO':
+                assert output, ('Fault injection failed',writer.returncode,diagnostic)
+                assert not json.loads(output)['success'], 'Failed rename was acknowledged'
+            else:
+                assert writer.returncode!=0 and not output, 'Writer survived injected death'
+            assert path.read_bytes()==encrypted, 'Interrupted rename damaged committed data'
+            assert request('loadCatalog',{})['catalog']==catalog
+        tracer=subprocess.Popen(['strace','-f','-qq','-o','/dev/null','-e','trace=rename,renameat,renameat2',
+            '-e','inject=rename,renameat,renameat2:delay_exit=5s',str(core)],
+            stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=True)
+        try:
+            tracer.stdin.write(json.dumps(update)+'\n');tracer.stdin.flush()
+            deadline=time.monotonic()+5
+            while path.read_bytes()==encrypted and time.monotonic()<deadline:
+                assert tracer.poll() is None, 'Writer exited before publication'
+                time.sleep(.005)
+            assert path.read_bytes()!=encrypted, 'Publication did not reach rename'
+            children=Path(f'/proc/{tracer.pid}/task/{tracer.pid}/children').read_text().split()
+            assert len(children)==1
+            child=Path('/proc')/children[0]
+            assert (child/'cmdline').read_bytes().split(b'\0')[0]==os.fsencode(core)
+            os.kill(int(children[0]),signal.SIGKILL)
+            output,_=tracer.communicate(timeout=10)
+            assert tracer.returncode!=0 and not output, 'Publication was acknowledged before the crash'
+            committed=request('loadCatalog',{})
+            assert committed['catalog']==update['payload']['catalog'], 'Published data did not survive death'
+            saved=request('saveCatalog',{'revision':committed['revision'],'catalog':catalog})
+            encrypted=path.read_bytes()
+        finally:
+            if tracer.poll() is None:
+                os.killpg(tracer.pid,signal.SIGKILL);tracer.communicate(timeout=10)
+        alias=dbus('org.freedesktop.Secret.Service.ReadAlias','default')
+        assert alias.returncode==0 and '/collection/' in alias.stdout
+        collection=alias.stdout.split("'")[1]
+        locked=dbus('org.freedesktop.Secret.Service.Lock',"[objectpath '"+collection+"']")
+        assert locked.returncode==0
+        request('loadCatalog',{},success=False)
+        request('saveCatalog',{'revision':saved['revision'],'catalog':catalog},success=False)
+        assert path.read_bytes()==encrypted, 'Locked keyring changed the catalog'
+        # --unlock initializes a new daemon; --replace is necessary to recover
+        # a locked existing service through this public CLI (GNOME Keyring40).
+        previous=daemon
+        daemon=subprocess.Popen(['gnome-keyring-daemon','--foreground','--replace','--components=secrets',
+            '--control-directory',control,'--unlock'],stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        daemon.stdin.write(b'elarni-disposable-keyring');daemon.stdin.close()
+        previous.wait(timeout=5)
+        wait_service()
+        assert request('loadCatalog',{})['catalog']==catalog
+        corrupt=bytearray(encrypted);corrupt[-1]^=0x80;path.write_bytes(corrupt)
+        request('loadCatalog',{},success=False)
+        request('saveCatalog',{'revision':saved['revision'],'catalog':catalog},success=False)
+        assert path.read_bytes()==corrupt, 'Corrupt data was overwritten'
+        path.write_bytes(encrypted)
+        owner.close()
+        daemon.terminate();daemon.wait(timeout=5)
+        os.environ['DBUS_SESSION_BUS_ADDRESS']='unix:path='+os.environ['XDG_RUNTIME_DIR']+'/missing-bus'
+        request('loadCatalog',{},success=False)
+        assert path.read_bytes()==encrypted, 'Unavailable Secret Service changed data'
+        owner.close()
+        print(json.dumps({'passed':['lease','encrypted-publication','relaunch','revision-conflict',
+            'failed-rename-preservation','death-before-publication','death-after-publication',
+            'locked-keyring-preservation','unlock-recovery','corruption-preservation','unavailable-service'],
+            'failed':0,'skipped':0}),flush=True)
+    finally:
+        if 'owner' in locals(): owner.close()
+        if daemon.poll() is None: daemon.terminate();daemon.wait(timeout=5)
+
+
+if __name__=='__main__':
+    from check_report import record_check
+    record_check(ROOT)
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--core',type=Path,default=ROOT/'build/linux/x64/release/bundle/elarni-core')
+    parser.add_argument('--session',action='store_true',help=argparse.SUPPRESS)
+    args=parser.parse_args()
+    if args.session: session(args.core.resolve())
+    else:
+        if sys.platform!='linux' or os.geteuid()==0: raise SystemExit('Run unelevated on Linux.')
+        with tempfile.TemporaryDirectory(prefix='elarni-storage-') as temporary:
+            env=os.environ.copy()
+            for name in ('HOME','XDG_DATA_HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_RUNTIME_DIR'):
+                directory=Path(temporary)/name;directory.mkdir(mode=0o700);env[name]=str(directory)
+            env.pop('DISPLAY',None);env.pop('WAYLAND_DISPLAY',None)
+            result=subprocess.run(['dbus-run-session','--',sys.executable,str(Path(__file__).resolve()),
+                                   '--session','--core',str(args.core.resolve())],env=env)
+            raise SystemExit(result.returncode)

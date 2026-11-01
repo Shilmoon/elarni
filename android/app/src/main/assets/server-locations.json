@@ -1,0 +1,3385 @@
+[
+  {
+    "code": "AD",
+    "name": "Andorra",
+    "prefixes": [
+      "AD",
+      "AND"
+    ],
+    "names": [
+      "andorra",
+      "principality of andorra",
+      "андорра",
+      "княжество андорра"
+    ]
+  },
+  {
+    "code": "AE",
+    "name": "United Arab Emirates",
+    "prefixes": [
+      "AE",
+      "ARE",
+      "UAE"
+    ],
+    "names": [
+      "uae",
+      "united arab emirates",
+      "оаэ",
+      "объединённые арабские эмираты"
+    ]
+  },
+  {
+    "code": "AF",
+    "name": "Afghanistan",
+    "prefixes": [
+      "AF",
+      "AFG"
+    ],
+    "names": [
+      "afghanistan",
+      "islamic republic of afghanistan",
+      "афганистан",
+      "исламская республика афганистан"
+    ]
+  },
+  {
+    "code": "AG",
+    "name": "Antigua and Barbuda",
+    "prefixes": [
+      "AG",
+      "ATG"
+    ],
+    "names": [
+      "antigua and barbuda",
+      "антигуа и барбуда"
+    ]
+  },
+  {
+    "code": "AI",
+    "name": "Anguilla",
+    "prefixes": [
+      "AI",
+      "AIA"
+    ],
+    "names": [
+      "anguilla",
+      "ангилья"
+    ]
+  },
+  {
+    "code": "AL",
+    "name": "Albania",
+    "prefixes": [
+      "AL",
+      "ALB"
+    ],
+    "names": [
+      "albania",
+      "republic of albania",
+      "албания",
+      "республика албания"
+    ]
+  },
+  {
+    "code": "AM",
+    "name": "Armenia",
+    "prefixes": [
+      "AM",
+      "ARM"
+    ],
+    "names": [
+      "armenia",
+      "republic of armenia",
+      "армения",
+      "республика армения"
+    ]
+  },
+  {
+    "code": "AO",
+    "name": "Angola",
+    "prefixes": [
+      "AO",
+      "AGO"
+    ],
+    "names": [
+      "angola",
+      "republic of angola",
+      "ангола",
+      "республика ангола"
+    ]
+  },
+  {
+    "code": "AQ",
+    "name": "Antarctica",
+    "prefixes": [
+      "AQ",
+      "ATA"
+    ],
+    "names": [
+      "antarctica",
+      "антарктида"
+    ]
+  },
+  {
+    "code": "AR",
+    "name": "Argentina",
+    "prefixes": [
+      "AR",
+      "ARG"
+    ],
+    "names": [
+      "argentina",
+      "argentine republic",
+      "аргентина",
+      "аргентинская республика"
+    ]
+  },
+  {
+    "code": "AS",
+    "name": "American Samoa",
+    "prefixes": [
+      "AS",
+      "ASM"
+    ],
+    "names": [
+      "american samoa",
+      "американское самоа"
+    ]
+  },
+  {
+    "code": "AT",
+    "name": "Austria",
+    "prefixes": [
+      "AT",
+      "AUT"
+    ],
+    "names": [
+      "austria",
+      "republic of austria",
+      "австрийская республика",
+      "австрия"
+    ]
+  },
+  {
+    "code": "AU",
+    "name": "Australia",
+    "prefixes": [
+      "AU",
+      "AUS"
+    ],
+    "names": [
+      "australia",
+      "commonwealth of australia",
+      "австралия",
+      "содружество австралии"
+    ]
+  },
+  {
+    "code": "AW",
+    "name": "Aruba",
+    "prefixes": [
+      "AW",
+      "ABW"
+    ],
+    "names": [
+      "aruba",
+      "аруба"
+    ]
+  },
+  {
+    "code": "AX",
+    "name": "Åland Islands",
+    "prefixes": [
+      "AX",
+      "ALA"
+    ],
+    "names": [
+      "åland islands",
+      "аландские острова"
+    ]
+  },
+  {
+    "code": "AZ",
+    "name": "Azerbaijan",
+    "prefixes": [
+      "AZ",
+      "AZE"
+    ],
+    "names": [
+      "azerbaijan",
+      "republic of azerbaijan",
+      "азербайджан",
+      "азербайджанская республика"
+    ]
+  },
+  {
+    "code": "BA",
+    "name": "Bosnia and Herzegovina",
+    "prefixes": [
+      "BA",
+      "BIH"
+    ],
+    "names": [
+      "bosnia and herzegovina",
+      "босния и герцеговина"
+    ]
+  },
+  {
+    "code": "BB",
+    "name": "Barbados",
+    "prefixes": [
+      "BB",
+      "BRB"
+    ],
+    "names": [
+      "barbados",
+      "барбадос"
+    ]
+  },
+  {
+    "code": "BD",
+    "name": "Bangladesh",
+    "prefixes": [
+      "BD",
+      "BGD"
+    ],
+    "names": [
+      "bangladesh",
+      "people's republic of bangladesh",
+      "бангладеш",
+      "народная республика бангладеш"
+    ]
+  },
+  {
+    "code": "BE",
+    "name": "Belgium",
+    "prefixes": [
+      "BE",
+      "BEL"
+    ],
+    "names": [
+      "belgium",
+      "kingdom of belgium",
+      "бельгия",
+      "королевство бельгия"
+    ]
+  },
+  {
+    "code": "BF",
+    "name": "Burkina Faso",
+    "prefixes": [
+      "BF",
+      "BFA"
+    ],
+    "names": [
+      "burkina faso",
+      "буркина-фасо"
+    ]
+  },
+  {
+    "code": "BG",
+    "name": "Bulgaria",
+    "prefixes": [
+      "BG",
+      "BGR"
+    ],
+    "names": [
+      "bulgaria",
+      "republic of bulgaria",
+      "болгария",
+      "республика болгария"
+    ]
+  },
+  {
+    "code": "BH",
+    "name": "Bahrain",
+    "prefixes": [
+      "BH",
+      "BHR"
+    ],
+    "names": [
+      "bahrain",
+      "kingdom of bahrain",
+      "бахрейн",
+      "королевство бахрейн"
+    ]
+  },
+  {
+    "code": "BI",
+    "name": "Burundi",
+    "prefixes": [
+      "BI",
+      "BDI"
+    ],
+    "names": [
+      "burundi",
+      "republic of burundi",
+      "бурунди",
+      "республика бурунди"
+    ]
+  },
+  {
+    "code": "BJ",
+    "name": "Benin",
+    "prefixes": [
+      "BJ",
+      "BEN"
+    ],
+    "names": [
+      "benin",
+      "republic of benin",
+      "бенин",
+      "республика бенин"
+    ]
+  },
+  {
+    "code": "BL",
+    "name": "Saint Barthélemy",
+    "prefixes": [
+      "BL",
+      "BLM"
+    ],
+    "names": [
+      "collectivity of saint barthélemy",
+      "saint barthélemy",
+      "коллективность сен-бартелеми",
+      "сен-бартелеми"
+    ]
+  },
+  {
+    "code": "BM",
+    "name": "Bermuda",
+    "prefixes": [
+      "BM",
+      "BMU"
+    ],
+    "names": [
+      "bermuda",
+      "бермудские острова"
+    ]
+  },
+  {
+    "code": "BN",
+    "name": "Brunei",
+    "prefixes": [
+      "BN",
+      "BRN"
+    ],
+    "names": [
+      "brunei",
+      "nation of brunei, abode of peace",
+      "бруней",
+      "нация бруней, обитель мира"
+    ]
+  },
+  {
+    "code": "BO",
+    "name": "Bolivia",
+    "prefixes": [
+      "BO",
+      "BOL"
+    ],
+    "names": [
+      "bolivia",
+      "plurinational state of bolivia",
+      "боливия",
+      "многонациональное государство боливия"
+    ]
+  },
+  {
+    "code": "BQ",
+    "name": "Caribbean Netherlands",
+    "prefixes": [
+      "BQ",
+      "BES"
+    ],
+    "names": [
+      "bonaire, sint eust,atius and saba",
+      "caribbean netherlands",
+      "бонэйр, синт-эстатиус и саба",
+      "карибские нидерланды"
+    ]
+  },
+  {
+    "code": "BR",
+    "name": "Brazil",
+    "prefixes": [
+      "BR",
+      "BRA"
+    ],
+    "names": [
+      "brazil",
+      "federative republic of brazil",
+      "бразилия",
+      "федеративная республика бразилия"
+    ]
+  },
+  {
+    "code": "BS",
+    "name": "Bahamas",
+    "prefixes": [
+      "BS",
+      "BHS"
+    ],
+    "names": [
+      "bahamas",
+      "commonwealth of the bahamas",
+      "багамские острова",
+      "содружество багамских островов"
+    ]
+  },
+  {
+    "code": "BT",
+    "name": "Bhutan",
+    "prefixes": [
+      "BT",
+      "BTN"
+    ],
+    "names": [
+      "bhutan",
+      "kingdom of bhutan",
+      "бутан",
+      "королевство бутан"
+    ]
+  },
+  {
+    "code": "BV",
+    "name": "Bouvet Island",
+    "prefixes": [
+      "BV",
+      "BVT"
+    ],
+    "names": [
+      "bouvet island",
+      "остров буве"
+    ]
+  },
+  {
+    "code": "BW",
+    "name": "Botswana",
+    "prefixes": [
+      "BW",
+      "BWA"
+    ],
+    "names": [
+      "botswana",
+      "republic of botswana",
+      "ботсвана",
+      "республика ботсвана"
+    ]
+  },
+  {
+    "code": "BY",
+    "name": "Belarus",
+    "prefixes": [
+      "BY",
+      "BLR"
+    ],
+    "names": [
+      "belarus",
+      "republic of belarus",
+      "беларусь",
+      "республика беларусь"
+    ]
+  },
+  {
+    "code": "BZ",
+    "name": "Belize",
+    "prefixes": [
+      "BZ",
+      "BLZ"
+    ],
+    "names": [
+      "belize",
+      "белиз"
+    ]
+  },
+  {
+    "code": "CA",
+    "name": "Canada",
+    "prefixes": [
+      "CA",
+      "CAN"
+    ],
+    "names": [
+      "canada",
+      "канада"
+    ]
+  },
+  {
+    "code": "CC",
+    "name": "Cocos (Keeling) Islands",
+    "prefixes": [
+      "CC",
+      "CCK"
+    ],
+    "names": [
+      "cocos (keeling) islands",
+      "territory of the cocos (keeling) islands",
+      "кокосовые острова",
+      "территория кокосовых (килинг) островов"
+    ]
+  },
+  {
+    "code": "CD",
+    "name": "DR Congo",
+    "prefixes": [
+      "CD",
+      "COD"
+    ],
+    "names": [
+      "democratic republic of the congo",
+      "dr congo",
+      "демократическая республика конго"
+    ]
+  },
+  {
+    "code": "CF",
+    "name": "Central African Republic",
+    "prefixes": [
+      "CAF"
+    ],
+    "names": [
+      "central african republic",
+      "центральноафриканская республика"
+    ]
+  },
+  {
+    "code": "CG",
+    "name": "Republic of the Congo",
+    "prefixes": [
+      "CG",
+      "COG"
+    ],
+    "names": [
+      "republic of the congo",
+      "республика конго"
+    ]
+  },
+  {
+    "code": "CH",
+    "name": "Switzerland",
+    "prefixes": [
+      "CH",
+      "CHE"
+    ],
+    "names": [
+      "swiss confederation",
+      "switzerland",
+      "швейцария",
+      "швейцарская конфедерация"
+    ]
+  },
+  {
+    "code": "CI",
+    "name": "Ivory Coast",
+    "prefixes": [
+      "CI",
+      "CIV"
+    ],
+    "names": [
+      "ivory coast",
+      "republic of côte d'ivoire",
+      "кот-д’ивуар",
+      "республика кот-д’ивуар"
+    ]
+  },
+  {
+    "code": "CK",
+    "name": "Cook Islands",
+    "prefixes": [
+      "CK",
+      "COK"
+    ],
+    "names": [
+      "cook islands",
+      "острова кука"
+    ]
+  },
+  {
+    "code": "CL",
+    "name": "Chile",
+    "prefixes": [
+      "CL",
+      "CHL"
+    ],
+    "names": [
+      "chile",
+      "republic of chile",
+      "республика чили",
+      "чили"
+    ]
+  },
+  {
+    "code": "CM",
+    "name": "Cameroon",
+    "prefixes": [
+      "CM",
+      "CMR"
+    ],
+    "names": [
+      "cameroon",
+      "republic of cameroon",
+      "камерун",
+      "республика камерун"
+    ]
+  },
+  {
+    "code": "CN",
+    "name": "China",
+    "prefixes": [
+      "CN",
+      "CHN"
+    ],
+    "names": [
+      "china",
+      "people's republic of china",
+      "китай",
+      "народная республика китай"
+    ]
+  },
+  {
+    "code": "CO",
+    "name": "Colombia",
+    "prefixes": [
+      "CO",
+      "COL"
+    ],
+    "names": [
+      "colombia",
+      "republic of colombia",
+      "колумбия",
+      "республика колумбия"
+    ]
+  },
+  {
+    "code": "CR",
+    "name": "Costa Rica",
+    "prefixes": [
+      "CR",
+      "CRI"
+    ],
+    "names": [
+      "costa rica",
+      "republic of costa rica",
+      "коста-рика",
+      "республика коста-рика"
+    ]
+  },
+  {
+    "code": "CU",
+    "name": "Cuba",
+    "prefixes": [
+      "CU",
+      "CUB"
+    ],
+    "names": [
+      "cuba",
+      "republic of cuba",
+      "куба",
+      "республика куба"
+    ]
+  },
+  {
+    "code": "CV",
+    "name": "Cape Verde",
+    "prefixes": [
+      "CV",
+      "CPV"
+    ],
+    "names": [
+      "cape verde",
+      "republic of cabo verde",
+      "кабо-верде",
+      "республика кабо-верде"
+    ]
+  },
+  {
+    "code": "CW",
+    "name": "Curaçao",
+    "prefixes": [
+      "CW",
+      "CUW"
+    ],
+    "names": [
+      "country of curaçao",
+      "curaçao",
+      "кюрасао",
+      "страна кюрасао"
+    ]
+  },
+  {
+    "code": "CX",
+    "name": "Christmas Island",
+    "prefixes": [
+      "CX",
+      "CXR"
+    ],
+    "names": [
+      "christmas island",
+      "territory of christmas island",
+      "остров рождества",
+      "территория острова рождества"
+    ]
+  },
+  {
+    "code": "CY",
+    "name": "Cyprus",
+    "prefixes": [
+      "CY",
+      "CYP"
+    ],
+    "names": [
+      "cyprus",
+      "republic of cyprus",
+      "кипр",
+      "республика кипр"
+    ]
+  },
+  {
+    "code": "CZ",
+    "name": "Czechia",
+    "prefixes": [
+      "CZ",
+      "CZE"
+    ],
+    "names": [
+      "czech republic",
+      "czechia",
+      "чехия",
+      "чешская республика"
+    ]
+  },
+  {
+    "code": "DE",
+    "name": "Germany",
+    "prefixes": [
+      "DE",
+      "DEU"
+    ],
+    "names": [
+      "federal republic of germany",
+      "germany",
+      "германия",
+      "федеративная республика германия"
+    ]
+  },
+  {
+    "code": "DJ",
+    "name": "Djibouti",
+    "prefixes": [
+      "DJ",
+      "DJI"
+    ],
+    "names": [
+      "djibouti",
+      "republic of djibouti",
+      "джибути",
+      "республика джибути"
+    ]
+  },
+  {
+    "code": "DK",
+    "name": "Denmark",
+    "prefixes": [
+      "DK",
+      "DNK"
+    ],
+    "names": [
+      "denmark",
+      "kingdom of denmark",
+      "дания",
+      "королевство дания"
+    ]
+  },
+  {
+    "code": "DM",
+    "name": "Dominica",
+    "prefixes": [
+      "DM",
+      "DMA"
+    ],
+    "names": [
+      "commonwealth of dominica",
+      "dominica",
+      "доминика",
+      "содружество доминики"
+    ]
+  },
+  {
+    "code": "DO",
+    "name": "Dominican Republic",
+    "prefixes": [
+      "DO",
+      "DOM"
+    ],
+    "names": [
+      "dominican republic",
+      "доминиканская республика"
+    ]
+  },
+  {
+    "code": "DZ",
+    "name": "Algeria",
+    "prefixes": [
+      "DZ",
+      "DZA"
+    ],
+    "names": [
+      "algeria",
+      "people's democratic republic of algeria",
+      "алжир",
+      "народно-демократическая республика алжир"
+    ]
+  },
+  {
+    "code": "EC",
+    "name": "Ecuador",
+    "prefixes": [
+      "EC",
+      "ECU"
+    ],
+    "names": [
+      "ecuador",
+      "republic of ecuador",
+      "республика эквадор",
+      "эквадор"
+    ]
+  },
+  {
+    "code": "EE",
+    "name": "Estonia",
+    "prefixes": [
+      "EE",
+      "EST"
+    ],
+    "names": [
+      "estonia",
+      "republic of estonia",
+      "эстония",
+      "эстонская республика"
+    ]
+  },
+  {
+    "code": "EG",
+    "name": "Egypt",
+    "prefixes": [
+      "EG",
+      "EGY"
+    ],
+    "names": [
+      "arab republic of egypt",
+      "egypt",
+      "арабская республика египет",
+      "египет"
+    ]
+  },
+  {
+    "code": "EH",
+    "name": "Western Sahara",
+    "prefixes": [
+      "EH",
+      "ESH"
+    ],
+    "names": [
+      "sahrawi arab democratic republic",
+      "western sahara",
+      "западная сахара",
+      "сахарская арабская демократическая республика"
+    ]
+  },
+  {
+    "code": "ER",
+    "name": "Eritrea",
+    "prefixes": [
+      "ER",
+      "ERI"
+    ],
+    "names": [
+      "eritrea",
+      "state of eritrea",
+      "государство эритрея",
+      "эритрея"
+    ]
+  },
+  {
+    "code": "ES",
+    "name": "Spain",
+    "prefixes": [
+      "ES",
+      "ESP"
+    ],
+    "names": [
+      "kingdom of spain",
+      "spain",
+      "испания",
+      "королевство испания"
+    ]
+  },
+  {
+    "code": "ET",
+    "name": "Ethiopia",
+    "prefixes": [
+      "ET",
+      "ETH"
+    ],
+    "names": [
+      "ethiopia",
+      "federal democratic republic of ethiopia",
+      "федеративная демократическая республика эфиопия",
+      "эфиопия"
+    ]
+  },
+  {
+    "code": "EU",
+    "name": "European Union",
+    "prefixes": [
+      "EU"
+    ],
+    "names": [
+      "european union",
+      "европейский союз",
+      "евросоюз"
+    ]
+  },
+  {
+    "code": "FI",
+    "name": "Finland",
+    "prefixes": [
+      "FI",
+      "FIN"
+    ],
+    "names": [
+      "finland",
+      "republic of finland",
+      "финляндия",
+      "финляндская республика"
+    ]
+  },
+  {
+    "code": "FJ",
+    "name": "Fiji",
+    "prefixes": [
+      "FJ",
+      "FJI"
+    ],
+    "names": [
+      "fiji",
+      "republic of fiji",
+      "республика фиджи",
+      "фиджи"
+    ]
+  },
+  {
+    "code": "FK",
+    "name": "Falkland Islands",
+    "prefixes": [
+      "FK",
+      "FLK"
+    ],
+    "names": [
+      "falkland islands",
+      "фолклендские острова"
+    ]
+  },
+  {
+    "code": "FM",
+    "name": "Micronesia",
+    "prefixes": [
+      "FM",
+      "FSM"
+    ],
+    "names": [
+      "federated states of micronesia",
+      "micronesia",
+      "федеративные штаты микронезии"
+    ]
+  },
+  {
+    "code": "FO",
+    "name": "Faroe Islands",
+    "prefixes": [
+      "FO",
+      "FRO"
+    ],
+    "names": [
+      "faroe islands",
+      "фарерские острова"
+    ]
+  },
+  {
+    "code": "FR",
+    "name": "France",
+    "prefixes": [
+      "FR",
+      "FRA"
+    ],
+    "names": [
+      "france",
+      "french republic",
+      "франция",
+      "французская республика"
+    ]
+  },
+  {
+    "code": "GA",
+    "name": "Gabon",
+    "prefixes": [
+      "GA",
+      "GAB"
+    ],
+    "names": [
+      "gabon",
+      "gabonese republic",
+      "габон",
+      "габонская республика"
+    ]
+  },
+  {
+    "code": "GB",
+    "name": "United Kingdom",
+    "prefixes": [
+      "GB",
+      "GBR",
+      "UK"
+    ],
+    "names": [
+      "uk",
+      "united kingdom",
+      "united kingdom of great britain and northern ireland",
+      "великобритания",
+      "соединенное королевство великобритании и северной ирландии"
+    ]
+  },
+  {
+    "code": "GD",
+    "name": "Grenada",
+    "prefixes": [
+      "GD",
+      "GRD"
+    ],
+    "names": [
+      "grenada",
+      "гренада"
+    ]
+  },
+  {
+    "code": "GE",
+    "name": "Georgia",
+    "prefixes": [
+      "GE",
+      "GEO"
+    ],
+    "names": [
+      "georgia",
+      "грузия"
+    ]
+  },
+  {
+    "code": "GF",
+    "name": "French Guiana",
+    "prefixes": [
+      "GF",
+      "GUF"
+    ],
+    "names": [
+      "french guiana",
+      "guiana",
+      "гвиана",
+      "французская гвиана"
+    ]
+  },
+  {
+    "code": "GG",
+    "name": "Guernsey",
+    "prefixes": [
+      "GG",
+      "GGY"
+    ],
+    "names": [
+      "bailiwick of guernsey",
+      "guernsey",
+      "гернси",
+      "коронное владение гернси"
+    ]
+  },
+  {
+    "code": "GH",
+    "name": "Ghana",
+    "prefixes": [
+      "GH",
+      "GHA"
+    ],
+    "names": [
+      "ghana",
+      "republic of ghana",
+      "гана",
+      "республика гана"
+    ]
+  },
+  {
+    "code": "GI",
+    "name": "Gibraltar",
+    "prefixes": [
+      "GI",
+      "GIB"
+    ],
+    "names": [
+      "gibraltar",
+      "гибралтар"
+    ]
+  },
+  {
+    "code": "GL",
+    "name": "Greenland",
+    "prefixes": [
+      "GL",
+      "GRL"
+    ],
+    "names": [
+      "greenland",
+      "гренландия"
+    ]
+  },
+  {
+    "code": "GM",
+    "name": "Gambia",
+    "prefixes": [
+      "GM",
+      "GMB"
+    ],
+    "names": [
+      "gambia",
+      "republic of the gambia",
+      "гамбия",
+      "республика гамбия"
+    ]
+  },
+  {
+    "code": "GN",
+    "name": "Guinea",
+    "prefixes": [
+      "GN",
+      "GIN"
+    ],
+    "names": [
+      "guinea",
+      "republic of guinea",
+      "гвинея",
+      "республика гвинея"
+    ]
+  },
+  {
+    "code": "GP",
+    "name": "Guadeloupe",
+    "prefixes": [
+      "GP",
+      "GLP"
+    ],
+    "names": [
+      "guadeloupe",
+      "гваделупа"
+    ]
+  },
+  {
+    "code": "GQ",
+    "name": "Equatorial Guinea",
+    "prefixes": [
+      "GQ",
+      "GNQ"
+    ],
+    "names": [
+      "equatorial guinea",
+      "republic of equatorial guinea",
+      "республика экваториальная гвинея",
+      "экваториальная гвинея"
+    ]
+  },
+  {
+    "code": "GR",
+    "name": "Greece",
+    "prefixes": [
+      "GR",
+      "GRC"
+    ],
+    "names": [
+      "greece",
+      "hellenic republic",
+      "греция",
+      "греческая республика"
+    ]
+  },
+  {
+    "code": "GS",
+    "name": "South Georgia",
+    "prefixes": [
+      "GS",
+      "SGS"
+    ],
+    "names": [
+      "south georgia",
+      "south georgia and the south sandwich islands",
+      "южная георгия и южные сандвичевы острова"
+    ]
+  },
+  {
+    "code": "GT",
+    "name": "Guatemala",
+    "prefixes": [
+      "GT",
+      "GTM"
+    ],
+    "names": [
+      "guatemala",
+      "republic of guatemala",
+      "гватемала",
+      "республика гватемала"
+    ]
+  },
+  {
+    "code": "GU",
+    "name": "Guam",
+    "prefixes": [
+      "GU",
+      "GUM"
+    ],
+    "names": [
+      "guam",
+      "гуам"
+    ]
+  },
+  {
+    "code": "GW",
+    "name": "Guinea-Bissau",
+    "prefixes": [
+      "GW",
+      "GNB"
+    ],
+    "names": [
+      "guinea-bissau",
+      "republic of guinea-bissau",
+      "гвинея-бисау",
+      "республика гвинея-бисау"
+    ]
+  },
+  {
+    "code": "GY",
+    "name": "Guyana",
+    "prefixes": [
+      "GY",
+      "GUY"
+    ],
+    "names": [
+      "co-operative republic of guyana",
+      "guyana",
+      "гайана",
+      "кооперативная республика гайана"
+    ]
+  },
+  {
+    "code": "HK",
+    "name": "Hong Kong",
+    "prefixes": [
+      "HK",
+      "HKG"
+    ],
+    "names": [
+      "hong kong",
+      "hong kong special administrative region of the people's republic of china",
+      "гонконг",
+      "специальный административный район гонконг китайской народной республики"
+    ]
+  },
+  {
+    "code": "HM",
+    "name": "Heard Island and McDonald Islands",
+    "prefixes": [
+      "HM",
+      "HMD"
+    ],
+    "names": [
+      "heard island and mcdonald islands",
+      "остров херд и острова макдональд"
+    ]
+  },
+  {
+    "code": "HN",
+    "name": "Honduras",
+    "prefixes": [
+      "HN",
+      "HND"
+    ],
+    "names": [
+      "honduras",
+      "republic of honduras",
+      "гондурас",
+      "республика гондурас"
+    ]
+  },
+  {
+    "code": "HR",
+    "name": "Croatia",
+    "prefixes": [
+      "HR",
+      "HRV"
+    ],
+    "names": [
+      "croatia",
+      "republic of croatia",
+      "республика хорватия",
+      "хорватия"
+    ]
+  },
+  {
+    "code": "HT",
+    "name": "Haiti",
+    "prefixes": [
+      "HT",
+      "HTI"
+    ],
+    "names": [
+      "haiti",
+      "republic of haiti",
+      "гаити",
+      "республика гаити"
+    ]
+  },
+  {
+    "code": "HU",
+    "name": "Hungary",
+    "prefixes": [
+      "HU",
+      "HUN"
+    ],
+    "names": [
+      "hungary",
+      "венгрия"
+    ]
+  },
+  {
+    "code": "ID",
+    "name": "Indonesia",
+    "prefixes": [
+      "ID",
+      "IDN"
+    ],
+    "names": [
+      "indonesia",
+      "republic of indonesia",
+      "индонезия",
+      "республика индонезия"
+    ]
+  },
+  {
+    "code": "IE",
+    "name": "Ireland",
+    "prefixes": [
+      "IE",
+      "IRL"
+    ],
+    "names": [
+      "ireland",
+      "republic of ireland",
+      "ирландия",
+      "республика ирландия"
+    ]
+  },
+  {
+    "code": "IL",
+    "name": "Israel",
+    "prefixes": [
+      "IL",
+      "ISR"
+    ],
+    "names": [
+      "israel",
+      "state of israel",
+      "государство израиль",
+      "израиль"
+    ]
+  },
+  {
+    "code": "IM",
+    "name": "Isle of Man",
+    "prefixes": [
+      "IM",
+      "IMN"
+    ],
+    "names": [
+      "isle of man",
+      "остров мэн"
+    ]
+  },
+  {
+    "code": "IN",
+    "name": "India",
+    "prefixes": [
+      "IN",
+      "IND"
+    ],
+    "names": [
+      "india",
+      "republic of india",
+      "индия",
+      "республика индия"
+    ]
+  },
+  {
+    "code": "IO",
+    "name": "British Indian Ocean Territory",
+    "prefixes": [
+      "IO",
+      "IOT"
+    ],
+    "names": [
+      "british indian ocean territory",
+      "британская территория в индийском океане",
+      "британская территория индийского океана"
+    ]
+  },
+  {
+    "code": "IQ",
+    "name": "Iraq",
+    "prefixes": [
+      "IQ",
+      "IRQ"
+    ],
+    "names": [
+      "iraq",
+      "republic of iraq",
+      "ирак",
+      "республика ирак"
+    ]
+  },
+  {
+    "code": "IR",
+    "name": "Iran",
+    "prefixes": [
+      "IR",
+      "IRN"
+    ],
+    "names": [
+      "iran",
+      "islamic republic of iran",
+      "иран",
+      "исламская республика иран"
+    ]
+  },
+  {
+    "code": "IS",
+    "name": "Iceland",
+    "prefixes": [
+      "IS",
+      "ISL"
+    ],
+    "names": [
+      "iceland",
+      "исландия"
+    ]
+  },
+  {
+    "code": "IT",
+    "name": "Italy",
+    "prefixes": [
+      "IT",
+      "ITA"
+    ],
+    "names": [
+      "italian republic",
+      "italy",
+      "италия",
+      "итальянская республика"
+    ]
+  },
+  {
+    "code": "JE",
+    "name": "Jersey",
+    "prefixes": [
+      "JE",
+      "JEY"
+    ],
+    "names": [
+      "bailiwick of jersey",
+      "jersey",
+      "джерси",
+      "коронное владение джерси"
+    ]
+  },
+  {
+    "code": "JM",
+    "name": "Jamaica",
+    "prefixes": [
+      "JM",
+      "JAM"
+    ],
+    "names": [
+      "jamaica",
+      "ямайка"
+    ]
+  },
+  {
+    "code": "JO",
+    "name": "Jordan",
+    "prefixes": [
+      "JO",
+      "JOR"
+    ],
+    "names": [
+      "hashemite kingdom of jordan",
+      "jordan",
+      "иордания",
+      "иорданское хашимитское королевство"
+    ]
+  },
+  {
+    "code": "JP",
+    "name": "Japan",
+    "prefixes": [
+      "JP",
+      "JPN"
+    ],
+    "names": [
+      "japan",
+      "япония"
+    ]
+  },
+  {
+    "code": "KE",
+    "name": "Kenya",
+    "prefixes": [
+      "KE",
+      "KEN"
+    ],
+    "names": [
+      "kenya",
+      "republic of kenya",
+      "кения",
+      "республика кения"
+    ]
+  },
+  {
+    "code": "KG",
+    "name": "Kyrgyzstan",
+    "prefixes": [
+      "KG",
+      "KGZ"
+    ],
+    "names": [
+      "kyrgyz republic",
+      "kyrgyzstan",
+      "киргизия",
+      "кыргызская республика"
+    ]
+  },
+  {
+    "code": "KH",
+    "name": "Cambodia",
+    "prefixes": [
+      "KH",
+      "KHM"
+    ],
+    "names": [
+      "cambodia",
+      "kingdom of cambodia",
+      "камбоджа",
+      "королевство камбоджа"
+    ]
+  },
+  {
+    "code": "KI",
+    "name": "Kiribati",
+    "prefixes": [
+      "KI",
+      "KIR"
+    ],
+    "names": [
+      "independent and sovereign republic of kiribati",
+      "kiribati",
+      "кирибати",
+      "независимая и суверенная республика кирибати"
+    ]
+  },
+  {
+    "code": "KM",
+    "name": "Comoros",
+    "prefixes": [
+      "KM",
+      "COM"
+    ],
+    "names": [
+      "comoros",
+      "union of the comoros",
+      "коморы",
+      "союз коморских островов"
+    ]
+  },
+  {
+    "code": "KN",
+    "name": "Saint Kitts and Nevis",
+    "prefixes": [
+      "KN",
+      "KNA"
+    ],
+    "names": [
+      "federation of saint christopher and nevis",
+      "saint kitts and nevis",
+      "сент-китс и невис",
+      "федерация сент-кристофер и невис"
+    ]
+  },
+  {
+    "code": "KP",
+    "name": "North Korea",
+    "prefixes": [
+      "KP",
+      "PRK"
+    ],
+    "names": [
+      "democratic people's republic of korea",
+      "north korea",
+      "корейская народно-демократическая республика",
+      "северная корея"
+    ]
+  },
+  {
+    "code": "KR",
+    "name": "South Korea",
+    "prefixes": [
+      "KR",
+      "KOR"
+    ],
+    "names": [
+      "republic of korea",
+      "south korea",
+      "республика корея",
+      "южная корея"
+    ]
+  },
+  {
+    "code": "KW",
+    "name": "Kuwait",
+    "prefixes": [
+      "KW",
+      "KWT"
+    ],
+    "names": [
+      "kuwait",
+      "state of kuwait",
+      "государство кувейт",
+      "кувейт"
+    ]
+  },
+  {
+    "code": "KY",
+    "name": "Cayman Islands",
+    "prefixes": [
+      "KY",
+      "CYM"
+    ],
+    "names": [
+      "cayman islands",
+      "каймановы острова"
+    ]
+  },
+  {
+    "code": "KZ",
+    "name": "Kazakhstan",
+    "prefixes": [
+      "KZ",
+      "KAZ"
+    ],
+    "names": [
+      "kazakhstan",
+      "republic of kazakhstan",
+      "казахстан",
+      "республика казахстан"
+    ]
+  },
+  {
+    "code": "LA",
+    "name": "Laos",
+    "prefixes": [
+      "LA",
+      "LAO"
+    ],
+    "names": [
+      "lao people's democratic republic",
+      "laos",
+      "лаос",
+      "лаосская народно-демократическая республика"
+    ]
+  },
+  {
+    "code": "LB",
+    "name": "Lebanon",
+    "prefixes": [
+      "LB",
+      "LBN"
+    ],
+    "names": [
+      "lebanese republic",
+      "lebanon",
+      "ливан",
+      "ливанская республика"
+    ]
+  },
+  {
+    "code": "LC",
+    "name": "Saint Lucia",
+    "prefixes": [
+      "LC",
+      "LCA"
+    ],
+    "names": [
+      "saint lucia",
+      "сент-люсия"
+    ]
+  },
+  {
+    "code": "LI",
+    "name": "Liechtenstein",
+    "prefixes": [
+      "LI",
+      "LIE"
+    ],
+    "names": [
+      "liechtenstein",
+      "principality of liechtenstein",
+      "княжество лихтенштейн",
+      "лихтенштейн"
+    ]
+  },
+  {
+    "code": "LK",
+    "name": "Sri Lanka",
+    "prefixes": [
+      "LK",
+      "LKA"
+    ],
+    "names": [
+      "democratic socialist republic of sri lanka",
+      "sri lanka",
+      "демократическая социалистическая республика шри-ланка",
+      "шри-ланка"
+    ]
+  },
+  {
+    "code": "LR",
+    "name": "Liberia",
+    "prefixes": [
+      "LR",
+      "LBR"
+    ],
+    "names": [
+      "liberia",
+      "republic of liberia",
+      "либерия",
+      "республика либерия"
+    ]
+  },
+  {
+    "code": "LS",
+    "name": "Lesotho",
+    "prefixes": [
+      "LS",
+      "LSO"
+    ],
+    "names": [
+      "kingdom of lesotho",
+      "lesotho",
+      "королевство лесото",
+      "лесото"
+    ]
+  },
+  {
+    "code": "LT",
+    "name": "Lithuania",
+    "prefixes": [
+      "LT",
+      "LTU"
+    ],
+    "names": [
+      "lithuania",
+      "republic of lithuania",
+      "литва",
+      "литовская республика"
+    ]
+  },
+  {
+    "code": "LU",
+    "name": "Luxembourg",
+    "prefixes": [
+      "LU",
+      "LUX"
+    ],
+    "names": [
+      "grand duchy of luxembourg",
+      "luxembourg",
+      "великое герцогство люксембург",
+      "люксембург"
+    ]
+  },
+  {
+    "code": "LV",
+    "name": "Latvia",
+    "prefixes": [
+      "LV",
+      "LVA"
+    ],
+    "names": [
+      "latvia",
+      "republic of latvia",
+      "латвийская республика",
+      "латвия"
+    ]
+  },
+  {
+    "code": "LY",
+    "name": "Libya",
+    "prefixes": [
+      "LY",
+      "LBY"
+    ],
+    "names": [
+      "libya",
+      "state of libya",
+      "государство ливия",
+      "ливия"
+    ]
+  },
+  {
+    "code": "MA",
+    "name": "Morocco",
+    "prefixes": [
+      "MA",
+      "MAR"
+    ],
+    "names": [
+      "kingdom of morocco",
+      "morocco",
+      "королевство марокко",
+      "марокко"
+    ]
+  },
+  {
+    "code": "MC",
+    "name": "Monaco",
+    "prefixes": [
+      "MC",
+      "MCO"
+    ],
+    "names": [
+      "monaco",
+      "principality of monaco",
+      "княжество монако",
+      "монако"
+    ]
+  },
+  {
+    "code": "MD",
+    "name": "Moldova",
+    "prefixes": [
+      "MD",
+      "MDA"
+    ],
+    "names": [
+      "moldova",
+      "republic of moldova",
+      "молдавия",
+      "республика молдова"
+    ]
+  },
+  {
+    "code": "ME",
+    "name": "Montenegro",
+    "prefixes": [
+      "ME",
+      "MNE"
+    ],
+    "names": [
+      "montenegro",
+      "черногория"
+    ]
+  },
+  {
+    "code": "MF",
+    "name": "Saint Martin",
+    "prefixes": [
+      "MF",
+      "MAF"
+    ],
+    "names": [
+      "saint martin",
+      "сен-мартен"
+    ]
+  },
+  {
+    "code": "MG",
+    "name": "Madagascar",
+    "prefixes": [
+      "MG",
+      "MDG"
+    ],
+    "names": [
+      "madagascar",
+      "republic of madagascar",
+      "мадагаскар",
+      "республика мадагаскар"
+    ]
+  },
+  {
+    "code": "MH",
+    "name": "Marshall Islands",
+    "prefixes": [
+      "MH",
+      "MHL"
+    ],
+    "names": [
+      "marshall islands",
+      "republic of the marshall islands",
+      "маршалловы острова",
+      "республика маршалловы острова"
+    ]
+  },
+  {
+    "code": "MK",
+    "name": "North Macedonia",
+    "prefixes": [
+      "MK",
+      "MKD"
+    ],
+    "names": [
+      "north macedonia",
+      "republic of north macedonia",
+      "республика северная македония",
+      "северная македония"
+    ]
+  },
+  {
+    "code": "ML",
+    "name": "Mali",
+    "prefixes": [
+      "ML",
+      "MLI"
+    ],
+    "names": [
+      "mali",
+      "republic of mali",
+      "мали",
+      "республика мали"
+    ]
+  },
+  {
+    "code": "MM",
+    "name": "Myanmar",
+    "prefixes": [
+      "MM",
+      "MMR"
+    ],
+    "names": [
+      "myanmar",
+      "republic of the union of myanmar",
+      "мьянма",
+      "республика союза мьянма"
+    ]
+  },
+  {
+    "code": "MN",
+    "name": "Mongolia",
+    "prefixes": [
+      "MN",
+      "MNG"
+    ],
+    "names": [
+      "mongolia",
+      "монголия"
+    ]
+  },
+  {
+    "code": "MO",
+    "name": "Macau",
+    "prefixes": [
+      "MO",
+      "MAC"
+    ],
+    "names": [
+      "macao special administrative region of the people's republic of china",
+      "macau",
+      "макао",
+      "специальный административный район макао китайской народной республики"
+    ]
+  },
+  {
+    "code": "MP",
+    "name": "Northern Mariana Islands",
+    "prefixes": [
+      "MP",
+      "MNP"
+    ],
+    "names": [
+      "commonwealth of the northern mariana islands",
+      "northern mariana islands",
+      "северные марианские острова",
+      "содружество северных марианских островов"
+    ]
+  },
+  {
+    "code": "MQ",
+    "name": "Martinique",
+    "prefixes": [
+      "MQ",
+      "MTQ"
+    ],
+    "names": [
+      "martinique",
+      "мартиника"
+    ]
+  },
+  {
+    "code": "MR",
+    "name": "Mauritania",
+    "prefixes": [
+      "MR",
+      "MRT"
+    ],
+    "names": [
+      "islamic republic of mauritania",
+      "mauritania",
+      "исламская республика мавритания",
+      "мавритания"
+    ]
+  },
+  {
+    "code": "MS",
+    "name": "Montserrat",
+    "prefixes": [
+      "MS",
+      "MSR"
+    ],
+    "names": [
+      "montserrat",
+      "монтсеррат"
+    ]
+  },
+  {
+    "code": "MT",
+    "name": "Malta",
+    "prefixes": [
+      "MT",
+      "MLT"
+    ],
+    "names": [
+      "malta",
+      "republic of malta",
+      "мальта",
+      "республика мальта"
+    ]
+  },
+  {
+    "code": "MU",
+    "name": "Mauritius",
+    "prefixes": [
+      "MU",
+      "MUS"
+    ],
+    "names": [
+      "mauritius",
+      "republic of mauritius",
+      "маврикий",
+      "республика маврикий"
+    ]
+  },
+  {
+    "code": "MV",
+    "name": "Maldives",
+    "prefixes": [
+      "MV",
+      "MDV"
+    ],
+    "names": [
+      "maldives",
+      "republic of the maldives",
+      "мальдивы",
+      "республика мальдивы"
+    ]
+  },
+  {
+    "code": "MW",
+    "name": "Malawi",
+    "prefixes": [
+      "MW",
+      "MWI"
+    ],
+    "names": [
+      "malawi",
+      "republic of malawi",
+      "малави",
+      "республика малави"
+    ]
+  },
+  {
+    "code": "MX",
+    "name": "Mexico",
+    "prefixes": [
+      "MX",
+      "MEX"
+    ],
+    "names": [
+      "mexico",
+      "united mexican states",
+      "мексика",
+      "мексиканские соединённые штаты"
+    ]
+  },
+  {
+    "code": "MY",
+    "name": "Malaysia",
+    "prefixes": [
+      "MY",
+      "MYS"
+    ],
+    "names": [
+      "malaysia",
+      "малайзия"
+    ]
+  },
+  {
+    "code": "MZ",
+    "name": "Mozambique",
+    "prefixes": [
+      "MZ",
+      "MOZ"
+    ],
+    "names": [
+      "mozambique",
+      "republic of mozambique",
+      "мозамбик",
+      "республика мозамбик"
+    ]
+  },
+  {
+    "code": "NA",
+    "name": "Namibia",
+    "prefixes": [
+      "NA",
+      "NAM"
+    ],
+    "names": [
+      "namibia",
+      "republic of namibia",
+      "намибия",
+      "республика намибия"
+    ]
+  },
+  {
+    "code": "NC",
+    "name": "New Caledonia",
+    "prefixes": [
+      "NC",
+      "NCL"
+    ],
+    "names": [
+      "new caledonia",
+      "новая каледония"
+    ]
+  },
+  {
+    "code": "NE",
+    "name": "Niger",
+    "prefixes": [
+      "NE",
+      "NER"
+    ],
+    "names": [
+      "niger",
+      "republic of niger",
+      "нигер",
+      "республика нигер"
+    ]
+  },
+  {
+    "code": "NF",
+    "name": "Norfolk Island",
+    "prefixes": [
+      "NF",
+      "NFK"
+    ],
+    "names": [
+      "norfolk island",
+      "territory of norfolk island",
+      "норфолк",
+      "территория острова норфолк"
+    ]
+  },
+  {
+    "code": "NG",
+    "name": "Nigeria",
+    "prefixes": [
+      "NG",
+      "NGA"
+    ],
+    "names": [
+      "federal republic of nigeria",
+      "nigeria",
+      "нигерия",
+      "федеративная республика нигерия"
+    ]
+  },
+  {
+    "code": "NI",
+    "name": "Nicaragua",
+    "prefixes": [
+      "NI",
+      "NIC"
+    ],
+    "names": [
+      "nicaragua",
+      "republic of nicaragua",
+      "никарагуа",
+      "республика никарагуа"
+    ]
+  },
+  {
+    "code": "NL",
+    "name": "Netherlands",
+    "prefixes": [
+      "NL",
+      "NLD"
+    ],
+    "names": [
+      "kingdom of the netherlands",
+      "netherlands",
+      "королевство нидерландов",
+      "нидерланды"
+    ]
+  },
+  {
+    "code": "NO",
+    "name": "Norway",
+    "prefixes": [
+      "NO",
+      "NOR"
+    ],
+    "names": [
+      "kingdom of norway",
+      "norway",
+      "королевство норвегия",
+      "норвегия"
+    ]
+  },
+  {
+    "code": "NP",
+    "name": "Nepal",
+    "prefixes": [
+      "NP",
+      "NPL"
+    ],
+    "names": [
+      "federal democratic republic of nepal",
+      "nepal",
+      "непал",
+      "федеративная демократическая республика непал"
+    ]
+  },
+  {
+    "code": "NR",
+    "name": "Nauru",
+    "prefixes": [
+      "NR",
+      "NRU"
+    ],
+    "names": [
+      "nauru",
+      "republic of nauru",
+      "науру",
+      "республика науру"
+    ]
+  },
+  {
+    "code": "NU",
+    "name": "Niue",
+    "prefixes": [
+      "NU",
+      "NIU"
+    ],
+    "names": [
+      "niue",
+      "ниуэ"
+    ]
+  },
+  {
+    "code": "NZ",
+    "name": "New Zealand",
+    "prefixes": [
+      "NZ",
+      "NZL"
+    ],
+    "names": [
+      "new zealand",
+      "новая зеландия"
+    ]
+  },
+  {
+    "code": "OM",
+    "name": "Oman",
+    "prefixes": [
+      "OM",
+      "OMN"
+    ],
+    "names": [
+      "oman",
+      "sultanate of oman",
+      "оман",
+      "султанат оман"
+    ]
+  },
+  {
+    "code": "PA",
+    "name": "Panama",
+    "prefixes": [
+      "PA",
+      "PAN"
+    ],
+    "names": [
+      "panama",
+      "republic of panama",
+      "панама",
+      "республика панама"
+    ]
+  },
+  {
+    "code": "PE",
+    "name": "Peru",
+    "prefixes": [
+      "PE",
+      "PER"
+    ],
+    "names": [
+      "peru",
+      "republic of peru",
+      "перу",
+      "республика перу"
+    ]
+  },
+  {
+    "code": "PF",
+    "name": "French Polynesia",
+    "prefixes": [
+      "PF",
+      "PYF"
+    ],
+    "names": [
+      "french polynesia",
+      "французская полинезия"
+    ]
+  },
+  {
+    "code": "PG",
+    "name": "Papua New Guinea",
+    "prefixes": [
+      "PG",
+      "PNG"
+    ],
+    "names": [
+      "independent state of papua new guinea",
+      "papua new guinea",
+      "независимое государство папуа-новой гвинеи",
+      "папуа — новая гвинея"
+    ]
+  },
+  {
+    "code": "PH",
+    "name": "Philippines",
+    "prefixes": [
+      "PH",
+      "PHL"
+    ],
+    "names": [
+      "philippines",
+      "republic of the philippines",
+      "республика филиппины",
+      "филиппины"
+    ]
+  },
+  {
+    "code": "PK",
+    "name": "Pakistan",
+    "prefixes": [
+      "PK",
+      "PAK"
+    ],
+    "names": [
+      "islamic republic of pakistan",
+      "pakistan",
+      "исламская республика пакистан",
+      "пакистан"
+    ]
+  },
+  {
+    "code": "PL",
+    "name": "Poland",
+    "prefixes": [
+      "PL",
+      "POL"
+    ],
+    "names": [
+      "poland",
+      "republic of poland",
+      "польша",
+      "республика польша"
+    ]
+  },
+  {
+    "code": "PM",
+    "name": "Saint Pierre and Miquelon",
+    "prefixes": [
+      "PM",
+      "SPM"
+    ],
+    "names": [
+      "saint pierre and miquelon",
+      "сен-пьер и микелон"
+    ]
+  },
+  {
+    "code": "PN",
+    "name": "Pitcairn Islands",
+    "prefixes": [
+      "PN",
+      "PCN"
+    ],
+    "names": [
+      "pitcairn group of islands",
+      "pitcairn islands",
+      "острова питкэрн"
+    ]
+  },
+  {
+    "code": "PR",
+    "name": "Puerto Rico",
+    "prefixes": [
+      "PR",
+      "PRI"
+    ],
+    "names": [
+      "commonwealth of puerto rico",
+      "puerto rico",
+      "пуэрто-рико",
+      "содружество пуэрто-рико"
+    ]
+  },
+  {
+    "code": "PS",
+    "name": "Palestine",
+    "prefixes": [
+      "PS",
+      "PSE"
+    ],
+    "names": [
+      "palestine",
+      "state of palestine",
+      "государство палестина",
+      "палестина"
+    ]
+  },
+  {
+    "code": "PT",
+    "name": "Portugal",
+    "prefixes": [
+      "PT",
+      "PRT"
+    ],
+    "names": [
+      "portugal",
+      "portuguese republic",
+      "португалия",
+      "португальская республика"
+    ]
+  },
+  {
+    "code": "PW",
+    "name": "Palau",
+    "prefixes": [
+      "PW",
+      "PLW"
+    ],
+    "names": [
+      "palau",
+      "republic of palau",
+      "палау",
+      "республика палау"
+    ]
+  },
+  {
+    "code": "PY",
+    "name": "Paraguay",
+    "prefixes": [
+      "PY",
+      "PRY"
+    ],
+    "names": [
+      "paraguay",
+      "republic of paraguay",
+      "парагвай",
+      "республика парагвай"
+    ]
+  },
+  {
+    "code": "QA",
+    "name": "Qatar",
+    "prefixes": [
+      "QA",
+      "QAT"
+    ],
+    "names": [
+      "qatar",
+      "state of qatar",
+      "государство катар",
+      "катар"
+    ]
+  },
+  {
+    "code": "RE",
+    "name": "Réunion",
+    "prefixes": [
+      "RE",
+      "REU"
+    ],
+    "names": [
+      "réunion",
+      "réunion island",
+      "реюньон"
+    ]
+  },
+  {
+    "code": "RO",
+    "name": "Romania",
+    "prefixes": [
+      "RO",
+      "ROU"
+    ],
+    "names": [
+      "romania",
+      "румыния"
+    ]
+  },
+  {
+    "code": "RS",
+    "name": "Serbia",
+    "prefixes": [
+      "RS",
+      "SRB"
+    ],
+    "names": [
+      "republic of serbia",
+      "serbia",
+      "республика сербия",
+      "сербия"
+    ]
+  },
+  {
+    "code": "RU",
+    "name": "Russia",
+    "prefixes": [
+      "RU",
+      "RUS"
+    ],
+    "names": [
+      "russia",
+      "russian federation",
+      "российская федерация",
+      "россия"
+    ]
+  },
+  {
+    "code": "RW",
+    "name": "Rwanda",
+    "prefixes": [
+      "RW",
+      "RWA"
+    ],
+    "names": [
+      "republic of rwanda",
+      "rwanda",
+      "республика руанда",
+      "руанда"
+    ]
+  },
+  {
+    "code": "SA",
+    "name": "Saudi Arabia",
+    "prefixes": [
+      "SA",
+      "SAU"
+    ],
+    "names": [
+      "kingdom of saudi arabia",
+      "saudi arabia",
+      "королевство саудовская аравия",
+      "саудовская аравия"
+    ]
+  },
+  {
+    "code": "SB",
+    "name": "Solomon Islands",
+    "prefixes": [
+      "SB",
+      "SLB"
+    ],
+    "names": [
+      "solomon islands",
+      "соломоновы острова"
+    ]
+  },
+  {
+    "code": "SC",
+    "name": "Seychelles",
+    "prefixes": [
+      "SC",
+      "SYC"
+    ],
+    "names": [
+      "republic of seychelles",
+      "seychelles",
+      "республика сейшельские острова",
+      "сейшельские острова"
+    ]
+  },
+  {
+    "code": "SD",
+    "name": "Sudan",
+    "prefixes": [
+      "SD",
+      "SDN"
+    ],
+    "names": [
+      "republic of the sudan",
+      "sudan",
+      "республика судан",
+      "судан"
+    ]
+  },
+  {
+    "code": "SE",
+    "name": "Sweden",
+    "prefixes": [
+      "SE",
+      "SWE"
+    ],
+    "names": [
+      "kingdom of sweden",
+      "sweden",
+      "королевство швеция",
+      "швеция"
+    ]
+  },
+  {
+    "code": "SG",
+    "name": "Singapore",
+    "prefixes": [
+      "SG",
+      "SGP"
+    ],
+    "names": [
+      "republic of singapore",
+      "singapore",
+      "республика сингапур",
+      "сингапур"
+    ]
+  },
+  {
+    "code": "SH",
+    "name": "Saint Helena, Ascension and Tristan da Cunha",
+    "prefixes": [
+      "SH",
+      "SHN"
+    ],
+    "names": [
+      "saint helena, ascension and tristan da cunha",
+      "острова святой елены, вознесения и тристан-да-кунья"
+    ]
+  },
+  {
+    "code": "SI",
+    "name": "Slovenia",
+    "prefixes": [
+      "SI",
+      "SVN"
+    ],
+    "names": [
+      "republic of slovenia",
+      "slovenia",
+      "республика словения",
+      "словения"
+    ]
+  },
+  {
+    "code": "SJ",
+    "name": "Svalbard and Jan Mayen",
+    "prefixes": [
+      "SJ",
+      "SJM"
+    ],
+    "names": [
+      "svalbard and jan mayen",
+      "svalbard og jan mayen",
+      "шпицберген и ян-майен"
+    ]
+  },
+  {
+    "code": "SK",
+    "name": "Slovakia",
+    "prefixes": [
+      "SK",
+      "SVK"
+    ],
+    "names": [
+      "slovak republic",
+      "slovakia",
+      "словакия",
+      "словацкая республика"
+    ]
+  },
+  {
+    "code": "SL",
+    "name": "Sierra Leone",
+    "prefixes": [
+      "SL",
+      "SLE"
+    ],
+    "names": [
+      "republic of sierra leone",
+      "sierra leone",
+      "республика сьерра-леоне",
+      "сьерра-леоне"
+    ]
+  },
+  {
+    "code": "SM",
+    "name": "San Marino",
+    "prefixes": [
+      "SM",
+      "SMR"
+    ],
+    "names": [
+      "republic of san marino",
+      "san marino",
+      "большая и генеральная республика сан-марино",
+      "сан-марино"
+    ]
+  },
+  {
+    "code": "SN",
+    "name": "Senegal",
+    "prefixes": [
+      "SN",
+      "SEN"
+    ],
+    "names": [
+      "republic of senegal",
+      "senegal",
+      "республика сенегал",
+      "сенегал"
+    ]
+  },
+  {
+    "code": "SO",
+    "name": "Somalia",
+    "prefixes": [
+      "SO",
+      "SOM"
+    ],
+    "names": [
+      "federal republic of somalia",
+      "somalia",
+      "сомали",
+      "федеративная республика сомали"
+    ]
+  },
+  {
+    "code": "SR",
+    "name": "Suriname",
+    "prefixes": [
+      "SR",
+      "SUR"
+    ],
+    "names": [
+      "republic of suriname",
+      "suriname",
+      "республика суринам",
+      "суринам"
+    ]
+  },
+  {
+    "code": "SS",
+    "name": "South Sudan",
+    "prefixes": [
+      "SS",
+      "SSD"
+    ],
+    "names": [
+      "republic of south sudan",
+      "south sudan",
+      "республика южный судан",
+      "южный судан"
+    ]
+  },
+  {
+    "code": "ST",
+    "name": "São Tomé and Príncipe",
+    "prefixes": [
+      "ST",
+      "STP"
+    ],
+    "names": [
+      "democratic republic of são tomé and príncipe",
+      "são tomé and príncipe",
+      "демократическая республика сан-томе и принсипи",
+      "сан-томе и принсипи"
+    ]
+  },
+  {
+    "code": "SV",
+    "name": "El Salvador",
+    "prefixes": [
+      "SV",
+      "SLV"
+    ],
+    "names": [
+      "el salvador",
+      "republic of el salvador",
+      "республика эль-сальвадор",
+      "сальвадор"
+    ]
+  },
+  {
+    "code": "SX",
+    "name": "Sint Maarten",
+    "prefixes": [
+      "SX",
+      "SXM"
+    ],
+    "names": [
+      "sint maarten",
+      "синт-мартен"
+    ]
+  },
+  {
+    "code": "SY",
+    "name": "Syria",
+    "prefixes": [
+      "SY",
+      "SYR"
+    ],
+    "names": [
+      "syria",
+      "syrian arab republic",
+      "сирийская арабская республика",
+      "сирия"
+    ]
+  },
+  {
+    "code": "SZ",
+    "name": "Eswatini",
+    "prefixes": [
+      "SZ",
+      "SWZ"
+    ],
+    "names": [
+      "eswatini",
+      "kingdom of eswatini",
+      "королевство эсватини",
+      "эсватини"
+    ]
+  },
+  {
+    "code": "TC",
+    "name": "Turks and Caicos Islands",
+    "prefixes": [
+      "TC",
+      "TCA"
+    ],
+    "names": [
+      "turks and caicos islands",
+      "острова теркс и кайкос",
+      "теркс и кайкос"
+    ]
+  },
+  {
+    "code": "TD",
+    "name": "Chad",
+    "prefixes": [
+      "TD",
+      "TCD"
+    ],
+    "names": [
+      "chad",
+      "republic of chad",
+      "республика чад",
+      "чад"
+    ]
+  },
+  {
+    "code": "TF",
+    "name": "French Southern and Antarctic Lands",
+    "prefixes": [
+      "TF",
+      "ATF"
+    ],
+    "names": [
+      "french southern and antarctic lands",
+      "territory of the french southern and antarctic lands",
+      "территория французских южных и антарктических земель",
+      "французские южные и антарктические территории"
+    ]
+  },
+  {
+    "code": "TG",
+    "name": "Togo",
+    "prefixes": [
+      "TG",
+      "TGO"
+    ],
+    "names": [
+      "togo",
+      "togolese republic",
+      "того",
+      "тоголезская республика"
+    ]
+  },
+  {
+    "code": "TH",
+    "name": "Thailand",
+    "prefixes": [
+      "TH",
+      "THA"
+    ],
+    "names": [
+      "kingdom of thailand",
+      "thailand",
+      "королевство таиланд",
+      "таиланд"
+    ]
+  },
+  {
+    "code": "TJ",
+    "name": "Tajikistan",
+    "prefixes": [
+      "TJ",
+      "TJK"
+    ],
+    "names": [
+      "republic of tajikistan",
+      "tajikistan",
+      "республика таджикистан",
+      "таджикистан"
+    ]
+  },
+  {
+    "code": "TK",
+    "name": "Tokelau",
+    "prefixes": [
+      "TK",
+      "TKL"
+    ],
+    "names": [
+      "tokelau",
+      "токелау"
+    ]
+  },
+  {
+    "code": "TL",
+    "name": "Timor-Leste",
+    "prefixes": [
+      "TL",
+      "TLS"
+    ],
+    "names": [
+      "democratic republic of timor-leste",
+      "timor-leste",
+      "восточный тимор",
+      "демократическая республика тимор-лешти"
+    ]
+  },
+  {
+    "code": "TM",
+    "name": "Turkmenistan",
+    "prefixes": [
+      "TM",
+      "TKM"
+    ],
+    "names": [
+      "turkmenistan",
+      "туркменистан",
+      "туркмения"
+    ]
+  },
+  {
+    "code": "TN",
+    "name": "Tunisia",
+    "prefixes": [
+      "TN",
+      "TUN"
+    ],
+    "names": [
+      "tunisia",
+      "tunisian republic",
+      "тунис",
+      "тунисская республика"
+    ]
+  },
+  {
+    "code": "TO",
+    "name": "Tonga",
+    "prefixes": [
+      "TO",
+      "TON"
+    ],
+    "names": [
+      "kingdom of tonga",
+      "tonga",
+      "королевство тонга",
+      "тонга"
+    ]
+  },
+  {
+    "code": "TR",
+    "name": "Turkey",
+    "prefixes": [
+      "TR",
+      "TUR"
+    ],
+    "names": [
+      "republic of turkey",
+      "turkey",
+      "республика турция",
+      "турция"
+    ]
+  },
+  {
+    "code": "TT",
+    "name": "Trinidad and Tobago",
+    "prefixes": [
+      "TT",
+      "TTO"
+    ],
+    "names": [
+      "republic of trinidad and tobago",
+      "trinidad and tobago",
+      "республика тринидад и тобаго",
+      "тринидад и тобаго"
+    ]
+  },
+  {
+    "code": "TV",
+    "name": "Tuvalu",
+    "prefixes": [
+      "TV",
+      "TUV"
+    ],
+    "names": [
+      "tuvalu",
+      "тувалу"
+    ]
+  },
+  {
+    "code": "TW",
+    "name": "Taiwan",
+    "prefixes": [
+      "TW",
+      "TWN"
+    ],
+    "names": [
+      "republic of china (taiwan)",
+      "taiwan",
+      "китайская республика",
+      "тайвань"
+    ]
+  },
+  {
+    "code": "TZ",
+    "name": "Tanzania",
+    "prefixes": [
+      "TZ",
+      "TZA"
+    ],
+    "names": [
+      "tanzania",
+      "united republic of tanzania",
+      "объединенная республика танзания",
+      "танзания"
+    ]
+  },
+  {
+    "code": "UA",
+    "name": "Ukraine",
+    "prefixes": [
+      "UA",
+      "UKR"
+    ],
+    "names": [
+      "ukraine",
+      "украина"
+    ]
+  },
+  {
+    "code": "UG",
+    "name": "Uganda",
+    "prefixes": [
+      "UG",
+      "UGA"
+    ],
+    "names": [
+      "republic of uganda",
+      "uganda",
+      "республика уганда",
+      "уганда"
+    ]
+  },
+  {
+    "code": "UM",
+    "name": "United States Minor Outlying Islands",
+    "prefixes": [
+      "UM",
+      "UMI"
+    ],
+    "names": [
+      "united states minor outlying islands",
+      "внешние малые острова сша"
+    ]
+  },
+  {
+    "code": "US",
+    "name": "United States",
+    "prefixes": [
+      "US",
+      "USA"
+    ],
+    "names": [
+      "united states",
+      "united states of america",
+      "соединённые штаты америки"
+    ]
+  },
+  {
+    "code": "UY",
+    "name": "Uruguay",
+    "prefixes": [
+      "UY",
+      "URY"
+    ],
+    "names": [
+      "oriental republic of uruguay",
+      "uruguay",
+      "восточная республика уругвай",
+      "уругвай"
+    ]
+  },
+  {
+    "code": "UZ",
+    "name": "Uzbekistan",
+    "prefixes": [
+      "UZ",
+      "UZB"
+    ],
+    "names": [
+      "republic of uzbekistan",
+      "uzbekistan",
+      "республика узбекистан",
+      "узбекистан"
+    ]
+  },
+  {
+    "code": "VA",
+    "name": "Vatican City",
+    "prefixes": [
+      "VA",
+      "VAT"
+    ],
+    "names": [
+      "vatican city",
+      "vatican city state",
+      "ватикан",
+      "город-государство ватикан"
+    ]
+  },
+  {
+    "code": "VC",
+    "name": "Saint Vincent and the Grenadines",
+    "prefixes": [
+      "VC",
+      "VCT"
+    ],
+    "names": [
+      "saint vincent and the grenadines",
+      "сент-винсент и гренадины"
+    ]
+  },
+  {
+    "code": "VE",
+    "name": "Venezuela",
+    "prefixes": [
+      "VE",
+      "VEN"
+    ],
+    "names": [
+      "bolivarian republic of venezuela",
+      "venezuela",
+      "боливарианская республика венесуэла",
+      "венесуэла"
+    ]
+  },
+  {
+    "code": "VG",
+    "name": "British Virgin Islands",
+    "prefixes": [
+      "VG",
+      "VGB"
+    ],
+    "names": [
+      "british virgin islands",
+      "virgin islands",
+      "британские виргинские острова"
+    ]
+  },
+  {
+    "code": "VI",
+    "name": "United States Virgin Islands",
+    "prefixes": [
+      "VI",
+      "VIR"
+    ],
+    "names": [
+      "united states virgin islands",
+      "virgin islands of the united states",
+      "виргинские острова",
+      "виргинские острова соединенных штатов"
+    ]
+  },
+  {
+    "code": "VN",
+    "name": "Vietnam",
+    "prefixes": [
+      "VN",
+      "VNM"
+    ],
+    "names": [
+      "socialist republic of vietnam",
+      "vietnam",
+      "вьетнам",
+      "социалистическая республика вьетнам"
+    ]
+  },
+  {
+    "code": "VU",
+    "name": "Vanuatu",
+    "prefixes": [
+      "VU",
+      "VUT"
+    ],
+    "names": [
+      "republic of vanuatu",
+      "vanuatu",
+      "вануату",
+      "республика вануату"
+    ]
+  },
+  {
+    "code": "WF",
+    "name": "Wallis and Futuna",
+    "prefixes": [
+      "WF",
+      "WLF"
+    ],
+    "names": [
+      "territory of the wallis and futuna islands",
+      "wallis and futuna",
+      "территория островов уоллис и футуна",
+      "уоллис и футуна"
+    ]
+  },
+  {
+    "code": "WS",
+    "name": "Samoa",
+    "prefixes": [
+      "WS",
+      "WSM"
+    ],
+    "names": [
+      "independent state of samoa",
+      "samoa",
+      "независимое государство самоа",
+      "самоа"
+    ]
+  },
+  {
+    "code": "YE",
+    "name": "Yemen",
+    "prefixes": [
+      "YE",
+      "YEM"
+    ],
+    "names": [
+      "republic of yemen",
+      "yemen",
+      "йемен",
+      "йеменская республика"
+    ]
+  },
+  {
+    "code": "YT",
+    "name": "Mayotte",
+    "prefixes": [
+      "YT",
+      "MYT"
+    ],
+    "names": [
+      "department of mayotte",
+      "mayotte",
+      "департамент майотта",
+      "майотта"
+    ]
+  },
+  {
+    "code": "ZA",
+    "name": "South Africa",
+    "prefixes": [
+      "ZA",
+      "ZAF"
+    ],
+    "names": [
+      "republic of south africa",
+      "south africa",
+      "южная африка",
+      "южно-африканская республика"
+    ]
+  },
+  {
+    "code": "ZM",
+    "name": "Zambia",
+    "prefixes": [
+      "ZM",
+      "ZMB"
+    ],
+    "names": [
+      "republic of zambia",
+      "zambia",
+      "замбия",
+      "республика замбия"
+    ]
+  },
+  {
+    "code": "ZW",
+    "name": "Zimbabwe",
+    "prefixes": [
+      "ZW",
+      "ZWE"
+    ],
+    "names": [
+      "republic of zimbabwe",
+      "zimbabwe",
+      "зимбабве",
+      "республика зимбабве"
+    ]
+  }
+]

@@ -1,0 +1,116 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Configure the app and VPN extension with the same Apple Developer team, App Group, and Keychain group in Xcode." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройте в Xcode для приложения и VPN-расширения одну и ту же команду Apple Developer, App Group и группу Keychain."
+          }
+        }
+      }
+    },
+    "Elarni connection lost" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elarni: соединение потеряно"
+          }
+        }
+      }
+    },
+    "Elarni disconnected" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elarni отключён"
+          }
+        }
+      }
+    },
+    "Elarni was updated" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elarni был обновлён"
+          }
+        }
+      }
+    },
+    "Internet traffic is blocked until the VPN reconnects. Open Elarni to reconnect." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Интернет-трафик заблокирован, пока VPN не переподключится. Откройте Elarni, чтобы переподключиться."
+          }
+        }
+      }
+    },
+    "The VPN stopped unexpectedly. Open Elarni to reconnect." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VPN неожиданно остановился. Откройте Elarni, чтобы переподключиться."
+          }
+        }
+      }
+    },
+    "iOS stopped the VPN because %@. Open Elarni to reconnect." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iOS остановила VPN: %@. Откройте Elarni, чтобы переподключиться."
+          }
+        }
+      }
+    },
+    "no network was available" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "сеть была недоступна"
+          }
+        }
+      }
+    },
+    "the connection failed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "подключение не удалось"
+          }
+        }
+      }
+    },
+    "the connection was idle" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "подключение простаивало"
+          }
+        }
+      }
+    },
+    "the network changed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "сеть изменилась"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

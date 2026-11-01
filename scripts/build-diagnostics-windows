@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Stage an existing Windows app with a freshly built diagnostic core; never install it."""
+import argparse
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+
+from release_support import ROOT, prepare_output, require_files
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--bundle', type=Path, required=True, help='Complete existing Windows x64 app bundle; left untouched')
+parser.add_argument('--output', type=Path, required=True, help='New empty diagnostic candidate directory')
+parser.add_argument('--go', default='go', help='Go compiler executable')
+args = parser.parse_args()
+if sys.platform != 'win32':
+    parser.error('Build and validate this candidate on Windows')
+source, output = args.bundle.resolve(), args.output.resolve()
+if output == source or output.is_relative_to(source) or source.is_relative_to(output):
+    parser.error('Use a separate output outside the source bundle')
+require_files(source, ['elarni.exe', 'elarni-core.exe', 'elarni_domain.dll', 'wintun.dll'])
+prepare_output(output)
+bundle = output / 'bundle'
+shutil.copytree(source, bundle)
+build_id = int(time.time())
+environment = dict(os.environ, GOOS='windows', GOARCH='amd64', CGO_ENABLED='0')
+subprocess.run([args.go, 'build', '-trimpath', '-tags=elarni_diagnostics',
+                '-ldflags', f'-X main.diagnosticBuild={build_id}',
+                '-o', str(bundle / 'elarni-core.exe'), './Vendor/libXray/cmd/elarni-core'],
+               cwd=ROOT, env=environment, check=True)
+(bundle / 'Export diagnostics.cmd').write_text(
+    '@echo off\nsetlocal\n"%~dp0elarni-core.exe" --diagnostics-export\n'
+    'if errorlevel 1 (\n  echo Could not save diagnostics. Extract the app to a writable folder and retry.\n'
+    '  pause\n  exit /b 1\n)\n'
+    'echo Send the new Elarni-diagnostics ZIP from this folder.\n'
+    'start "" explorer.exe "%~dp0."\n', encoding='ascii', newline='\r\n')
+(bundle / 'DIAGNOSTICS.txt').write_text(
+    'Elarni Windows diagnostic build\n\n'
+    '1. Extract the entire download into a new writable folder. Quit the old Elarni app.\n'
+    '2. Open elarni.exe, connect as usual, and reproduce the website problem.\n'
+    '3. Double-click Export diagnostics.cmd. Send the newly created Elarni-diagnostics ZIP.\n\n'
+    'Recording starts automatically. No settings, commands or administrator access are needed to export.\n'
+    'Export also works after disconnecting or closing the app. Use the included CMD for the full ZIP;\n'
+    'the existing in-app Export diagnostics button still saves only a small status snapshot.\n'
+    'Logs remain local. Nothing is uploaded. Credentials, profiles, server addresses, browsing\n'
+    'destinations and traffic content are excluded. Up to 72 hours / 256 MiB are retained.\n'
+    'This unsigned troubleshooting candidate reuses the existing app UI/libraries and replaces\n'
+    'its core with a fresh build containing routing fixes and automatic diagnostics.\n', encoding='utf-8')
+(bundle / 'BUILD-INFO.json').write_text(json.dumps({
+    'diagnosticBuildId': build_id, 'baseBundle': source.name, 'frontendRebuilt': False,
+    'coreRebuilt': True, 'coreBuildTags': ['elarni_diagnostics'],
+    'sourceRevision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+    'sourceHasLocalChanges': subprocess.run(['git', 'diff', '--quiet'], cwd=ROOT).returncode != 0,
+    'collection': 'automatic; local structured metadata only',
+}, indent=2), encoding='utf-8')
+subprocess.run([sys.executable, str(ROOT / 'scripts/check-windows-diagnostics'),
+                '--core', str(bundle / 'elarni-core.exe')], cwd=ROOT, check=True)
+subprocess.run([sys.executable, str(ROOT / 'scripts/package-windows'), '--bundle', str(bundle),
+                '--output', str(output / 'package'), '--unsigned', '--diagnostics'], cwd=ROOT, check=True)
+print(f'Diagnostic candidate built, not installed: {output / "package"}')

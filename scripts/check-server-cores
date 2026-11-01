@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Release gate: imported clients against the newest Xray, 3x-ui and Remnawave server cores.
+
+Downloads each project's latest server core for this host (once per release), checks
+it against the published digest, prints its version and runs TestImportedClientsReachUpstreamServerCores.
+--cached reuses the last downloads instead of looking up the latest releases.
+"""
+import argparse
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import platform
+import subprocess
+import sys
+import tarfile
+import urllib.request
+import zipfile
+from check_report import record_check
+
+root = Path(__file__).resolve().parent.parent
+record_check(root)  # before chdir: the re-exec reuses argv[0] relative to the caller's directory
+os.chdir(root)
+parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+parser.add_argument('--cached', action='store_true', help='reuse the last downloaded cores')
+arguments = parser.parse_args()
+cache = root / '.build' / 'server-cores'
+system = {'linux': 'linux', 'win32': 'windows', 'darwin': 'macos'}[sys.platform]
+arm = platform.machine().lower() in ('arm64', 'aarch64')
+executable = 'xray.exe' if system == 'windows' else 'xray'
+
+
+def fetch(url, headers=None):
+    request = urllib.request.Request(url, headers={'User-Agent': 'elarni-check-server-cores', **(headers or {})})
+    with urllib.request.urlopen(request, timeout=300) as response:
+        return response.read()
+
+
+def verified(data, digest, what):
+    actual = hashlib.sha256(data).hexdigest()
+    if actual != digest.removeprefix('sha256:').lower():
+        raise SystemExit(f'{what}: SHA-256 {actual} is not the published {digest}')
+    return data
+
+
+def github(repository, name, cached):
+    """Returns the latest release tag and the named asset, checked against its checksum file (None when cached(tag))."""
+    headers = {'Accept': 'application/vnd.github+json'}
+    if os.environ.get('GITHUB_TOKEN'):
+        headers['Authorization'] = 'Bearer ' + os.environ['GITHUB_TOKEN']
+    release = json.loads(fetch(f'https://api.github.com/repos/{repository}/releases/latest', headers))
+    if cached(release['tag_name']):
+        return release['tag_name'], None
+    assets = {asset['name']: asset for asset in release['assets']}
+    if name not in assets:
+        raise SystemExit(f'{repository} {release["tag_name"]} has no {name}')
+    data = fetch(assets[name]['browser_download_url'])
+    if assets[name].get('digest'):
+        verified(data, assets[name]['digest'], name)
+    for suffix in ('.dgst', '.sha256'):
+        if name + suffix in assets:
+            published = fetch(assets[name + suffix]['browser_download_url']).decode()
+            # Xray's .dgst lists "SHA2-256= <hex>"; 3x-ui's .sha256 is "<hex>  <file>".
+            line = next(line for line in published.splitlines() if suffix == '.sha256' or line.startswith('SHA2-256='))
+            return release['tag_name'], verified(data, line.split()[-1] if suffix == '.dgst' else line.split()[0], name)
+    raise SystemExit(f'{repository} {release["tag_name"]} publishes no checksum for {name}')
+
+
+def member(archive, name, suffix):
+    if name.endswith('.zip'):
+        with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+            return bundle.read(next(entry for entry in bundle.namelist() if entry == suffix or entry.endswith('/' + suffix)))
+    with tarfile.open(fileobj=io.BytesIO(archive)) as bundle:
+        entry = next(entry for entry in bundle.getmembers() if entry.isfile() and (entry.name == suffix or entry.name.endswith('/' + suffix)))
+        return bundle.extractfile(entry).read()
+
+
+def xray(cached):
+    names = {'linux': 'linux-arm64-v8a' if arm else 'linux-64', 'windows': 'windows-arm64-v8a' if arm else 'windows-64',
+             'macos': 'macos-arm64-v8a' if arm else 'macos-64'}
+    name = f'Xray-{names[system]}.zip'
+    tag, archive = github('XTLS/Xray-core', name, cached)
+    return tag, archive and member(archive, name, executable)
+
+
+def three_x_ui(cached):
+    if system == 'macos':
+        return None
+    target = f'{system}-{"arm64" if arm else "amd64"}'
+    name = f'x-ui-{target}.' + ('zip' if system == 'windows' else 'tar.gz')
+    tag, archive = github('MHSanaei/3x-ui', name, cached)
+    return tag, archive and member(archive, name, f'bin/xray-{target}' + ('.exe' if system == 'windows' else ''))
+
+
+def remnawave(cached):
+    """The node ships only as a Linux image; its Dockerfile copies the core to /usr/local/bin/xray."""
+    if system != 'linux':
+        return None
+    repository = 'remnawave/node'
+    token = json.loads(fetch(f'https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repository}:pull'))['token']
+    registry = f'https://registry-1.docker.io/v2/{repository}'
+    auth = {'Authorization': f'Bearer {token}'}
+    index_body = fetch(f'{registry}/manifests/latest', {**auth, 'Accept': 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json'})
+    tag = 'sha256:' + hashlib.sha256(index_body).hexdigest()[:12]
+    if cached(tag):
+        return tag, None
+    entry = next(entry for entry in json.loads(index_body)['manifests']
+                 if entry.get('platform', {}).get('os') == 'linux' and entry['platform'].get('architecture') == ('arm64' if arm else 'amd64'))
+    manifest = json.loads(verified(fetch(f'{registry}/manifests/{entry["digest"]}', {**auth, 'Accept': entry['mediaType']}), entry['digest'], 'image manifest'))
+    config = json.loads(verified(fetch(f'{registry}/blobs/{manifest["config"]["digest"]}', auth), manifest['config']['digest'], 'image config'))
+    steps = [step for step in config['history'] if not step.get('empty_layer')]
+    if len(steps) != len(manifest['layers']):
+        raise SystemExit(f'{repository}: {len(steps)} history steps for {len(manifest["layers"])} layers')
+    layer = next(layer for step, layer in zip(steps, manifest['layers']) if 'usr/local/bin/xray ' in step.get('created_by', ''))
+    blob = verified(fetch(f'{registry}/blobs/{layer["digest"]}', auth), layer['digest'], 'core layer')
+    return tag, member(blob, 'layer.tar.gz', 'usr/local/bin/xray')
+
+
+# Remnawave's image sets XRAY_JSON_STRICT=true for its core.
+sources = {'Xray': (xray, {}), '3x-ui': (three_x_ui, {}), 'Remnawave': (remnawave, {'XRAY_JSON_STRICT': 'true'})}
+cores = []
+for name, (download, environment) in sources.items():
+    record = cache / name / 'current.json'
+    if arguments.cached:
+        if not record.is_file():
+            print(f'{name}: no cached core for {system}', flush=True)
+            continue
+        current = json.loads(record.read_text())
+    else:
+        # A release already downloaded (and verified then) is reused; only the lookup goes online.
+        def cached(tag, name=name):
+            return (cache / name / tag.replace(':', '-') / executable).is_file()
+        try:
+            result = download(cached)
+        except OSError as error:
+            raise SystemExit(f'{name}: {error}; --cached runs the last downloaded cores')
+        if result is None:
+            print(f'{name}: no server build for {system}', flush=True)
+            continue
+        tag, data = result
+        path = cache / name / tag.replace(':', '-') / executable
+        if data is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            path.chmod(0o755)
+        current = {'tag': tag, 'path': str(path)}
+        record.write_text(json.dumps(current) + '\n')
+    version = subprocess.run([current['path'], 'version'], capture_output=True, text=True, check=True).stdout.splitlines()[0]
+    print(f'{name} {current["tag"]}: {version}', flush=True)
+    cores.append({'name': name, 'path': current['path'], 'env': environment})
+if not cores:
+    raise SystemExit('No server core to check against')
+environment = dict(os.environ, ELARNI_SERVER_CORES=json.dumps(cores))
+sys.exit(subprocess.call(['go', 'test', '-count=1', '-v', '-run', '^TestImportedClientsReachUpstreamServerCores$', './Vendor/libXray/share'], env=environment))

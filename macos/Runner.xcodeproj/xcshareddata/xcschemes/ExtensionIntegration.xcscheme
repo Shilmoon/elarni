@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Scheme LastUpgradeVersion="2640" version="1.7">
+  <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES">
+    <BuildActionEntries>
+      <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">
+        <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="B20000000000000000000006" BuildableName="ExtensionIntegrationTests.xctest" BlueprintName="ExtensionIntegrationTests" ReferencedContainer="container:Runner.xcodeproj"/>
+      </BuildActionEntry>
+    </BuildActionEntries>
+  </BuildAction>
+  <TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="NO">
+    <EnvironmentVariables>
+      <EnvironmentVariable key="ELARNI_EXTENSION_TEST_HOST" value="1" isEnabled="YES"/>
+    </EnvironmentVariables>
+    <Testables>
+      <TestableReference skipped="NO" parallelizable="NO">
+        <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="B20000000000000000000006" BuildableName="ExtensionIntegrationTests.xctest" BlueprintName="ExtensionIntegrationTests" ReferencedContainer="container:Runner.xcodeproj"/>
+      </TestableReference>
+    </Testables>
+  </TestAction>
+  <AnalyzeAction buildConfiguration="Debug"/>
+</Scheme>

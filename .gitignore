@@ -1,0 +1,11 @@
+# Build output and caches
+/target/
+/build/
+/.build/
+/.dart_tool/
+__pycache__/
+
+# Local JavaScript tooling and browser test output
+/node_modules/
+/test-results/
+/playwright-report/

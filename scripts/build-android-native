@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Build the checkout's Rust domain and single Go runtime for the Android app."""
+import argparse
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+# ABI: Rust target (also the NDK clang prefix) and gomobile target.
+ABIS = {'arm64-v8a': ('aarch64-linux-android', 'android/arm64'), 'x86_64': ('x86_64-linux-android', 'android/amd64')}
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--abi', choices=ABIS, default='arm64-v8a',
+                    help='x86_64 only for emulators on x86_64 hosts; releases ship arm64-v8a')
+abi = parser.parse_args().abi
+target, gomobile_target = ABIS[abi]
+root = Path(__file__).resolve().parents[1]
+sdk = Path(os.environ.get('ANDROID_HOME', Path.home() / 'Library/Android/sdk'))
+ndk = sdk / 'ndk/28.2.13676358'
+host = 'darwin-x86_64' if sys.platform == 'darwin' else 'linux-x86_64'
+clang = ndk / f'toolchains/llvm/prebuilt/{host}/bin/{target}30-clang'
+gomobile = os.environ.get('GOMOBILE') or shutil.which('gomobile')
+if not gomobile:
+    candidate = root / '.build/android-preparation/bin/gomobile'
+    if candidate.is_file(): gomobile = str(candidate)
+if not clang.is_file() or not gomobile:
+    sys.exit('Install NDK 28.2.13676358 and gomobile pinned by Vendor/libXray/go.mod; set ANDROID_HOME and GOMOBILE.')
+output = root / '.build/android-native'
+libraries = output / 'jniLibs' / abi
+libraries.mkdir(parents=True, exist_ok=True)
+environment = dict(os.environ, ANDROID_HOME=str(sdk), ANDROID_NDK_HOME=str(ndk),
+    GOTOOLCHAIN='go1.27.3', CARGO_TARGET_DIR=str(output / 'rust'),
+    **{f'CARGO_TARGET_{target.upper().replace("-", "_")}_LINKER': str(clang)})
+# gomobile runs go in a temporary module, where a mise shim finds no pinned version: put the real go first.
+goroot = subprocess.run(['go', 'env', 'GOROOT'], cwd=root, env=environment, check=True, capture_output=True, text=True).stdout.strip()
+environment['PATH'] = os.pathsep.join([str(Path(gomobile).parent), str(Path(goroot) / 'bin'), environment['PATH']])
+def run(command):
+    subprocess.run(command, cwd=root, env=environment, check=True)
+run(['cargo', 'build', '--locked', '-p', 'elarni-domain', '--target', target, '--release'])
+shutil.copy2(output / f'rust/{target}/release/libelarni_domain.so', libraries)
+# ELARNI_RECORDING=1 builds the core with its connection recorder; Gradle reads the same switch.
+recording = ['-tags=elarni_recording'] if os.environ.get('ELARNI_RECORDING') == '1' else []
+run([gomobile, 'bind', f'-target={gomobile_target}', '-androidapi=30', '-trimpath', *recording,
+    '-ldflags=-checklinkname=0', '-o', str(output / 'elarni-libxray.aar'), 'github.com/xtls/libxray'])
+run([str(clang), '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror', '-I', 'include',
+    'android/app/src/main/cpp/domain_jni.c', '-L', str(libraries), '-lelarni_domain',
+    '-Wl,--no-undefined', '-Wl,-z,max-page-size=16384', '-o', str(libraries / 'libelarni_jni.so')])
+print(f'Android native libraries ({abi}) built from this checkout:', output)

@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$root"
+platform=${1:-iphonesimulator}
+case "$platform" in
+  iphoneos) target=aarch64-apple-ios; triple=arm64-apple-ios18.0 ;;
+  iphonesimulator) target=aarch64-apple-ios-sim; triple=arm64-apple-ios18.0-simulator ;;
+  *) echo 'usage: scripts/build-ios-native [iphoneos|iphonesimulator]' >&2; exit 2 ;;
+esac
+output="$root/.build/ios/Native/$platform"
+mkdir -p "$output"
+IPHONEOS_DEPLOYMENT_TARGET=18.0 cargo build --locked --profile native-dev \
+  --target "$target" --target-dir "$root/.build/ios/rust" \
+  -p elarni-domain -p elarni-packet-bridge
+cp "$root/.build/ios/rust/$target/native-dev/libelarni_domain.a" "$output/"
+cp "$root/.build/ios/rust/$target/native-dev/libelarni_packet_bridge.a" "$output/"
+sdk=$(xcrun --sdk "$platform" --show-sdk-path)
+compiler=$(xcrun --sdk "$platform" --find clang)
+flags="-target $triple -isysroot $sdk"
+go_command=${ELARNI_GO:-go}
+# ELARNI_RECORDING=1 builds the core with its connection recorder; the app then needs
+# the ELARNI_RECORDING Swift condition too (docs/DIAGNOSTICS.md).
+tags=
+[ "${ELARNI_RECORDING:-}" != 1 ] || tags=-tags=elarni_recording
+cd "$root/Vendor/libXray"
+GOWORK="$root/go.work" GOTOOLCHAIN=local GOFLAGS= GOOS=ios GOARCH=arm64 CGO_ENABLED=1 \
+  CC="$compiler" CGO_CFLAGS="$flags" CGO_CXXFLAGS="$flags" CGO_LDFLAGS="$flags" \
+  "$go_command" build $tags -mod=readonly -trimpath -ldflags '-s -w -buildid=' \
+  -buildmode=c-archive -o "$output/libXray.a" ./cgo_bridge
+printf 'Built native libraries for %s\n' "$platform"

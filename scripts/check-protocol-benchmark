@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+"""Real core + Chromium integration, synthetic credentials and loopback only."""
+import functools
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import socket
+import socketserver
+import struct
+import subprocess
+import tempfile
+import threading
+import time
+import unittest
+from unittest.mock import patch
+
+loader = importlib.machinery.SourceFileLoader("benchmark", str(Path(__file__).with_name("benchmark-protocols")))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+bench = importlib.util.module_from_spec(spec)
+loader.exec_module(bench)
+
+
+class HTTPFixture(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    def log_message(self, *_):
+        pass
+
+    def do_GET(self):
+        if self.path == "/video.webm":
+            body = self.video
+            self.media_started.clear()
+            self.send_response(200)
+            self.send_header("Content-Type", "video/webm")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body[:self.video_cut]); self.wfile.flush()
+            if not self.media_started.wait(timeout=5):
+                raise AssertionError('video must start before the deliberate media hold')
+            time.sleep(3)
+            self.wfile.write(body[self.video_cut:])
+        elif self.path == "/media-started":
+            self.media_started.set()
+            self.reply(b"started")
+        elif self.path == "/playback":
+            self.reply(b"<html><title>Video fixture</title><body><video width='640' height='360' autoplay muted onplaying=\"if(!window.sent){window.sent=true;fetch('/media-started')}\" src='/video.webm'></video></body></html>")
+        elif self.path.startswith("/__down"):
+            size = int(self.path.split("bytes=")[1])
+            self.reply(b"x" * size)
+        elif self.path == "/consent":
+            self.reply(b"<html><title>Consent</title><body>Before you continue to YouTube, choose your cookie preferences.</body></html>")
+        elif self.path == "/consent-choice":
+            self.reply(b"<html><title>Consent</title><body>Before you continue to YouTube, choose your cookie preferences.<button onclick=\"location.href='/'\">Reject all</button></body></html>")
+        elif self.path == "/denied":
+            self.reply(b"Access denied", 403)
+        elif self.path == "/asset.js":
+            time.sleep(.25)
+            self.reply(b"document.body.append(' Loaded real fixture JavaScript content.');", content_type="text/javascript")
+        else:
+            time.sleep(.15)
+            self.reply(b"<html><title>Local fixture</title><body><main>Real page navigation with a delayed document and script.</main><script src='/asset.js'></script></body></html>")
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers["Content-Length"]))
+        self.reply(b"ok")
+
+    def reply(self, body, status=200, content_type="text/html"):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "public, max-age=3600" if self.path == "/asset.js" else "no-cache")
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class DNSFixture(socketserver.BaseRequestHandler):
+    def handle(self):
+        size = struct.unpack("!H", bench.recv_exact(self.request, 2))[0]
+        query = bench.recv_exact(self.request, size)
+        time.sleep(.1)
+        answer = query[:2] + struct.pack("!HHHHH", 0x8180, 1, 1, 0, 0) + query[12:]
+        answer += b"\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04\x7f\x00\x00\x01"
+        self.request.sendall(struct.pack("!H", len(answer)) + answer)
+
+
+class BenchmarkTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory(prefix="protocol-benchmark-")
+        cls.directory = Path(cls.temp.name)
+        cls.core = Path(os.environ["BENCH_TEST_CORE"]).resolve()
+        cls.node = os.environ["BENCH_TEST_NODE"]
+        cls.playwright = os.environ["BENCH_TEST_PLAYWRIGHT"]
+        cls.interface = os.environ["BENCH_TEST_INTERFACE"]
+        cls.env = bench.child_env(cls.interface, "127.0.0.1", fixture=True)
+        video = subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
+            'testsrc2=size=160x90:rate=10:duration=12', '-c:v', 'libvpx', '-deadline', 'realtime',
+            '-g', '10', '-cluster_time_limit', '100', '-live', '1', '-f', 'webm', 'pipe:1'],
+            capture_output=True, check=True, timeout=30).stdout
+        clusters = [i for i in range(len(video)) if video.startswith(b'\x1f\x43\xb6\x75', i)]
+        if len(clusters) < 12:
+            raise AssertionError('media fixture must contain multiple streaming clusters')
+        HTTPFixture.video, HTTPFixture.video_cut = video, clusters[10]
+        HTTPFixture.media_started = threading.Event()
+        cls.http = ThreadingHTTPServer(("127.0.0.1", 0), HTTPFixture)
+        cls.http.daemon_threads = True
+        cls.dns = socketserver.ThreadingTCPServer(("127.0.0.1", 0), DNSFixture)
+        cls.dns.daemon_threads = True
+        for server in (cls.http, cls.dns):
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+        cls.origin = f"http://127.0.0.1:{cls.http.server_port}"
+        cls.server_port = bench.free_port()
+        user_id = "aa6b0e61-3349-4a57-8997-812fae447a50"
+        server_config = {"log": {"loglevel": "none"}, "inbounds": [{
+            "listen": "127.0.0.1", "port": cls.server_port, "protocol": "vless",
+            "settings": {"clients": [{"id": user_id}], "decryption": "none"}}],
+            "outbounds": [{"protocol": "freedom", "settings": {"finalRules": [
+                {"action": "allow", "ip": ["127.0.0.1/32", "::1/128"]}]}}]}
+        cls.server = bench.Core(cls.core, {"apiVersion": 1, "method": "runXrayFromJson", "payload": {
+            "configJSON": json.dumps(server_config)}}, cls.env)
+        cls.server.result()
+        cls.feed_text = "\n".join(f"vless://{user_id}@127.0.0.1:{cls.server_port}?encryption=none#private-name-{i}" for i in range(2))
+        cls.profiles = bench.invoke(cls.core, "importClientProfiles", {"text": cls.feed_text}, cls.env)["profiles"]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.close()
+        for server in (cls.http, cls.dns):
+            server.shutdown()
+            server.server_close()
+        cls.temp.cleanup()
+
+    def client(self):
+        port = bench.free_port()
+        config = bench.prepare_config(self.profiles[0], port)
+        process = bench.Core(self.core, {"apiVersion": 1, "method": "runXrayFromJson", "payload": {
+            "configJSON": json.dumps(config), "streamMetrics": True}}, self.env)
+        process.result()
+        return port, process
+
+    def test_browser_real_vless_path_timings_failure_and_cleanup(self):
+        port, process = self.client()
+        try:
+            job = {"proxy": f"socks5://127.0.0.1:{port}", "sites": [
+                {"label": "fixture", "url": self.origin, "selector": "main"},
+                {"label": "consent", "url": self.origin + "/consent"},
+                {"label": "denied", "url": self.origin + "/denied"},
+                {"label": "choice", "url": self.origin + "/consent-choice"}],
+                "timeoutMs": 3000, "observeMs": 150, "playwrightModule": self.playwright}
+            samples = list(bench.browser_samples(job, self.node, self.env))
+            pages = [s for s in samples if s["kind"] == "page"]
+            self.assertEqual(len(pages), 9, samples)
+            self.assertTrue(any(s["kind"] == "browser_done" for s in samples), samples)
+            cold, warm = pages[:2]
+            self.assertEqual((cold["outcome"], warm["outcome"]), ("ok", "ok"))
+            self.assertGreaterEqual(cold["navigation_ttfb_ms"], 140)
+            self.assertGreaterEqual(cold["load_ms"], 380)
+            self.assertGreater(cold["fcp_ms"], 0)
+            self.assertGreater(cold["observed_lcp_ms"], 0)
+            self.assertEqual(warm["navigation_type"], "reload")
+            self.assertEqual([p["outcome"] for p in pages[2:4]], ["consent_page"] * 2)
+            self.assertEqual([p["outcome"] for p in pages[4:6]], ["http_error"] * 2)
+            self.assertEqual([(p['mode'], p['outcome']) for p in pages[6:]],
+                             [('cold', 'consent_page'), ('after_consent', 'ok'), ('warm', 'ok')])
+            deadline = time.monotonic() + 2
+            while process.metrics.get("downlinkBytes", 0) == 0 and time.monotonic() < deadline:
+                time.sleep(.05)
+            # Before any curl/DNS probes: browser bytes must traverse the core.
+            self.assertGreater(process.metrics.get("downlinkBytes", 0), 500)
+            self.assertGreater(process.metrics.get("uplinkBytes", 0), 500)
+        finally:
+            process.close()
+        with socket.socket() as sock:
+            self.assertNotEqual(sock.connect_ex(("127.0.0.1", port)), 0)
+        failed = list(bench.browser_samples({**job, "sites": [job["sites"][0]]}, self.node, self.env))
+        self.assertTrue(all(s["outcome"] != "ok" for s in failed if s["kind"] == "page"), failed)
+
+    def test_real_responses_and_transfer_sizes(self):
+        port, process = self.client()
+        try:
+            dns = bench.dns_probe(port, "127.0.0.1", "fixture.test", resolver_port=self.dns.server_address[1])
+            self.assertEqual(dns["outcome"], "ok")
+            self.assertGreaterEqual(dns["roundtrip_ms"], 90)
+            download = bench.curl_measure(port, self.origin + "/__down?bytes=8192", 3, download_bytes=8192)
+            self.assertEqual(download["outcome"], "ok", download)
+            self.assertEqual(download["received_bytes"], 8192)
+            upload = bench.curl_measure(port, self.origin + "/__up", 3, upload_bytes=4096)
+            self.assertEqual(upload["outcome"], "ok", upload)
+            self.assertEqual(upload["sent_bytes"], 4096)
+            bad = bench.curl_measure(port, self.origin + "/denied", 3)
+            self.assertEqual(bad["outcome"], "transfer_failed")
+        finally:
+            process.close()
+
+    def test_playback_decodes_network_video_and_detects_real_buffer_underflow(self):
+        port, process = self.client()
+        try:
+            job = {'proxy': f'socks5://127.0.0.1:{port}', 'sites': [], 'timeoutMs': 5000,
+                   'observeMs': 0, 'playwrightModule': self.playwright,
+                   'stream': {'url': self.origin + '/playback', 'label': 'fixture video',
+                              'seconds': 5, 'startupMs': 5000, 'requireLive': False}}
+            samples = list(bench.browser_samples(job, self.node, self.env))
+            played = [s for s in samples if s['kind'] == 'playback']
+            self.assertEqual(len(played), 1, samples)
+            result = played[0]
+            self.assertEqual(result['outcome'], 'ok', result)
+            self.assertGreater(result['first_frame_ms'], 0)
+            self.assertGreater(result['presented_frames'], 10)
+            self.assertGreater(result['media_advanced_seconds'], 1)
+            self.assertIn('160x90', result['resolutions'])
+            self.assertGreaterEqual(result['rebuffer_count'], 1)
+            self.assertGreater(result['rebuffer_ms'], 500, result)
+            self.assertGreaterEqual(result['observed_seconds'], 5)
+            self.assertFalse(result['ad_observed'])
+            job['stream']['url'] = self.origin + '/denied'
+            job['stream']['startupMs'] = 1000
+            failed = list(bench.browser_samples(job, self.node, self.env))
+            self.assertTrue(any(s.get('outcome') == 'playback_start_failed' for s in failed), failed)
+        finally:
+            process.close()
+
+    def test_feed_iteration_rotation_private_reports(self):
+        source = self.directory / "feed.txt"
+        source.write_text(self.feed_text)
+        sites = self.directory / "sites.json"
+        sites.write_text(json.dumps([{"label": "fixture", "url": self.origin, "selector": "main"}]))
+        output = self.directory / "run"
+        fixture_dns = functools.partial(bench.dns_probe, resolver_port=self.dns.server_address[1])
+        with patch.object(bench, "child_env", return_value=self.env), patch.object(bench, "dns_probe", fixture_dns), \
+             patch.object(bench, "DOWN_URL", self.origin + "/__down"), patch.object(bench, "UP_URL", self.origin + "/__up"):
+            code = bench.main(["--core", str(self.core), "--node", self.node, "--playwright-module", self.playwright,
+                               "--interface", self.interface, "--bootstrap-dns", "127.0.0.1", "--subscription-file", str(source),
+                               "--sites", str(sites), "--rounds", "2", "--observe", "1", "--timeout", "3",
+                               "--download-bytes", "8192", "--upload-bytes", "4096", "--output", str(output)])
+        self.assertEqual(code, 0)
+        text = (output / "results.json").read_text()
+        report = json.loads(text)
+        self.assertEqual(report["status"], "completed")
+        self.assertEqual([s["profile"] for s in report["samples"] if s["kind"] == "cleanup"], [1, 2, 2, 1])
+        self.assertEqual(len([s for s in report["samples"] if s["kind"] == "page"]), 8)
+        self.assertNotIn("private-name", text)
+        self.assertNotIn("vless://", text)
+        self.assertNotIn("aa6b0e61", text)
+        self.assertTrue((output / "summary.csv").is_file())
+
+    def test_failures_are_not_zero_latency_and_complex_profiles_are_explicit(self):
+        rows = bench.summaries([{"profile": 1, "protocol": "vless", "kind": "page", "outcome": "ok", "load_ms": 800},
+                                {"profile": 1, "protocol": "vless", "kind": "page", "outcome": "timeout", "load_ms": 0}])
+        self.assertEqual((rows[0]["load_ms_median"], rows[0]["failed"]), (800, 1))
+        with self.assertRaisesRegex(bench.BenchmarkError, "multiple_or_missing"):
+            bench.prepare_config({"config": {"outbounds": [{"protocol": "vless"}, {"protocol": "socks"}]}}, 10000)
+
+    def test_invalid_adapter_fails_before_start_and_loopback_needs_fixture(self):
+        for interface, expected in (("elarni-missing-benchmark-interface", "interface_unavailable"),
+                                    (self.interface, "physical_interface_required")):
+            result = subprocess.run([str(self.core)], input=b"{}\n", capture_output=True,
+                                    env=bench.child_env(interface), timeout=5)
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(json.loads(result.stdout)["error"], expected)
+
+    def test_exported_null_reality_fields_are_absent_in_runtime_config(self):
+        profile = {"config": {"outbounds": [{"protocol": "vless", "streamSettings": {
+            "network": "xhttp", "security": "reality", "realitySettings": {
+                "dest": None, "target": None, "serverName": "fixture.test", "show": False}}}]}}
+        config = bench.prepare_config(profile, 12345)
+        reality = config['outbounds'][0]['streamSettings']['realitySettings']
+        self.assertEqual(reality, {'serverName': 'fixture.test', 'show': False})
+        self.assertIn('target', profile['config']['outbounds'][0]['streamSettings']['realitySettings'])
+        self.assertEqual(bench.profile_identity({'config': {'outbounds': [{'protocol': 'wireguard'}]}}, 1)['transport'], 'udp')
+
+
+if __name__ == "__main__":
+    from check_report import record_check
+    record_check(Path(__file__).resolve().parent.parent)
+    unittest.main(verbosity=2)

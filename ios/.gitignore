@@ -1,0 +1,8 @@
+**/xcuserdata/
+**/*.xcuserstate
+**/.DS_Store
+!/README.md
+
+# Flutter tooling generates these when it targets ios/; the iPhone app is native SwiftUI.
+/Flutter/
+/Runner/GeneratedPluginRegistrant.*

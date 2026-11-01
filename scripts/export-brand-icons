@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Export Elarni's icon masters to native icon sizes (macOS sips required)."""
+import json
+from pathlib import Path
+import shutil
+import struct
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+BRAND = ROOT / 'assets/branding'
+
+
+def resize(source, output, size):
+    subprocess.run(['sips', '-z', str(size), str(size), str(source), '--out', str(output)],
+                   check=True, stdout=subprocess.DEVNULL)
+
+
+def main():
+    if not shutil.which('sips'):
+        raise SystemExit('Run this export on macOS with the built-in sips tool.')
+    icon = BRAND / 'elarni-app-icon.png'
+    mark = BRAND / 'elarni-mark.png'
+    if not icon.is_file() or not mark.is_file():
+        raise SystemExit('Both production masters in assets/branding are required.')
+    catalog = ROOT / 'macos/Runner/Assets.xcassets'
+    with tempfile.TemporaryDirectory(prefix='elarni-icons-') as temporary:
+        output = Path(temporary)
+        sizes = (16, 20, 24, 32, 40, 48, 64, 128, 256, 512, 1024)
+        for size in sizes:
+            resize(icon, output / f'{size}.png', size)
+        for size in (16, 32, 64, 128, 256, 512, 1024):
+            shutil.copyfile(output / f'{size}.png', catalog / f'AppIcon.appiconset/app_icon_{size}.png')
+        ios_catalog = ROOT / 'ios/Elarni/Elarni/Assets.xcassets'
+        shutil.copyfile(output / '1024.png', ios_catalog / 'AppIcon.appiconset/AppIcon.png')
+        toolbar = ios_catalog / 'ElarniIcon.imageset'
+        toolbar.mkdir(exist_ok=True)
+        for scale in (1, 2, 3):
+            resize(icon, toolbar / f'elarni-icon-{scale}x.png', 44 * scale)
+        (toolbar / 'Contents.json').write_text(json.dumps({
+            'images': [{'idiom': 'universal', 'scale': f'{scale}x',
+                        'filename': f'elarni-icon-{scale}x.png'} for scale in (1, 2, 3)],
+            'info': {'author': 'xcode', 'version': 1},
+        }, indent=2) + '\n')
+        shutil.copyfile(output / '512.png', ROOT / 'linux/elarni.png')
+        # Android's adaptive icon insets this to the launcher's visible 72 of 108 dp (ic_launcher.xml).
+        resize(icon, ROOT / 'android/app/src/main/res/drawable-nodpi/elarni_icon.png', 432)
+        # ICO container with PNG payloads: retain source alpha, no artwork editing.
+        entries = [(size, (output / f'{size}.png').read_bytes()) for size in sizes if size <= 256]
+        offset = 6 + 16 * len(entries)
+        directory = bytearray(struct.pack('<HHH', 0, 1, len(entries)))
+        payload = bytearray()
+        for size, data in entries:
+            dimension = 0 if size == 256 else size
+            directory.extend(struct.pack('<BBBBHHII', dimension, dimension, 0, 0, 1, 32, len(data), offset))
+            payload.extend(data)
+            offset += len(data)
+        (ROOT / 'windows/runner/resources/app_icon.ico').write_bytes(directory + payload)
+    menu = catalog / 'ElarniMenuMark.imageset'
+    menu.mkdir(exist_ok=True)
+    for size, scale in ((18, '1x'), (36, '2x')):
+        resize(mark, menu / f'elarni-menu-{scale}.png', size)
+    (menu / 'Contents.json').write_text(json.dumps({
+        'images': [{'idiom': 'mac', 'scale': scale, 'filename': f'elarni-menu-{scale}.png'}
+                   for scale in ('1x', '2x')],
+        'info': {'author': 'xcode', 'version': 1},
+        'properties': {'template-rendering-intent': 'template'},
+    }, indent=2) + '\n')
+    print('Exported 7 macOS app sizes, 2 menu sizes, 9 Windows ICO sizes, the Linux and Android icons, and 4 iOS icons.')
+
+
+if __name__ == '__main__':
+    main()

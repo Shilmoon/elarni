@@ -1,0 +1,559 @@
+#!/usr/bin/env python3
+"""Live website/protocol comparison. No system VPN, routes or app settings changed."""
+import argparse
+import copy
+import csv
+from datetime import datetime, timezone
+import getpass
+import ipaddress
+import json
+import math
+import os
+from pathlib import Path
+import queue
+import re
+import shutil
+import socket
+import statistics
+import struct
+import subprocess
+import sys
+import threading
+import time
+from urllib.parse import urlsplit
+import uuid
+
+ROOT = Path(__file__).resolve().parent.parent
+BROWSER = ROOT / "scripts" / "protocol-browser.mjs"
+DEFAULT_SITES = [
+    {"label": "Twitch", "url": "https://www.twitch.tv/"},
+    {"label": "Wikipedia", "url": "https://en.wikipedia.org/wiki/Main_Page", "selector": "#content"},
+    {"label": "GitHub", "url": "https://github.com/cloudflare/speedtest", "selector": "main"},
+]
+DOWN_URL = "https://speed.cloudflare.com/__down"
+UP_URL = "https://speed.cloudflare.com/__up"
+MAX_FEED = 4 * 1024 * 1024
+
+
+class BenchmarkError(Exception):
+    """Only fixed, credential-free codes may be reported."""
+
+
+def utc():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def child_env(interface, dns="1.1.1.1", fixture=False):
+    env = dict(os.environ)
+    for key in list(env):
+        if key.lower() in ("http_proxy", "https_proxy", "all_proxy", "no_proxy"):
+            env.pop(key)
+    env["ELARNI_BENCH_INTERFACE"] = interface
+    env["ELARNI_BENCH_DNS"] = dns
+    env.pop("ELARNI_BENCH_LOOPBACK_FIXTURE", None)
+    if fixture:
+        env["ELARNI_BENCH_LOOPBACK_FIXTURE"] = "1"
+    return env
+
+
+class Core:
+    def __init__(self, executable, request, env, args=()):
+        self.events = queue.Queue()
+        self.metrics = {}
+        self.closed = False
+        self.process = subprocess.Popen([str(executable), *args], stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                        env=env, text=True, encoding="utf-8")
+        threading.Thread(target=self._read, daemon=True).start()
+        try:
+            self.process.stdin.write(json.dumps(request, separators=(",", ":")) + "\n")
+            self.process.stdin.flush()
+        except BaseException:
+            self.close()
+            raise
+
+    def _read(self):
+        try:
+            for line in self.process.stdout:
+                try:
+                    value = json.loads(line)
+                except (ValueError, UnicodeError):
+                    continue
+                if value.get("event") == "metrics":
+                    self.metrics = value.get("data", {})
+                else:
+                    self.events.put(value)
+        finally:
+            self.events.put(None)
+
+    def result(self, timeout=35):
+        try:
+            reply = self.events.get(timeout=timeout)
+        except queue.Empty:
+            raise BenchmarkError("core_timeout") from None
+        if not reply or not reply.get("success"):
+            # Never forward an arbitrary library error or raw response.
+            raise BenchmarkError("core_request_failed")
+        return reply.get("data", {})
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.process.stdin.close()
+        except BrokenPipeError:
+            pass
+        try:
+            self.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait(timeout=5)
+        self.process.stdout.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+
+def invoke(core, method, payload, env):
+    with Core(core, {"apiVersion": 1, "method": method, "payload": payload}, env) as process:
+        return process.result()
+
+
+def profile_identity(profile, index):
+    outbounds = (profile.get("config") or {}).get("outbounds", [])
+    protocols = sorted({o.get("protocol", "unknown") for o in outbounds
+                        if o.get("protocol") not in ("freedom", "blackhole", "dns")})
+    if not protocols:
+        protocols = ["direct"] if any(o.get("protocol") == "freedom" for o in outbounds) else ["unsupported"]
+    # Provider names can contain a share URL/token. Reports identify profiles by
+    # feed order, protocol and transport, never by arbitrary provider text.
+    transports = sorted({"udp" if o.get("protocol") in ("wireguard", "amneziawg") else
+                         (o.get("streamSettings") or {}).get("network", "tcp") for o in outbounds
+                         if o.get("protocol") in protocols})
+    return {"profile": index, "protocol": "+".join(protocols), "transport": "+".join(transports)}
+
+
+def prepare_config(profile, port):
+    source = profile.get("config")
+    if not isinstance(source, dict):
+        raise BenchmarkError("profile_has_no_xray_config")
+    # Exported RawMessage fields such as REALITY target/dest use JSON null for
+    # absence. Xray otherwise treats the four bytes "null" as a server target.
+    def omit_null_fields(value):
+        if isinstance(value, dict):
+            return {k: omit_null_fields(v) for k, v in value.items() if v is not None}
+        if isinstance(value, list):
+            return [omit_null_fields(v) for v in value]
+        return value
+    outbounds = omit_null_fields(copy.deepcopy(source.get("outbounds", [])))
+    proxies = [o for o in outbounds if o.get("protocol") not in ("freedom", "blackhole", "dns")]
+    if not proxies:
+        proxies = [o for o in outbounds if o.get("protocol") == "freedom"]
+    if len(proxies) != 1:
+        raise BenchmarkError("multiple_or_missing_proxy_outbounds")
+    primary = proxies[0]
+    primary["tag"] = primary.get("tag") or "benchmark-proxy"
+    for outbound in outbounds:
+        if outbound.get("protocol") in ("wireguard", "amneziawg"):
+            outbound.setdefault("settings", {})["noKernelTun"] = True
+        # The benchmark's required controller owns physical binding, not
+        # imported advisory interface/sendThrough options.
+        outbound.pop("sendThrough", None)
+        ((outbound.get("streamSettings") or {}).get("sockopt") or {}).pop("interface", None)
+    return {
+        "log": {"loglevel": "none"}, "stats": {},
+        "policy": {"system": {"statsInboundUplink": True, "statsInboundDownlink": True}},
+        "inbounds": [{"tag": "elarni-socks", "listen": "127.0.0.1", "port": port,
+                      "protocol": "socks", "settings": {"auth": "noauth", "udp": True}}],
+        "outbounds": outbounds,
+        # Endpoint bootstrap goes through the helper's interface-bound resolver.
+        # Destination domains stay in SOCKS requests and follow the selected
+        # outbound's DNS behavior (including WireGuard's tunnel resolver).
+        "dns": {"servers": ["localhost"]},
+        "routing": {"domainStrategy": "AsIs", "rules": [
+            {"type": "field", "network": "tcp,udp", "outboundTag": primary["tag"]}]},
+    }
+
+
+def free_port():
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return listener.getsockname()[1]
+
+
+def recv_exact(conn, count):
+    result = b""
+    while len(result) < count:
+        chunk = conn.recv(count - len(result))
+        if not chunk:
+            raise BenchmarkError("unexpected_eof")
+        result += chunk
+    return result
+
+
+def socks_connect(port, host, target_port, timeout):
+    conn = socket.create_connection(("127.0.0.1", port), timeout)
+    conn.settimeout(timeout)
+    try:
+        conn.sendall(b"\x05\x01\x00")
+        if recv_exact(conn, 2) != b"\x05\x00":
+            raise BenchmarkError("socks_auth_failed")
+        name = host.encode("idna")
+        if len(name) > 255:
+            raise BenchmarkError("invalid_target")
+        conn.sendall(b"\x05\x01\x00\x03" + bytes([len(name)]) + name + struct.pack("!H", target_port))
+        header = recv_exact(conn, 4)
+        if header[:3] != b"\x05\x00\x00":
+            raise BenchmarkError("socks_rejected")
+        length = {1: 4, 4: 16}.get(header[3])
+        if header[3] == 3:
+            length = recv_exact(conn, 1)[0]
+        if length is None:
+            raise BenchmarkError("socks_invalid_reply")
+        recv_exact(conn, length + 2)
+        return conn  # Acceptance is not remote TCP success; caller must read data.
+    except BaseException:
+        conn.close()
+        raise
+
+
+def dns_probe(port, resolver, hostname, timeout=10, *, resolver_port=53):
+    start = time.monotonic()
+    transaction = os.urandom(2)
+    labels = hostname.rstrip(".").encode("idna").split(b".")
+    question = b"".join(bytes([len(label)]) + label for label in labels) + b"\x00\x00\x01\x00\x01"
+    packet = transaction + struct.pack("!HHHHH", 0x0100, 1, 0, 0, 0) + question
+    try:
+        with socks_connect(port, resolver, resolver_port, timeout) as conn:
+            conn.sendall(struct.pack("!H", len(packet)) + packet)
+            length = struct.unpack("!H", recv_exact(conn, 2))[0]
+            data = recv_exact(conn, length)
+        valid = (len(data) >= 12 and data[:2] == transaction and data[2] & 0x80
+                 and data[3] & 15 == 0 and int.from_bytes(data[6:8], "big") > 0)
+        return {"kind": "dns_tcp", "outcome": "ok" if valid else "dns_invalid_response",
+                "roundtrip_ms": (time.monotonic() - start) * 1000}
+    except (OSError, BenchmarkError):
+        return {"kind": "dns_tcp", "outcome": "dns_failed", "roundtrip_ms": None}
+
+
+def curl_measure(port, url, timeout, *, download_bytes=None, upload_bytes=None, executable="curl"):
+    command = [executable, "-q", "--silent", "--show-error", "--proxy", f"socks5h://127.0.0.1:{port}",
+               "--noproxy", "", "--connect-timeout", str(min(timeout, 15)), "--max-time", str(timeout),
+               "--output", os.devnull, "--write-out", "%{json}", "--proto", "=http,https"]
+    if download_bytes is not None:
+        command += ["--max-filesize", str(download_bytes)]
+    if upload_bytes is not None:
+        command += ["--header", "Content-Type: application/octet-stream", "--data-binary", "@-"]
+    command += ["--url", url]
+    kind = "download" if download_bytes is not None else "upload" if upload_bytes is not None else "https_latency"
+    try:
+        result = subprocess.run(command, input=b"\x00" * upload_bytes if upload_bytes is not None else None,
+                                capture_output=True, timeout=timeout + 5)
+        data = json.loads(result.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return {"kind": kind, "outcome": "curl_failed"}
+    status = int(data.get("response_code", data.get("http_code", 0)))
+    outcome = "ok" if result.returncode == 0 and 200 <= status < 300 else "transfer_failed"
+    if download_bytes is not None and int(data.get("size_download", 0)) != download_bytes:
+        outcome = "download_size_mismatch"
+    if upload_bytes is not None and int(data.get("size_upload", 0)) != upload_bytes:
+        outcome = "upload_size_mismatch"
+    total = float(data.get("time_total", 0))
+    first = float(data.get("time_starttransfer", 0))
+    pre = float(data.get("time_pretransfer", 0))
+    tls_end = float(data.get("time_appconnect", 0))
+    result = {"kind": kind, "outcome": outcome, "http_status": status, "curl_exit_code": result.returncode,
+              "total_ms": total * 1000, "ttfb_ms": first * 1000,
+              "tls_ms": max(0, tls_end - float(data.get("time_connect", 0))) * 1000 if tls_end else None,
+              "response_wait_ms": max(0, first - pre) * 1000 if first else None,
+              "received_bytes": int(data.get("size_download", 0)), "sent_bytes": int(data.get("size_upload", 0))}
+    if download_bytes is not None:
+        result["mbps"] = download_bytes * 8 / (total - first) / 1e6 if outcome == "ok" and total > first else None
+    if upload_bytes is not None:
+        result["mbps"] = upload_bytes * 8 / (total - pre) / 1e6 if outcome == "ok" and total > pre else None
+    return result
+
+
+def browser_samples(job, node, env):
+    process = subprocess.Popen([node, str(BROWSER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, text=True, encoding="utf-8", env=env)
+    events = queue.Queue()
+    def reader():
+        try:
+            for line in process.stdout:
+                try:
+                    events.put(json.loads(line))
+                except ValueError:
+                    continue
+        finally:
+            events.put(None)
+    threading.Thread(target=reader, daemon=True).start()
+    try:
+        process.stdin.write(json.dumps(job) + "\n")
+        process.stdin.flush()
+        stream_budget = (job["stream"]["seconds"] + job["stream"]["startupMs"] * 2 / 1000 + 20) if job.get("stream") else 0
+        deadline = time.monotonic() + 30 + stream_budget + len(job["sites"]) * 4 * (job["timeoutMs"] + job["observeMs"] + 3000) / 1000
+        done = False
+        while time.monotonic() < deadline:
+            try:
+                event = events.get(timeout=min(2, max(.01, deadline - time.monotonic())))
+            except queue.Empty:
+                continue
+            if event is None:
+                break
+            if event.get("kind") == "browser_done":
+                done = True
+            yield event
+        if not done:
+            yield {"kind": "browser_error", "outcome": "browser_incomplete"}
+    finally:
+        try:
+            process.stdin.close()
+        except BrokenPipeError:
+            pass
+        try:
+            process.wait(timeout=7)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        process.stdout.close()
+
+
+def percentile(values, fraction):
+    values = sorted(values)
+    return values[max(0, math.ceil(len(values) * fraction) - 1)] if values else None
+
+
+def summaries(samples):
+    groups = {}
+    for sample in samples:
+        if "outcome" not in sample:
+            continue
+        key = (sample["profile"], sample["protocol"], sample.get("site", ""), sample["kind"], sample.get("mode", ""))
+        groups.setdefault(key, []).append(sample)
+    result = []
+    for key, rows in sorted(groups.items()):
+        good = [r for r in rows if r["outcome"] == "ok"]
+        row = dict(zip(("profile", "protocol", "site", "kind", "mode"), key))
+        row.update(samples=len(rows), succeeded=len(good), failed=len(rows) - len(good))
+        for metric in ("load_ms", "fcp_ms", "observed_lcp_ms", "ttfb_ms", "response_wait_ms", "roundtrip_ms", "mbps",
+                       "first_frame_ms", "rebuffer_ms", "dropped_percent", "media_advanced_seconds"):
+            values = [r[metric] for r in good if isinstance(r.get(metric), (int, float)) and math.isfinite(r[metric])]
+            row[metric + "_median"] = statistics.median(values) if values else None
+            row[metric + "_p95"] = percentile(values, .95)
+        result.append(row)
+    return result
+
+
+def write_reports(output, report):
+    report["summary"] = summaries(report["samples"])
+    # Output is always a new private run directory. No raw feeds/configs/URLs.
+    path = output / "results.json"
+    path.write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
+    path.chmod(0o600)
+    if report["summary"]:
+        path = output / "summary.csv"
+        with path.open("w", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=list(report["summary"][0]))
+            writer.writeheader()
+            writer.writerows(report["summary"])
+        path.chmod(0o600)
+
+
+def parser():
+    p = argparse.ArgumentParser(description=__doc__)
+    source = p.add_mutually_exclusive_group()
+    source.add_argument("--subscription-file", type=Path, help="Private feed/export file; never copied to reports")
+    source.add_argument("--url-stdin", action="store_true", help="Read HTTPS subscription URL from stdin, not argv")
+    source.add_argument("--prompt-url", action="store_true", help="Prompt for subscription URL without echo")
+    p.add_argument("--interface", help="Explicit physical adapter (en0 on macOS; adapter name on Windows)")
+    p.add_argument("--bootstrap-dns", default="1.1.1.1", help="Literal bootstrap resolver IP; bound to that interface")
+    p.add_argument("--core", type=Path, help="Existing elarni_benchmark build; otherwise build fresh")
+    p.add_argument("--build-only", action="store_true", help="Prepare benchmark helper; do not fetch/connect")
+    p.add_argument("--node", default=shutil.which("node"))
+    p.add_argument("--playwright-module", help="Absolute installed Playwright directory, or use NODE_PATH")
+    p.add_argument("--chrome", help="Chrome executable; defaults to installed Chrome via Playwright")
+    p.add_argument("--sites", type=Path, help="JSON array of {label,url,selector?}; default Twitch/Wikipedia/GitHub")
+    p.add_argument("--rounds", type=int, default=3)
+    p.add_argument("--timeout", type=int, default=30, help="Seconds per navigation/transfer")
+    p.add_argument("--observe", type=int, default=3, help="Seconds to observe paints after load")
+    p.add_argument("--download-bytes", type=int, default=10_000_000)
+    p.add_argument("--upload-bytes", type=int, default=1_000_000)
+    p.add_argument("--visible", action="store_true", help="Show disposable Chrome windows")
+    p.add_argument("--playback-url", help="Run only live HTML video playback instead of pages/probes/transfers")
+    p.add_argument("--playback-seconds", type=int, default=60, help="Playback observation per profile, 10–180 seconds")
+    p.add_argument("--isolated-peers", action="store_true", help="Confirm WG/Amnezia keys are not in use by another active connection")
+    p.add_argument("--output", type=Path, help="New output directory; existing paths are rejected")
+    return p
+
+
+def main(argv=None):
+    args = parser().parse_args(argv)
+    if not 1 <= args.rounds <= 20 or not 1 <= args.timeout <= 120 or not 0 <= args.observe <= 15:
+        raise BenchmarkError("invalid_limits")
+    if not 0 <= args.download_bytes <= 100_000_000 or not 0 <= args.upload_bytes <= 20_000_000:
+        raise BenchmarkError("invalid_transfer_sizes")
+    if not 10 <= args.playback_seconds <= 180:
+        raise BenchmarkError("invalid_playback_duration")
+    if args.playback_url:
+        parsed = urlsplit(args.playback_url)
+        if parsed.scheme not in ("https", "http") or not parsed.hostname or parsed.username or parsed.password:
+            raise BenchmarkError("invalid_playback_url")
+    ipaddress.ip_address(args.bootstrap_dns)
+    if not args.build_only and (not args.interface or not (args.subscription_file or args.url_stdin or args.prompt_url)):
+        parser().error("a source and --interface are required (or use --build-only)")
+    output = args.output or ROOT / ".build" / "live-protocol-benchmark" / (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ-") + uuid.uuid4().hex[:8])
+    output.mkdir(mode=0o700, parents=True, exist_ok=False)
+    core = args.core.resolve() if args.core else output / ("elarni-core.exe" if os.name == "nt" else "elarni-core")
+    if not args.core:
+        subprocess.run(["go", "build", "-tags=elarni_benchmark", "-o", str(core), "./Vendor/libXray/cmd/elarni-core"], cwd=ROOT, check=True)
+    capability = subprocess.run([str(core), "--benchmark-info"], capture_output=True, timeout=5)
+    try:
+        if json.loads(capability.stdout).get("benchmarkSchema") != 1:
+            raise ValueError()
+    except ValueError:
+        raise BenchmarkError("benchmark_helper_required") from None
+    if args.build_only:
+        print(f"Built benchmark helper: {core}")
+        return 0
+    if not args.node:
+        raise BenchmarkError("node_required")
+    sites = json.loads(args.sites.read_text()) if args.sites else DEFAULT_SITES
+    if not isinstance(sites, list) or not sites:
+        raise BenchmarkError("sites_required")
+    for site in sites:
+        if not isinstance(site, dict) or not isinstance(site.get("label"), str) or not isinstance(site.get("url"), str):
+            raise BenchmarkError("invalid_site")
+        u = urlsplit(site["url"])
+        if u.scheme not in ("https", "http") or not u.hostname or u.username or u.password:
+            raise BenchmarkError("invalid_site")
+    env = child_env(args.interface, args.bootstrap_dns)
+    # Launch/close an empty disposable browser before fetching any credentials.
+    preflight = list(browser_samples({"proxy": f"socks5://127.0.0.1:{free_port()}", "sites": [],
+                                     "timeoutMs": 1000, "observeMs": 0, "visible": False,
+                                     "playwrightModule": args.playwright_module, "executable": args.chrome}, args.node, env))
+    if not any(s.get("kind") == "browser_done" for s in preflight):
+        raise BenchmarkError("chrome_playwright_preflight_failed")
+    curl_version = subprocess.run(["curl", "--version"], capture_output=True, timeout=5)
+    version = re.search(rb"curl (\d+)\.(\d+)\.(\d+)", curl_version.stdout)
+    if not version or tuple(map(int, version.groups())) < (7, 72, 0):
+        raise BenchmarkError("curl_7_72_or_newer_required")
+    if args.subscription_file:
+        with args.subscription_file.open("rb") as file:
+            raw = file.read(MAX_FEED + 1)
+        if len(raw) > MAX_FEED:
+            raise BenchmarkError("subscription_too_large")
+        text = raw.decode("utf-8-sig")
+    else:
+        url = sys.stdin.readline(16385).strip() if args.url_stdin else getpass.getpass("Subscription URL: ")
+        with Core(core, {"url": url}, env, ("--benchmark-fetch",)) as process:
+            text = process.result()["text"]
+    profiles = invoke(core, "importClientProfiles", {"text": text}, env).get("profiles", [])
+    if not profiles:
+        raise BenchmarkError("no_profiles_imported")
+    del text
+    report = {"schema": 1, "started_at": utc(), "status": "running", "interface": args.interface,
+              "mode": "isolated-core-socks-chromium-playback" if args.playback_url else "isolated-core-socks-chromium", "rounds": args.rounds,
+              "profiles": [profile_identity(p, i + 1) for i, p in enumerate(profiles)], "samples": [],
+              "limits": {"timeout_seconds": args.timeout, "observe_seconds": args.observe,
+                         "download_bytes_per_profile_round": 0 if args.playback_url else args.download_bytes,
+                         "upload_bytes_per_profile_round": 0 if args.playback_url else args.upload_bytes,
+                         "playback_seconds": args.playback_seconds if args.playback_url else 0},
+              "notes": ["TCP browser traffic; no HTTP/3/QUIC or system-VPN/ICMP claim.",
+                        "Fresh browser context per site; warm reload shares that context. First site uses a new core.",
+                        "Profile routing is replaced by the selected single proxy; endpoint bootstrap DNS uses the explicit adapter.",
+                        "DNS TCP RTT includes upstream connection and DNS response. SOCKS acceptance is not ping.",
+                        "LCP is observed through the fixed post-load window, not an unbounded final LCP.",
+                        "Upload Mbps includes server response wait; download Mbps uses body-transfer time."]}
+    if args.playback_url:
+        report["notes"] = ["Live HTML video playback only; pages, DNS/HTTPS probes and bulk transfers are not run.",
+                           "Auto quality; achieved resolutions and presented frames are recorded. Audio is muted.",
+                           "First frame uses the video frame callback from navigation start; initial buffering is part of startup.",
+                           "Rebuffering counts waiting after playback begins, not merely stalled network requests.",
+                           "Advertised/finite/no-frame playback is not counted as a successful live stream sample.",
+                           "TCP through the isolated proxy; no HTTP/3, WebRTC or system-VPN claim."]
+    write_reports(output, report)
+    try:
+        for round_number in range(args.rounds):
+            # Rotate order without dropping/duplicating profiles.
+            order = list(range(len(profiles)))
+            shift = round_number % len(order)
+            for index in order[shift:] + order[:shift]:
+                identity = {**report["profiles"][index], "round": round_number + 1}
+                print(f"Round {round_number + 1}/{args.rounds}, profile {index + 1}/{len(profiles)} ({identity['protocol']})", flush=True)
+                port = free_port()
+                try:
+                    if not args.isolated_peers and any(p in identity["protocol"].split("+") for p in ("wireguard", "amneziawg")):
+                        raise BenchmarkError("isolated_peer_confirmation_required")
+                    config = prepare_config(profiles[index], port)
+                    request = {"apiVersion": 1, "method": "runXrayFromJson", "payload": {
+                        "configJSON": json.dumps(config), "streamMetrics": True}}
+                    with Core(core, request, env) as process:
+                        process.result()
+                        job = {"proxy": f"socks5://127.0.0.1:{port}", "sites": sites,
+                               "timeoutMs": args.timeout * 1000, "observeMs": args.observe * 1000,
+                               "visible": args.visible, "playwrightModule": args.playwright_module, "executable": args.chrome}
+                        if args.playback_url:
+                            job["sites"] = []
+                            job["stream"] = {"url": args.playback_url, "label": "Live stream",
+                                             "seconds": args.playback_seconds, "startupMs": args.timeout * 1000}
+                        for sample in browser_samples(job, args.node, env):
+                            report["samples"].append({**identity, **sample})
+                            if sample.get("kind") == "page":
+                                print(f"  {sample['site']} {sample['mode']}: {sample['outcome']}", flush=True)
+                            elif sample.get("kind") == "playback_progress":
+                                print(f"  Playback {sample['elapsed_seconds']}s: {sample['resolution']}", flush=True)
+                            elif sample.get("kind") == "playback":
+                                print(f"  Playback: {sample['outcome']}, first frame {sample.get('first_frame_ms')} ms, buffering {sample.get('rebuffer_ms')} ms", flush=True)
+                            write_reports(output, report)
+                        for _ in range(0 if args.playback_url else 3):
+                            report["samples"].append({**identity, **dns_probe(port, args.bootstrap_dns, urlsplit(sites[0]["url"]).hostname)})
+                            report["samples"].append({**identity, **curl_measure(port, DOWN_URL + "?bytes=0", args.timeout)})
+                        if args.download_bytes and not args.playback_url:
+                            report["samples"].append({**identity, **curl_measure(port, DOWN_URL + f"?bytes={args.download_bytes}", args.timeout, download_bytes=args.download_bytes)})
+                        if args.upload_bytes and not args.playback_url:
+                            report["samples"].append({**identity, **curl_measure(port, UP_URL, args.timeout, upload_bytes=args.upload_bytes)})
+                        # Wait for a fresh metrics receipt, not synthetic listener readiness.
+                        deadline = time.monotonic() + 2
+                        while not process.metrics and time.monotonic() < deadline:
+                            time.sleep(.05)
+                        metrics = process.metrics
+                        carried = metrics.get("uplinkBytes", 0) > 0 and metrics.get("downlinkBytes", 0) > 0
+                        report["samples"].append({**identity, "kind": "path_evidence", "outcome": "ok" if carried else "traffic_unverified",
+                                                  "uplink_bytes": metrics.get("uplinkBytes", 0), "downlink_bytes": metrics.get("downlinkBytes", 0)})
+                    # The process has exited; its OS-owned listeners must be gone.
+                    with socket.socket() as sock:
+                        sock.settimeout(.3)
+                        clean = sock.connect_ex(("127.0.0.1", port)) != 0
+                    report["samples"].append({**identity, "kind": "cleanup", "outcome": "ok" if clean else "listener_survived"})
+                    if not clean:
+                        raise BenchmarkError("cleanup_failed")
+                except BenchmarkError as error:
+                    report["samples"].append({**identity, "kind": "profile_error", "outcome": str(error)})
+                    print(f"  Failed: {error}", flush=True)
+                    if str(error) == "cleanup_failed":
+                        raise
+                write_reports(output, report)
+        report["status"] = "completed"
+    except BaseException:
+        report["status"] = "interrupted"
+        raise
+    finally:
+        report["finished_at"] = utc()
+        write_reports(output, report)
+        print(f"Results: {output / 'results.json'}\nSummary: {output / 'summary.csv'}")
+    return 1 if any(s.get("outcome", "ok") != "ok" for s in report["samples"]) else 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        raise SystemExit(130)
+    except (BenchmarkError, ValueError, OSError, subprocess.SubprocessError) as error:
+        print(f"Benchmark stopped: {error if isinstance(error, BenchmarkError) else type(error).__name__}", file=sys.stderr)
+        raise SystemExit(2)

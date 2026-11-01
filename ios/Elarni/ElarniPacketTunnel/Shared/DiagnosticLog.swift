@@ -1,0 +1,1 @@
+../../../../macos/ElarniPacketTunnel/DiagnosticLog.swift

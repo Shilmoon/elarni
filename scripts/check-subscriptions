@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$ROOT"
+if [ -z "${ELARNI_CHECK_REPORT:-}" ]; then
+  exec python3 scripts/check_report.py -- sh "$ROOT/scripts/check-subscriptions" "$@"
+fi
+python3 scripts/native-build rust --release
+python3 scripts/native-build go
+mkdir -p .build/checks
+swiftc -swift-version 5 -parse-as-library \
+  -import-objc-header macos/Runner/ElarniRunnerBridge.h \
+  -I .build/libxray-macos-arm64 \
+  macos/Runner/SubscriptionStore.swift macos/Runner/SubscriptionSafety.swift \
+  macos/Runner/RoutingStore.swift macos/Runner/SubscriptionFeedFetcher.swift \
+  macos/Runner/CatalogImportPanels.swift \
+  macos/Runner/ProfileTitle.swift macos/Checks/SubscriptionChecks.swift \
+  .build/libxray-macos-arm64/libXray.a .build/rust-macos/current/libelarni_domain.a \
+  -framework SystemConfiguration -lresolv -o .build/checks/subscriptions
+python3 macos/Checks/SubscriptionFixture.py .build/checks/subscriptions "$@"

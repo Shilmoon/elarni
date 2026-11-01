@@ -1,0 +1,86 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Per-app VPN routing must also find network-capable apps without launcher
+         activities. Scoped intent queries cannot enumerate that set. This private
+         APK requires a separate package-visibility review before Play submission. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- The QR screen reads codes from a live preview. Without a camera it still opens a QR image. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <!-- Connect on untrusted Wi-Fi needs the network's name, which Android shows only with location access, all the time. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <queries>
+        <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
+        <intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent>
+    </queries>
+    <application android:name=".ElarniApplication" android:label="Elarni"
+        android:theme="@style/AppTheme" android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false" android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules" android:supportsRtl="true" android:localeConfig="@xml/locales_config">
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+            <!-- Long-pressing the Quick Settings tile opens the app instead of App info. -->
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" /></intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="elarni" /><data android:scheme="happ" /><data android:scheme="incy" />
+                <data android:scheme="vless" /><data android:scheme="vmess" /><data android:scheme="trojan" />
+                <data android:scheme="ss" /><data android:scheme="socks" /><data android:scheme="socks5" />
+                <data android:scheme="hy2" /><data android:scheme="hysteria2" /><data android:scheme="tuic" /><data android:scheme="vpn" /><data android:scheme="wireguard" />
+            </intent-filter>
+            <intent-filter><action android:name="android.intent.action.SEND" /><category android:name="android.intent.category.DEFAULT" /><data android:mimeType="text/plain" /><data android:mimeType="application/json" /><data android:mimeType="image/*" /></intent-filter>
+        </activity>
+        <!-- A consented VPN is independently eligible for systemExempted; exact
+             alarms are an alternative eligibility condition, not a VPN requirement.
+             Platform.kt selects specialUse for local-proxy mode without VPN consent. -->
+        <service android:name=".ElarniVpnService" android:exported="true"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="systemExempted|specialUse" tools:ignore="ForegroundServicePermission">
+            <intent-filter><action android:name="android.net.VpnService" /></intent-filter>
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-started local encrypted proxy, active until the user disconnects" />
+        </service>
+        <service android:name=".ElarniTileService" android:label="Elarni" android:icon="@drawable/ic_elarni"
+            android:exported="true" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+            <meta-data android:name="android.service.quicksettings.ACTIVE_TILE" android:value="true" />
+        </service>
+        <service android:name=".RefreshJobService" android:exported="true" android:permission="android.permission.BIND_JOB_SERVICE" />
+        <!-- The home screen widget. Its button reaches only WidgetToggle, or the app when connecting needs it. -->
+        <receiver android:name=".ConnectionWidget" android:label="Elarni" android:exported="false">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/connection_widget" />
+        </receiver>
+        <receiver android:name=".WidgetToggle" android:exported="false" />
+        <!-- While Connect on untrusted Wi-Fi is on, Android reports Wi-Fi changes here; an app update arms it again. -->
+        <receiver android:name=".WiFiWatch" android:exported="false">
+            <intent-filter><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>
+        </receiver>
+        <!-- Automation apps send explicit broadcasts here; a setting in General decides whether they count. -->
+        <receiver android:name=".RemoteControl" android:exported="true">
+            <intent-filter>
+                <action android:name="com.elarni.action.CONNECT" /><action android:name="com.elarni.action.DISCONNECT" /><action android:name="com.elarni.action.TOGGLE" />
+            </intent-filter>
+        </receiver>
+        <!-- Launcher shortcuts start it as Elarni; only the launcher and the app itself can. -->
+        <activity android:name=".ShortcutActivity" android:exported="false" android:excludeFromRecents="true" android:noHistory="true"
+            android:taskAffinity="" android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <receiver android:name=".BootReceiver" android:exported="false">
+            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter>
+        </receiver>
+        <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.files"
+            android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

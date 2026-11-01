@@ -1,0 +1,1084 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 90;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		57B775C03073B6400018BF33 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 57B775BF3073B6400018BF33 /* NetworkExtension.framework */; };
+		57B775C83073B6400018BF33 /* ElarniPacketTunnel.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 57B775BD3073B6400018BF33 /* ElarniPacketTunnel.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		5C28C00B3073C0000000000B /* ElarniWidgets.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 5C28C0023073C00000000002 /* ElarniWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		57B775C63073B6400018BF33 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 57FBB47C3073A48900835970 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 57B775BC3073B6400018BF33;
+			remoteInfo = ElarniPacketTunnel;
+		};
+		57FBB4923073A48A00835970 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 57FBB47C3073A48900835970 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 57FBB4833073A48900835970;
+			remoteInfo = Elarni;
+		};
+		57FBB49C3073A48A00835970 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 57FBB47C3073A48900835970 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 57FBB4833073A48900835970;
+			remoteInfo = Elarni;
+		};
+		5C28C00C3073C0000000000C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 57FBB47C3073A48900835970 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5C28C0013073C00000000001;
+			remoteInfo = ElarniWidgets;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		57FBB4BC3073A4A300835970 /* Embed ExtensionKit Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			dstPath = "";
+			dstSubfolder = PlugIns;
+			files = (
+				57B775C83073B6400018BF33 /* ElarniPacketTunnel.appex in Embed ExtensionKit Extensions */,
+				5C28C00B3073C0000000000B /* ElarniWidgets.appex in Embed ExtensionKit Extensions */,
+			);
+			name = "Embed ExtensionKit Extensions";
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		57B775BD3073B6400018BF33 /* ElarniPacketTunnel.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ElarniPacketTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		57B775BF3073B6400018BF33 /* NetworkExtension.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NetworkExtension.framework; path = System/Library/Frameworks/NetworkExtension.framework; sourceTree = SDKROOT; };
+		57FBB4843073A48900835970 /* Elarni.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Elarni.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		57FBB4913073A48A00835970 /* ElarniTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ElarniTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		57FBB49B3073A48A00835970 /* ElarniUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ElarniUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5C28C0023073C00000000002 /* ElarniWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ElarniWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		57478BD23073A6C700D340B8 /* Exceptions for "Elarni" folder in "Elarni" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 57FBB4833073A48900835970 /* Elarni */;
+		};
+		57B775CC3073B6400018BF33 /* Exceptions for "ElarniPacketTunnel" folder in "ElarniPacketTunnel" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 57B775BC3073B6400018BF33 /* ElarniPacketTunnel */;
+		};
+		5C28C0043073C00000000004 /* Exceptions for "ElarniWidgets" folder in "ElarniWidgets" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 5C28C0013073C00000000001 /* ElarniWidgets */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		57B775C13073B6400018BF33 /* ElarniPacketTunnel */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				57B775CC3073B6400018BF33 /* Exceptions for "ElarniPacketTunnel" folder in "ElarniPacketTunnel" target */,
+			);
+			path = ElarniPacketTunnel;
+			sourceTree = "<group>";
+		};
+		57FBB4863073A48900835970 /* Elarni */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				57478BD23073A6C700D340B8 /* Exceptions for "Elarni" folder in "Elarni" target */,
+			);
+			path = Elarni;
+			sourceTree = "<group>";
+		};
+		57FBB4943073A48A00835970 /* ElarniTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ElarniTests;
+			sourceTree = "<group>";
+		};
+		57FBB49E3073A48A00835970 /* ElarniUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ElarniUITests;
+			sourceTree = "<group>";
+		};
+		5C28C0033073C00000000003 /* ElarniWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5C28C0043073C00000000004 /* Exceptions for "ElarniWidgets" folder in "ElarniWidgets" target */,
+			);
+			path = ElarniWidgets;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		57B775BA3073B6400018BF33 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+				57B775C03073B6400018BF33 /* NetworkExtension.framework in Frameworks */,
+			);
+		};
+		57FBB4813073A48900835970 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		57FBB48E3073A48A00835970 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		57FBB4983073A48A00835970 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		5C28C0063073C00000000006 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		57B775BE3073B6400018BF33 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				57B775BF3073B6400018BF33 /* NetworkExtension.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		57FBB47B3073A48900835970 = {
+			isa = PBXGroup;
+			children = (
+				57FBB4863073A48900835970 /* Elarni */,
+				57FBB4943073A48A00835970 /* ElarniTests */,
+				57FBB49E3073A48A00835970 /* ElarniUITests */,
+				57B775C13073B6400018BF33 /* ElarniPacketTunnel */,
+				5C28C0033073C00000000003 /* ElarniWidgets */,
+				57B775BE3073B6400018BF33 /* Frameworks */,
+				57FBB4853073A48900835970 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		57FBB4853073A48900835970 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				57FBB4843073A48900835970 /* Elarni.app */,
+				57FBB4913073A48A00835970 /* ElarniTests.xctest */,
+				57FBB49B3073A48A00835970 /* ElarniUITests.xctest */,
+				57B775BD3073B6400018BF33 /* ElarniPacketTunnel.appex */,
+				5C28C0023073C00000000002 /* ElarniWidgets.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		57B775BC3073B6400018BF33 /* ElarniPacketTunnel */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 57B775C93073B6400018BF33 /* Build configuration list for PBXNativeTarget "ElarniPacketTunnel" */;
+			buildPhases = (
+				57B775B93073B6400018BF33 /* Sources */,
+				57B775BA3073B6400018BF33 /* Frameworks */,
+				57B775BB3073B6400018BF33 /* Resources */,
+			);
+			buildRules = (
+			);
+			fileSystemSynchronizedGroups = (
+				57B775C13073B6400018BF33 /* ElarniPacketTunnel */,
+			);
+			name = ElarniPacketTunnel;
+			productName = ElarniPacketTunnel;
+			productReference = 57B775BD3073B6400018BF33 /* ElarniPacketTunnel.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		57FBB4833073A48900835970 /* Elarni */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 57FBB4A33073A48A00835970 /* Build configuration list for PBXNativeTarget "Elarni" */;
+			buildPhases = (
+				57FBB4803073A48900835970 /* Sources */,
+				57FBB4813073A48900835970 /* Frameworks */,
+				57FBB4823073A48900835970 /* Resources */,
+				57FBB4BC3073A4A300835970 /* Embed ExtensionKit Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				57B775C73073B6400018BF33 /* PBXTargetDependency */,
+				5C28C00D3073C0000000000D /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				57FBB4863073A48900835970 /* Elarni */,
+			);
+			name = Elarni;
+			productName = Elarni;
+			productReference = 57FBB4843073A48900835970 /* Elarni.app */;
+			productType = "com.apple.product-type.application";
+		};
+		57FBB4903073A48A00835970 /* ElarniTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 57FBB4A63073A48A00835970 /* Build configuration list for PBXNativeTarget "ElarniTests" */;
+			buildPhases = (
+				57FBB48D3073A48A00835970 /* Sources */,
+				57FBB48E3073A48A00835970 /* Frameworks */,
+				57FBB48F3073A48A00835970 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				57FBB4933073A48A00835970 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				57FBB4943073A48A00835970 /* ElarniTests */,
+			);
+			name = ElarniTests;
+			productName = ElarniTests;
+			productReference = 57FBB4913073A48A00835970 /* ElarniTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		57FBB49A3073A48A00835970 /* ElarniUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 57FBB4A93073A48A00835970 /* Build configuration list for PBXNativeTarget "ElarniUITests" */;
+			buildPhases = (
+				57FBB4973073A48A00835970 /* Sources */,
+				57FBB4983073A48A00835970 /* Frameworks */,
+				57FBB4993073A48A00835970 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				57FBB49D3073A48A00835970 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				57FBB49E3073A48A00835970 /* ElarniUITests */,
+			);
+			name = ElarniUITests;
+			productName = ElarniUITests;
+			productReference = 57FBB49B3073A48A00835970 /* ElarniUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		5C28C0013073C00000000001 /* ElarniWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5C28C0083073C00000000008 /* Build configuration list for PBXNativeTarget "ElarniWidgets" */;
+			buildPhases = (
+				5C28C0053073C00000000005 /* Sources */,
+				5C28C0063073C00000000006 /* Frameworks */,
+				5C28C0073073C00000000007 /* Resources */,
+			);
+			buildRules = (
+			);
+			fileSystemSynchronizedGroups = (
+				5C28C0033073C00000000003 /* ElarniWidgets */,
+			);
+			name = ElarniWidgets;
+			productName = ElarniWidgets;
+			productReference = 5C28C0023073C00000000002 /* ElarniWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		57FBB47C3073A48900835970 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2640;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					57B775BC3073B6400018BF33 = {
+						CreatedOnToolsVersion = 26.4.1;
+					};
+					5C28C0013073C00000000001 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					57FBB4833073A48900835970 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					57FBB4903073A48A00835970 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 57FBB4833073A48900835970;
+					};
+					57FBB49A3073A48A00835970 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 57FBB4833073A48900835970;
+					};
+				};
+			};
+			buildConfigurationList = 57FBB47F3073A48900835970 /* Build configuration list for PBXProject "Elarni" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				ru,
+			);
+			mainGroup = 57FBB47B3073A48900835970;
+			preferredProjectObjectVersion = 90;
+			productRefGroup = 57FBB4853073A48900835970 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				57FBB4833073A48900835970 /* Elarni */,
+				57FBB4903073A48A00835970 /* ElarniTests */,
+				57FBB49A3073A48A00835970 /* ElarniUITests */,
+				57B775BC3073B6400018BF33 /* ElarniPacketTunnel */,
+				5C28C0013073C00000000001 /* ElarniWidgets */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		57B775BB3073B6400018BF33 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		57FBB4823073A48900835970 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		57FBB48F3073A48A00835970 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		57FBB4993073A48A00835970 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		5C28C0073073C00000000007 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		57B775B93073B6400018BF33 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		57FBB4803073A48900835970 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		57FBB48D3073A48A00835970 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		57FBB4973073A48A00835970 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		5C28C0053073C00000000005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		57B775C73073B6400018BF33 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 57B775BC3073B6400018BF33 /* ElarniPacketTunnel */;
+			targetProxy = 57B775C63073B6400018BF33 /* PBXContainerItemProxy */;
+		};
+		57FBB4933073A48A00835970 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 57FBB4833073A48900835970 /* Elarni */;
+			targetProxy = 57FBB4923073A48A00835970 /* PBXContainerItemProxy */;
+		};
+		57FBB49D3073A48A00835970 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 57FBB4833073A48900835970 /* Elarni */;
+			targetProxy = 57FBB49C3073A48A00835970 /* PBXContainerItemProxy */;
+		};
+		5C28C00D3073C0000000000D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5C28C0013073C00000000001 /* ElarniWidgets */;
+			targetProxy = 5C28C00C3073C0000000000C /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		57B775CA3073B6400018BF33 /* Debug configuration for PBXNativeTarget "ElarniPacketTunnel" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGN_ENTITLEMENTS = ElarniPacketTunnel/ElarniPacketTunnel.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_TEAM = D6T4QS5TP8;
+				EXCLUDED_SOURCE_FILE_NAMES = (
+					Info.plist,
+					"*.entitlements",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"$(SRCROOT)/../../include\"",
+					"\"$(SRCROOT)/../../.build/ios/Native/$(PLATFORM_NAME)\"",
+				);
+				INFOPLIST_FILE = ElarniPacketTunnel/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Elarni VPN";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"$(SRCROOT)/../../.build/ios/Native/$(PLATFORM_NAME)\"",
+				);
+				MARKETING_VERSION = 0.3.7;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lelarni_domain",
+					"-lelarni_packet_bridge",
+					"-lXray",
+					"-lresolv",
+					"-framework",
+					SystemConfiguration,
+					"-framework",
+					NetworkExtension,
+					"-framework",
+					Security,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.elarni.ios.Elarni.ElarniPacketTunnel;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = NO;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/Shared/NativeBridge.h";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		57B775CB3073B6400018BF33 /* Release configuration for PBXNativeTarget "ElarniPacketTunnel" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGN_ENTITLEMENTS = ElarniPacketTunnel/ElarniPacketTunnel.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_TEAM = D6T4QS5TP8;
+				EXCLUDED_SOURCE_FILE_NAMES = (
+					Info.plist,
+					"*.entitlements",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"$(SRCROOT)/../../include\"",
+					"\"$(SRCROOT)/../../.build/ios/Native/$(PLATFORM_NAME)\"",
+				);
+				INFOPLIST_FILE = ElarniPacketTunnel/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Elarni VPN";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"$(SRCROOT)/../../.build/ios/Native/$(PLATFORM_NAME)\"",
+				);
+				MARKETING_VERSION = 0.3.7;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lelarni_domain",
+					"-lelarni_packet_bridge",
+					"-lXray",
+					"-lresolv",
+					"-framework",
+					SystemConfiguration,
+					"-framework",
+					NetworkExtension,
+					"-framework",
+					Security,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.elarni.ios.Elarni.ElarniPacketTunnel;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = NO;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/Shared/NativeBridge.h";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		57FBB4A13073A48A00835970 /* Debug configuration for PBXProject "Elarni" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		57FBB4A23073A48A00835970 /* Release configuration for PBXProject "Elarni" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		57FBB4A43073A48A00835970 /* Debug configuration for PBXNativeTarget "Elarni" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Elarni/Elarni.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_TEAM = D6T4QS5TP8;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				EXCLUDED_SOURCE_FILE_NAMES = (
+					Info.plist,
+					"*.entitlements",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"$(SRCROOT)/../../include\"",
+					"\"$(SRCROOT)/../../.build/ios/Native/$(PLATFORM_NAME)\"",
+				);
+				INFOPLIST_FILE = Elarni/Info.plist;
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan QR codes to import your server or routing configuration.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Connect to servers and subscription sources you select on your local network.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleDefault;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"$(SRCROOT)/../../.build/ios/Native/$(PLATFORM_NAME)\"",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.6;
+				MARKETING_VERSION = 0.3.7;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lelarni_domain",
+					"-lelarni_packet_bridge",
+					"-lXray",
+					"-lresolv",
+					"-framework",
+					SystemConfiguration,
+					"-framework",
+					NetworkExtension,
+					"-framework",
+					Security,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.elarni.ios.Elarni;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = NO;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/Shared/NativeBridge.h";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				XROS_DEPLOYMENT_TARGET = 27.0;
+			};
+			name = Debug;
+		};
+		57FBB4A53073A48A00835970 /* Release configuration for PBXNativeTarget "Elarni" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Elarni/Elarni.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_TEAM = D6T4QS5TP8;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				EXCLUDED_SOURCE_FILE_NAMES = (
+					Info.plist,
+					"*.entitlements",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"$(SRCROOT)/../../include\"",
+					"\"$(SRCROOT)/../../.build/ios/Native/$(PLATFORM_NAME)\"",
+				);
+				INFOPLIST_FILE = Elarni/Info.plist;
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan QR codes to import your server or routing configuration.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Connect to servers and subscription sources you select on your local network.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleDefault;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"$(SRCROOT)/../../.build/ios/Native/$(PLATFORM_NAME)\"",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.6;
+				MARKETING_VERSION = 0.3.7;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lelarni_domain",
+					"-lelarni_packet_bridge",
+					"-lXray",
+					"-lresolv",
+					"-framework",
+					SystemConfiguration,
+					"-framework",
+					NetworkExtension,
+					"-framework",
+					Security,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.elarni.ios.Elarni;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = NO;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/Shared/NativeBridge.h";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				XROS_DEPLOYMENT_TARGET = 27.0;
+			};
+			name = Release;
+		};
+		57FBB4A73073A48A00835970 /* Debug configuration for PBXNativeTarget "ElarniTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"$(SRCROOT)/../../include\"",
+					"\"$(SRCROOT)/../../.build/ios/Native/$(PLATFORM_NAME)\"",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.elarni.ios.ElarniTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = NO;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Elarni.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Elarni";
+				XROS_DEPLOYMENT_TARGET = 27.0;
+			};
+			name = Debug;
+		};
+		57FBB4A83073A48A00835970 /* Release configuration for PBXNativeTarget "ElarniTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"$(SRCROOT)/../../include\"",
+					"\"$(SRCROOT)/../../.build/ios/Native/$(PLATFORM_NAME)\"",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.elarni.ios.ElarniTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = NO;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Elarni.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Elarni";
+				XROS_DEPLOYMENT_TARGET = 27.0;
+			};
+			name = Release;
+		};
+		57FBB4AA3073A48A00835970 /* Debug configuration for PBXNativeTarget "ElarniUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.elarni.ios.ElarniUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = NO;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = Elarni;
+				XROS_DEPLOYMENT_TARGET = 27.0;
+			};
+			name = Debug;
+		};
+		57FBB4AB3073A48A00835970 /* Release configuration for PBXNativeTarget "ElarniUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.elarni.ios.ElarniUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = NO;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = Elarni;
+				XROS_DEPLOYMENT_TARGET = 27.0;
+			};
+			name = Release;
+		};
+		5C28C0093073C00000000009 /* Debug configuration for PBXNativeTarget "ElarniWidgets" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGN_ENTITLEMENTS = ElarniWidgets/ElarniWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_TEAM = D6T4QS5TP8;
+				EXCLUDED_SOURCE_FILE_NAMES = (
+					Info.plist,
+					"*.entitlements",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ElarniWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Elarni;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.3.7;
+				PRODUCT_BUNDLE_IDENTIFIER = com.elarni.ios.Elarni.ElarniWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "ELARNI_WIDGET $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = NO;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		5C28C00A3073C0000000000A /* Release configuration for PBXNativeTarget "ElarniWidgets" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGN_ENTITLEMENTS = ElarniWidgets/ElarniWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_TEAM = D6T4QS5TP8;
+				EXCLUDED_SOURCE_FILE_NAMES = (
+					Info.plist,
+					"*.entitlements",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ElarniWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Elarni;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.3.7;
+				PRODUCT_BUNDLE_IDENTIFIER = com.elarni.ios.Elarni.ElarniWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "ELARNI_WIDGET $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = NO;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		57B775C93073B6400018BF33 /* Build configuration list for PBXNativeTarget "ElarniPacketTunnel" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				57B775CA3073B6400018BF33 /* Debug configuration for PBXNativeTarget "ElarniPacketTunnel" */,
+				57B775CB3073B6400018BF33 /* Release configuration for PBXNativeTarget "ElarniPacketTunnel" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		57FBB47F3073A48900835970 /* Build configuration list for PBXProject "Elarni" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				57FBB4A13073A48A00835970 /* Debug configuration for PBXProject "Elarni" */,
+				57FBB4A23073A48A00835970 /* Release configuration for PBXProject "Elarni" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		57FBB4A33073A48A00835970 /* Build configuration list for PBXNativeTarget "Elarni" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				57FBB4A43073A48A00835970 /* Debug configuration for PBXNativeTarget "Elarni" */,
+				57FBB4A53073A48A00835970 /* Release configuration for PBXNativeTarget "Elarni" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		57FBB4A63073A48A00835970 /* Build configuration list for PBXNativeTarget "ElarniTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				57FBB4A73073A48A00835970 /* Debug configuration for PBXNativeTarget "ElarniTests" */,
+				57FBB4A83073A48A00835970 /* Release configuration for PBXNativeTarget "ElarniTests" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		57FBB4A93073A48A00835970 /* Build configuration list for PBXNativeTarget "ElarniUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				57FBB4AA3073A48A00835970 /* Debug configuration for PBXNativeTarget "ElarniUITests" */,
+				57FBB4AB3073A48A00835970 /* Release configuration for PBXNativeTarget "ElarniUITests" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		5C28C0083073C00000000008 /* Build configuration list for PBXNativeTarget "ElarniWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5C28C0093073C00000000009 /* Debug configuration for PBXNativeTarget "ElarniWidgets" */,
+				5C28C00A3073C0000000000A /* Release configuration for PBXNativeTarget "ElarniWidgets" */,
+			);
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 57FBB47C3073A48900835970 /* Project object */;
+}

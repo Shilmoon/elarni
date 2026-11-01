@@ -1,0 +1,28 @@
+[workspace]
+members = [
+    "native/elarni-domain",
+    "native/elarni-packet-bridge",
+]
+resolver = "3"
+exclude = ["Vendor/tun2proxy/ipstack"]
+
+[workspace.package]
+edition = "2024"
+license = "GPL-3.0-or-later"
+rust-version = "1.98"
+
+# Release keeps unwinding: the FFI catch_unwind guards and tun2proxy's per-session
+# task isolation only contain a panic when it unwinds.
+[profile.release]
+lto = "thin"
+strip = "debuginfo"
+
+[profile.dist]
+inherits = "release"
+codegen-units = 1
+
+[profile.native-dev]
+inherits = "release"
+opt-level = 1
+lto = "off"
+incremental = true

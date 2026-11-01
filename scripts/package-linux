@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""Package an existing Linux release bundle as a .deb, an AppImage and a portable .tar.gz."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.request
+from release_support import prepare_output, require_files, write_manifest
+
+ROOT=Path(__file__).resolve().parent.parent
+# appimagetool and the type 2 runtime it embeds, pinned to published releases and their GitHub digests.
+APPIMAGE_TOOLS={
+    'appimagetool':('https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage',
+        'ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0'),
+    'runtime':('https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64',
+        '2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d'),
+}
+DEPENDENCIES=('libc6 (>= 2.35), libgcc-s1, libstdc++6, libgtk-3-0, '
+    'libayatana-appindicator3-1, libgstreamer1.0-0, libgstreamer-plugins-base1.0-0, '
+    'gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, libsecret-tools, '
+    'iproute2, nftables, iputils-ping, pkexec | policykit-1, xdg-utils, desktop-file-utils, dbus, libglib2.0-bin')
+
+def root_owned(info):
+    # Root may extract the portable archive; keep neither the builder's ids nor group/other write.
+    info.uid=info.gid=0
+    info.uname=info.gname='root'
+    info.mode&=~0o022
+    return info
+
+def appimage_tool(name):
+    """A pinned AppImage tool, downloaded once into .build/appimage-tools and checked on every use."""
+    url,expected=APPIMAGE_TOOLS[name]
+    path=ROOT/'.build/appimage-tools'/(expected[:16]+'-'+name)
+    if not path.is_file():
+        path.parent.mkdir(parents=True,exist_ok=True)
+        with urllib.request.urlopen(url,timeout=300) as response: data=response.read()
+        partial=path.with_suffix('.partial');partial.write_bytes(data);partial.replace(path)
+    actual=hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual!=expected: raise SystemExit(f'{path}: SHA-256 {actual} is not the pinned {expected}')
+    path.chmod(0o755)
+    return path
+
+def build_appimage(bundle,destination):
+    """Pack bundle, with the desktop entry and icon, into the AppImage at destination."""
+    with tempfile.TemporaryDirectory(prefix='elarni-appdir-') as temporary:
+        appdir=Path(temporary)/'Elarni.AppDir'
+        shutil.copytree(bundle,appdir,symlinks=True)
+        # The runtime starts AppRun in the mounted image; elarni finds lib/ and data/ beside itself.
+        (appdir/'AppRun').symlink_to('elarni')
+        shutil.copy2(ROOT/'linux/com.elarni.Elarni.desktop',appdir/'com.elarni.Elarni.desktop')
+        shutil.copy2(ROOT/'linux/elarni.png',appdir/'com.elarni.Elarni.png')
+        (appdir/'.DirIcon').symlink_to('com.elarni.Elarni.png')
+        # Build containers have no FUSE, so appimagetool runs extracted.
+        env=dict(os.environ,ARCH='x86_64',APPIMAGE_EXTRACT_AND_RUN='1')
+        subprocess.run([str(appimage_tool('appimagetool')),'--no-appstream','--runtime-file',str(appimage_tool('runtime')),
+            str(appdir),str(destination)],check=True,env=env,stdout=subprocess.DEVNULL)
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--bundle',type=Path,default=ROOT/'build/linux/x64/release/bundle')
+    parser.add_argument('--output',type=Path,default=ROOT/'.build/linux-release')
+    args=parser.parse_args()
+    if args.output.resolve().is_relative_to(args.bundle.resolve()):
+        parser.error('Output must be outside the input bundle')
+    if sys.platform!='linux': raise SystemExit('Package the Ubuntu-built release on Linux.')
+    require_files(args.bundle, ['LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES',
+        'GOZXING_LICENSE.txt', 'XERRORS_LICENSE.txt', 'data/flutter_assets/version.json'])
+    version=re.search(r'^version:\s*(\d+\.\d+\.\d+)\+(\d+)\s*$',(ROOT/'pubspec.yaml').read_text(),re.M)
+    if not version: raise SystemExit('Unsupported app version.')
+    # Packages take pubspec's version, so a stale build would ship under the new number.
+    built=json.loads((args.bundle/'data/flutter_assets/version.json').read_text())
+    if (built.get('version'),built.get('build_number'))!=version.groups():
+        raise SystemExit('Bundle version differs from pubspec.yaml: '+str(built.get('version'))+'+'+str(built.get('build_number')))
+    version='-'.join(version.groups())
+    for name in ('elarni','elarni-cli','elarni-core','lib/libelarni_domain.so','lib/libflutter_linux_gtk.so','lib/libapp.so'):
+        path=args.bundle/name
+        with path.open('rb') as source: header=source.read(20)
+        if header[:4]!=b'\x7fELF' or header[4:6]!=b'\x02\x01' or header[18:20]!=b'\x3e\x00':
+            raise SystemExit('Expected Linux x86-64 ELF: '+name)
+    if not (args.bundle/'data/flutter_assets/AssetManifest.bin').is_file(): raise SystemExit('Missing Flutter assets.')
+    prepare_output(args.output)
+    with tempfile.TemporaryDirectory(prefix='elarni-package-') as temporary:
+        stage=Path(temporary)
+        portable=stage/('elarni-'+version+'-linux-x64')
+        shutil.copytree(args.bundle,portable,symlinks=True)
+        for name in ('com.elarni.Elarni.desktop','install-desktop','README.md','HEADLESS.md','elarni.service'):
+            shutil.copy2(ROOT/'linux'/name,portable/name)
+        shutil.copy2(ROOT/'docs/HEADLESS.md',portable/'HEADLESS-CONTROL.md')
+        (portable/'HEADLESS.md').write_text((portable/'HEADLESS.md').read_text().replace('../docs/HEADLESS.md','HEADLESS-CONTROL.md'))
+        (portable/'HEADLESS-CONTROL.md').write_text((portable/'HEADLESS-CONTROL.md').read_text().replace('../linux/HEADLESS.md','HEADLESS.md').replace('linux/HEADLESS.md','HEADLESS.md'))
+        (portable/'install-desktop').chmod(0o755)
+        archive=args.output/(portable.name+'.tar.gz')
+        with tarfile.open(archive,'w:gz') as output: output.add(portable,arcname=portable.name,filter=root_owned)
+        package=stage/'deb';app=package/'opt/elarni'
+        shutil.copytree(args.bundle,app,symlinks=True)
+        doc=package/'usr/share/doc/elarni';doc.mkdir(parents=True)
+        shutil.copy2(ROOT/'linux/README.md',doc/'README.md')
+        shutil.copy2(ROOT/'linux/HEADLESS.md',doc/'HEADLESS.md')
+        shutil.copy2(ROOT/'docs/HEADLESS.md',doc/'HEADLESS-CONTROL.md')
+        (doc/'HEADLESS.md').write_text((doc/'HEADLESS.md').read_text().replace('../docs/HEADLESS.md','HEADLESS-CONTROL.md'))
+        (doc/'HEADLESS-CONTROL.md').write_text((doc/'HEADLESS-CONTROL.md').read_text().replace('../linux/HEADLESS.md','HEADLESS.md').replace('linux/HEADLESS.md','HEADLESS.md'))
+        units=package/'lib/systemd/system';units.mkdir(parents=True)
+        shutil.copy2(ROOT/'linux/elarni.service',units/'elarni.service')
+        applications=package/'usr/share/applications';applications.mkdir(parents=True)
+        shutil.copy2(ROOT/'linux/com.elarni.Elarni.desktop',applications/'com.elarni.Elarni.desktop')
+        icons=package/'usr/share/icons/hicolor/512x512/apps';icons.mkdir(parents=True)
+        shutil.copy2(ROOT/'linux/elarni.png',icons/'com.elarni.Elarni.png')
+        binary=package/'usr/bin';binary.mkdir(parents=True)
+        (binary/'elarni').symlink_to('/opt/elarni/elarni')
+        (binary/'elarni-cli').symlink_to('/opt/elarni/elarni-cli')
+        control=package/'DEBIAN';control.mkdir()
+        size=sum(path.stat().st_size for path in package.rglob('*') if path.is_file())//1024
+        (control/'control').write_text(f'Package: elarni\nVersion: {version}\nArchitecture: amd64\n'
+            f'Maintainer: Elarni contributors\nSection: net\nPriority: optional\nInstalled-Size: {size}\n'
+            f'Depends: {DEPENDENCIES}\nRecommends: gnome-keyring, policykit-1-gnome\n'
+            'Description: Elarni desktop proxy and VPN client\n'
+            ' Shared desktop interface, encrypted profile storage and system VPN routing.\n')
+        refresh=('#!/bin/sh\nset -e\nif command -v update-desktop-database >/dev/null 2>&1; then\n'
+            '  update-desktop-database /usr/share/applications\nfi\n'
+            'if command -v gtk-update-icon-cache >/dev/null 2>&1; then\n'
+            '  gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor\nfi\n'
+            'if [ -d /run/systemd/system ]; then\n  systemctl daemon-reload\n')
+        scripts={
+            # A running root daemon must not keep serving replaced files after an upgrade.
+            'postinst':refresh+'  if [ "$1" = configure ]; then systemctl try-restart elarni.service || true; fi\nfi\n',
+            'postrm':refresh+'fi\n',
+            'prerm':'#!/bin/sh\nset -e\nif [ "$1" = remove ] && [ -d /run/systemd/system ]; then\n'
+                '  systemctl stop elarni.service || true\nfi\n',
+        }
+        for script,body in scripts.items():
+            path=control/script
+            path.write_text(body)
+            path.chmod(0o755)
+        # --root-owner-group fixes owners only; pkexec runs /opt/elarni/elarni-core as root.
+        for path in (package,*package.rglob('*')):
+            if not path.is_symlink(): path.chmod(path.stat().st_mode&~0o022)
+        deb=args.output/('elarni_'+version+'_amd64.deb')
+        subprocess.run(['dpkg-deb','--build','--root-owner-group',str(package),str(deb)],check=True)
+        subprocess.run(['desktop-file-validate',str(applications/'com.elarni.Elarni.desktop')],check=True)
+        appimage=args.output/('Elarni-'+version+'-x86_64.AppImage')
+        build_appimage(args.bundle,appimage)
+        write_manifest(args.output, [deb, appimage, archive], 'linux-x64', 'unsigned-candidate')
+        print(json.dumps({'deb':str(deb.resolve()),'appimage':str(appimage.resolve()),'portable':str(archive.resolve()),
+            'version':version}),flush=True)
+
+if __name__=='__main__': main()

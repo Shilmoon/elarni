@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+# Follow symlinks (for example one on PATH) back into the app bundle.
+source=$0
+while [ -L "$source" ]; do
+  directory=$(CDPATH= cd -P -- "$(dirname -- "$source")" && pwd)
+  source=$(readlink -- "$source")
+  case $source in /*) ;; *) source=$directory/$source ;; esac
+done
+directory=$(CDPATH= cd -P -- "$(dirname -- "$source")" && pwd)
+exec "$directory/../Helpers/ElarniCLI.app/Contents/MacOS/elarni-cli" "$@"

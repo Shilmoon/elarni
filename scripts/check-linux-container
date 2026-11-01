@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Run the Linux CI checks, or any command, in a warm Ubuntu 22.04 container.
+
+The image keeps the apt packages, and named volumes keep the toolchains, the
+Go, Cargo and pub caches and an incremental copy of the working tree, so a
+run only rebuilds what changed. Uncommitted and untracked files are included.
+New check reports, and anything the command writes to /out, are copied to
+.build/check-results here. The container is capped at 8 GB of memory (ELARNI_LINUX_MEMORY overrides it). With
+--host it runs on that SSH host's Docker instead. Without the docker group,
+Docker is reached through passwordless sudo, here or on the host.
+"""
+import argparse
+import hashlib
+import io
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import tarfile
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / 'scripts'))
+from snapshot import git, snapshot
+DOCKERFILE = r"""FROM ubuntu:22.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl git xz-utils unzip zip jq python3 file dpkg-dev build-essential iputils-ping \
+    libunwind-dev clang cmake ninja-build pkg-config libgtk-3-dev libstdc++-12-dev libayatana-appindicator3-dev \
+    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev desktop-file-utils openjdk-17-jdk-headless \
+ && rm -rf /var/lib/apt/lists/* && ln -s /usr/bin/python3 /usr/local/bin/python \
+ && git config --system --add safe.directory '*'
+RUN curl -fsSL https://mise.run | MISE_VERSION=v2026.9.8 MISE_INSTALL_PATH=/usr/local/bin/mise sh
+"""
+# The release volumes already hold the pinned toolchains; a fresh one downloads them once.
+VOLUMES = {
+    'elarni-release-mise': '/root/.local/share/mise',
+    'elarni-release-rustup': '/root/.rustup',
+    'elarni-release-cargo': '/root/.cargo',
+    'elarni-release-go': '/root/go',
+    'elarni-release-pub': '/root/.pub-cache',
+    'elarni-linux-gocache': '/root/.cache/go-build',
+    'elarni-android-sdk': '/opt/android-sdk',
+    'elarni-android-gradle': '/root/.gradle',
+    'elarni-android-avd': '/root/.android',
+    'elarni-linux-src': '/src',
+}
+PREPARE = r"""set -eu
+export PATH="/root/.local/share/mise/shims:/root/.cargo/bin:$PATH"
+cd /src
+[ -d .git ] || git init -q
+git fetch -q --no-tags /repo.git "$ELARNI_COMMIT"
+git checkout -q -f --detach "$ELARNI_COMMIT"
+# Untracked leftovers go; ignored build outputs stay for incremental builds.
+git clean -fdq
+mise trust mise.toml > /dev/null
+mise install
+[ -x /root/.cargo/bin/rustup ] || curl --proto '=https' -sSf https://sh.rustup.rs | sh -s -- -y -q --no-modify-path --default-toolchain none --profile minimal
+rustup show active-toolchain > /dev/null 2>&1 || rustup show > /dev/null
+flutter pub get > /dev/null
+touch /tmp/started
+set +e
+"$@"
+status=$?
+find .build/check-results -mindepth 1 -maxdepth 1 -newer /tmp/started -exec cp -r {} /out/ \; 2>/dev/null
+chown -R "$(stat -c %u:%g /out)" /out 2>/dev/null  # a remote host's user must be able to clear them
+exit $status
+"""
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument('--host', default=os.environ.get('ELARNI_LINUX_HOST'),
+                        help='user@address of an SSH host whose Docker runs the container (default: ELARNI_LINUX_HOST, else local Docker)')
+    parser.add_argument('command', nargs=argparse.REMAINDER,
+                        help='command to run in the checkout (default: python scripts/check-changed --all)')
+    arguments = parser.parse_args()
+    host, command = arguments.host, arguments.command
+    if command[:1] == ['--']:
+        command = command[1:]
+    command = command or ['python', 'scripts/check-changed', '--all']
+
+    # A user outside the docker group can still reach it through passwordless sudo (the server's CI runner does).
+    probe = ['ssh', host, 'docker info'] if host else ['docker', 'info']
+    sudo = ['sudo', '-n'] if subprocess.run(probe, capture_output=True).returncode else []
+
+    def docker(*args, **options):
+        return subprocess.run(['ssh', host, shlex.join([*sudo, 'docker', *args])] if host else [*sudo, 'docker', *args], **options)
+
+    image = 'elarni-linux-ci:' + hashlib.sha256(DOCKERFILE.encode()).hexdigest()[:12]
+    if docker('image', 'inspect', image, capture_output=True).returncode:
+        print(f'Building {image} once (apt packages and mise)...', flush=True)
+        docker('build', '-t', image, '-', input=DOCKERFILE.encode(), check=True)
+    commit = snapshot()
+    results = ROOT / '.build/check-results'
+    results.mkdir(parents=True, exist_ok=True)
+    if host:
+        # The host keeps a bare copy of the history, so each run pushes only new objects.
+        # Each run gets its own results directory: a run refused by the name clash below must not clear another's.
+        home, run = subprocess.run(['ssh', host, 'mkdir -p elarni-linux && git init -q --bare elarni-linux/repo.git && '
+                                    'pwd && mktemp -d elarni-linux/results.XXXXXX'],
+                                   check=True, capture_output=True, text=True).stdout.splitlines()
+        subprocess.run(['git', '-C', str(ROOT), 'push', '-q', f'{host}:elarni-linux/repo.git',
+                        f'{commit}:refs/snapshots/{commit}'], check=True)
+        repository, output = f'{home}/elarni-linux/repo.git', f'{home}/{run}'
+    else:
+        repository, output = (ROOT / git('rev-parse', '--git-common-dir')).resolve(), results
+    mounts = [f'--mount=type=bind,source={repository},target=/repo.git,readonly',
+              f'--mount=type=bind,source={output},target=/out']
+    mounts += [f'--volume={name}:{path}' for name, path in VOLUMES.items()]
+    # On a shared host, running out of memory kills a check instead of the host's own services.
+    # shortcut: 8 GB without swap by default, sized for a host with ~11 GB free; the Android emulators need more.
+    memory = os.environ.get('ELARNI_LINUX_MEMORY', '8g')
+    limits = [f'--memory={memory}', f'--memory-swap={memory}']
+    # The Android emulators need KVM; a host without it still runs every other check.
+    if subprocess.run(['ssh', host, 'test -c /dev/kvm'] if host else ['test', '-c', '/dev/kvm']).returncode == 0:
+        limits.append('--device=/dev/kvm')
+    # The API 36 emulator's modem connects to ::1, which QEMU resolves with AI_ADDRCONFIG: that needs IPv6 on a
+    # non-loopback interface (here link-local only), or the emulator has no mobile data. Docker Engine 25 or later.
+    limits.append('--network=name=bridge,driver-opt=com.docker.network.endpoint.sysctls=net.ipv6.conf.IFNAME.disable_ipv6=0')
+    # A fixed name refuses a second run that would share the checkout volume.
+    code = docker('run', '--rm', '--init', '--name', 'elarni-linux-container', *mounts, *limits,
+                  '--env', f'ELARNI_COMMIT={commit}', '--env', 'MISE_YES=1', '--env', 'GOFLAGS=-count=1', '--env', 'ANDROID_HOME=/opt/android-sdk',
+                  image, 'bash', '-c', PREPARE, 'bash', *command).returncode
+    if host:
+        archive = subprocess.run(['ssh', host, f'tar -C {run} -cf - . && rm -rf {run}'], check=True, capture_output=True).stdout
+        with tarfile.open(fileobj=io.BytesIO(archive)) as reports:
+            reports.extractall(results, filter='data')
+    print(f'Linux container exited {code}; new check reports are in {results}', flush=True)
+    return code
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

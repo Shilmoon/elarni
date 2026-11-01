@@ -1,0 +1,36 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Connect ${applicationName}" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключить ${applicationName}"
+          }
+        }
+      }
+    },
+    "Disconnect ${applicationName}" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключить ${applicationName}"
+          }
+        }
+      }
+    },
+    "Toggle ${applicationName}" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переключить ${applicationName}"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

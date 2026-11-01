@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$ROOT"
+if [ -z "${ELARNI_CHECK_REPORT:-}" ]; then
+  exec python3 scripts/check_report.py -- sh "$ROOT/scripts/check-core" "$@"
+fi
+mkdir -p .build/checks
+swiftc -swift-version 5 -D DEBUG -parse-as-library \
+  macos/ElarniPacketTunnel/ProviderLifecycleCoordinator.swift \
+  macos/ElarniPacketTunnel/ProviderLifecycleRuntime.swift \
+  macos/ElarniPacketTunnel/ProviderSwitchCancellation.swift \
+  macos/ElarniPacketTunnel/ProviderDebugFaults.swift \
+  macos/ElarniPacketTunnel/ProviderBoundaryFailureLatch.swift \
+  macos/ElarniPacketTunnel/ProviderBoundaryEvidence.swift \
+  macos/Checks/DiagnosticLogStub.swift \
+  macos/ElarniPacketTunnel/KeychainSecretStore.swift \
+  macos/ElarniPacketTunnel/TunnelPlan.swift \
+  macos/ElarniPacketTunnel/TunnelSettingsFactory.swift \
+  macos/ElarniPacketTunnel/TunnelComponents.swift \
+  macos/Runner/ConnectionAutomation.swift \
+  macos/Runner/TunnelCommandCoordinator.swift \
+  macos/Checks/CoreChecks.swift -o .build/checks/core
+.build/checks/core

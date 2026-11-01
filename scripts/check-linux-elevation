@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Verify real pkexec denial and VPN ownership using a private polkit/system bus."""
+import argparse
+import json
+import os
+from pathlib import Path
+import pwd
+import runpy
+import subprocess
+import sys
+import time
+
+ROOT=Path(__file__).resolve().parent.parent
+vpn=runpy.run_path(str(ROOT/'scripts/check-linux-vpn'))
+run=vpn['run']
+Core=vpn['Core']
+
+
+def isolated(core, user, protocol='vless', appimage=None):
+    vpn['setup_isolation']()
+    account=pwd.getpwnam(user)
+    assert account.pw_uid!=0,'The launcher must be unelevated'
+    # A root headless service owns this private runtime directory. Desktop
+    # physical probes and their elevated broker must coexist without opening it.
+    headless=Path('/run/elarni');headless.mkdir(mode=0o700)
+    sentinel=headless/'headless-fixture';sentinel.write_text('private headless state')
+    # Both policy directories and the bus socket are private mount-namespace
+    # fixtures. No authorization rule is installed on the host.
+    policies=Path('/run/elarni-polkit');policies.mkdir()
+    for name in ('10-vendor.d','20-org.d','30-site.d','50-local.d','90-mandatory.d'):
+        (policies/name).mkdir()
+    for target in ('/etc/polkit-1/localauthority','/var/lib/polkit-1/localauthority'):
+        run('mount','--bind',str(policies),target)
+    Path('/run/dbus').mkdir()
+    bus_config=Path('/run/elarni-dbus.conf')
+    bus_config.write_text('<busconfig><type>system</type><listen>unix:path=/run/dbus/system_bus_socket</listen>'
+        '<policy context="default"><allow user="*"/><allow own="*"/>'
+        '<allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>')
+    children=[]
+    def spawn(command):
+        child=subprocess.Popen(command,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        children.append(child);return child
+    spawn(['dbus-daemon','--config-file='+str(bus_config),'--nofork'])
+    os.environ['DBUS_SYSTEM_BUS_ADDRESS']='unix:path=/run/dbus/system_bus_socket'
+    for _ in range(100):
+        if Path('/run/dbus/system_bus_socket').exists():break
+        time.sleep(.05)
+    else:raise AssertionError('Private system bus did not start')
+    env=os.environ.copy()
+    for name in ('HOME','XDG_DATA_HOME','XDG_CACHE_HOME','XDG_CONFIG_HOME','XDG_RUNTIME_DIR'):
+        directory=Path('/run/elarni-user')/name
+        directory.mkdir(parents=True,mode=0o700);os.chown(directory,account.pw_uid,account.pw_gid)
+        env[name]=str(directory)
+    client=core
+    if appimage:
+        # The user's FUSE mount, which root cannot open; the peer keeps the root-readable core.
+        mounted=subprocess.Popen([str(appimage),'--appimage-mount'],stdout=subprocess.PIPE,text=True,
+                                 user=account.pw_uid,group=account.pw_gid,extra_groups=[],env=env)
+        children.append(mounted)
+        client=Path(mounted.stdout.readline().strip())/'elarni-core'
+    peer=subprocess.Popen(['ip','netns','exec','elarni-peer',sys.executable,str(ROOT/'scripts/check-linux-vpn'),
+                           '--peer','--core',str(core),'--protocol',protocol],stdin=subprocess.PIPE,stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE,text=True)
+    children.append(peer)
+    owners=[]
+    try:
+        initial=json.loads(peer.stdout.readline())
+        assert initial.get('ready'),'Controlled peer did not start'
+        config={'inbounds':[{'protocol':'tun','port':0},{'protocol':'socks','listen':'127.0.0.1','port':18090}],
+                'outbounds':[{'protocol':'vless','settings':{'vnext':[{'address':vpn['PEER4'],'port':18080,
+                    'users':[{'id':vpn['USER_ID'],'encryption':'none'}]}]}}],
+                'dns':{'servers':[{'address':vpn['PEER4'],'port':15353}]}}
+        if protocol.startswith('tuic-'):config['outbounds'][0]=initial['outbound']
+        print('Elevation protocol: '+protocol,flush=True)
+        request={'configJSON':json.dumps(config),'reuseSession':True,
+                 'routePolicy':{'includedRoutes':[vpn['TARGET4']+'/32',vpn['TARGET6']+'/128']}}
+        probe=Core(client,user=account.pw_uid,group=account.pw_gid,env=env);owners.append(probe)
+        assert probe.request('pingEndpoint',{'address':vpn['PEER4'],'port':18080,'timeout':2})['delay']>=0
+        probe.close()
+        for result in ('no','yes'):
+            policy=policies/'50-local.d/elarni-fixture.pkla'
+            policy.write_text('[Elarni isolated acceptance]\nIdentity=unix-user:'+user+
+                '\nAction=org.freedesktop.policykit.exec\nResultAny='+result+
+                '\nResultInactive='+result+'\nResultActive='+result+'\n')
+            authority=spawn(['/usr/libexec/polkitd','--no-debug'])
+            for _ in range(100):
+                ready=subprocess.run(['gdbus','call','--system','--dest','org.freedesktop.DBus',
+                    '--object-path','/org/freedesktop/DBus','--method','org.freedesktop.DBus.NameHasOwner',
+                    'org.freedesktop.PolicyKit1'],capture_output=True,text=True)
+                if ready.returncode==0 and 'true' in ready.stdout:break
+                if authority.poll() is not None:raise AssertionError('Private polkit daemon exited')
+                time.sleep(.05)
+            else:raise AssertionError('Private polkit daemon did not register')
+            owner=Core(client,user=account.pw_uid,group=account.pw_gid,env=env);owners.append(owner)
+            status=Path('/proc/'+str(owner.process.pid)+'/status').read_text()
+            assert 'Uid:\t'+str(account.pw_uid)+'\t' in status,'Launcher retained root'
+            assert 'Gid:\t'+str(account.pw_gid)+'\t' in status,'Launcher retained root group'
+            if result=='no':
+                owner.send('runVPN',request)
+                reply=owner.replies.get(timeout=15)
+                assert reply.get('success') is False and reply.get('error')=='elevation_denied',reply
+                owner.close();vpn['wait_clean']()
+                print('elevation-denied: passed',flush=True)
+            else:
+                ready=owner.request('runVPN',request)
+                status=Path('/proc/'+str(ready['helperPid'])+'/status').read_text()
+                assert 'Uid:\t0\t0\t0\t0' in status,'Supervisor was not elevated'
+                if appimage:
+                    helper=os.readlink('/proc/'+str(ready['helperPid'])+'/exe')
+                    assert helper.startswith('/opt/elarni-vpn-helper/'),'Supervisor did not start the installed copy: '+helper
+                    assert not list(Path(env['XDG_CACHE_HOME']).glob('elarni-installer-*')),'Staged installer was left'
+                probe=Core(client,user=account.pw_uid,group=account.pw_gid,env=env);owners.append(probe)
+                assert probe.request('pingEndpoint',{'address':vpn['PEER4'],'port':18080,'timeout':2})['delay']>=0
+                probe.close()
+                assert headless.stat().st_mode & 0o777 == 0o700,'Broker exposed private headless directory'
+                assert sentinel.read_text()=='private headless state'
+                for address in (vpn['TARGET4'],vpn['TARGET6']):
+                    vpn['check_http'](address);vpn['check_udp'](address)
+                for kind in (1,28):vpn['check_dns']('127.0.0.1',kind)
+                owner.request('stopVPN',{});vpn['wait_clean']()
+                again=owner.request('runVPN',request)
+                assert ready['helperPid']==again['helperPid'],'Reconnect did not reuse elevated owner'
+                for address in (vpn['TARGET4'],vpn['TARGET6']):
+                    vpn['check_http'](address);vpn['check_udp'](address)
+                for kind in (1,28):vpn['check_dns']('127.0.0.1',kind)
+                owner.close();vpn['wait_clean']()
+                assert not Path('/proc/'+str(ready['helperPid'])).exists(),'Privileged owner survived exit'
+                print('elevation-success-traffic-reconnect-cleanup: passed',flush=True)
+            authority.kill();authority.wait(timeout=5)
+        print(json.dumps({'passed':2,'failed':0,'skipped':0}),flush=True)
+    finally:
+        for owner in reversed(owners):owner.close()
+        for child in reversed(children):
+            if child.poll() is None:
+                child.terminate()
+                try:child.wait(timeout=5)
+                except subprocess.TimeoutExpired:child.kill();child.wait(timeout=3)
+
+
+if __name__=='__main__':
+    from check_report import record_check
+    record_check(ROOT)
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--core',type=Path,default=ROOT/'build/linux/x64/release/bundle/elarni-core')
+    parser.add_argument('--user',required=True)
+    parser.add_argument('--protocol',choices=['vless','tuic-native','tuic-quic'],default='vless')
+    parser.add_argument('--appimage',type=Path,help='run the user side from this AppImage (needs FUSE)')
+    parser.add_argument('--isolated',action='store_true',help=argparse.SUPPRESS)
+    args=parser.parse_args()
+    if args.isolated:isolated(args.core,args.user,args.protocol,args.appimage)
+    else:
+        if sys.platform!='linux' or os.geteuid()!=0:raise SystemExit('Run with sudo on the disposable Linux test machine.')
+        if not args.core.is_file():raise SystemExit('Build the Linux release first.')
+        if args.appimage and not args.appimage.is_file():raise SystemExit('Package the AppImage first.')
+        os.environ['ELARNI_ORIGINAL_NETNS']=str(os.stat('/proc/self/ns/net').st_ino)
+        os.execvp('unshare',['unshare','--mount','--net','--pid','--fork','--mount-proc',sys.executable,
+                           str(Path(__file__).resolve()),'--isolated',*sys.argv[1:]])

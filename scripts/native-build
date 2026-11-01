@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Dependency guard for development native libraries used by Xcode."""
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import time
+
+
+TREES = {'rust': ('native', 'Vendor/tun2proxy'),
+         'go': ('Vendor/libXray', 'Vendor/Xray-core')}
+FILES = {'rust': ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'scripts/build-rust-macos.sh'),
+         'go': ('go.work', 'go.work.sum', 'scripts/build-libxray-macos.sh')}
+EXCLUDED = {'.git', '.build', 'build', 'target', 'artifacts', 'Evidence', '.toolchains',
+            '__pycache__', 'LibXray.xcframework', 'apple_xcframework'}
+
+
+def fingerprint(root, kind, identity):
+    paths = [root / name for name in (*FILES[kind], 'scripts/native-build')]
+    for tree in TREES[kind]:
+        for directory, dirs, files in os.walk(root / tree, followlinks=False):
+            dirs[:] = sorted(d for d in dirs if d not in EXCLUDED)
+            if any((Path(directory) / d).is_symlink() for d in dirs):
+                raise RuntimeError('symlinked native directory needs explicit dependency coverage')
+            for name in sorted(files):
+                path = Path(directory) / name
+                if name in {'.dockerignore', '.gitignore', '.DS_Store'}:
+                    continue
+                # Local TLS fixture files are not inputs to the cert package.
+                if path.relative_to(root).as_posix() in {
+                    'Vendor/Xray-core/common/protocol/tls/cert/ca.key',
+                    'Vendor/Xray-core/common/protocol/tls/cert/ca.crt',
+                }:
+                    continue
+                if path.is_symlink():
+                    raise RuntimeError('symlinked native input needs explicit dependency coverage')
+                if name.startswith('.env') or path.suffix in {'.key', '.pem', '.p12', '.token'}:
+                    raise RuntimeError('private material cannot be a native cache input')
+                paths.append(path)
+    # Cargo configuration can alter profiles, flags, targets, and dependency sources.
+    for name in ('.cargo/config', '.cargo/config.toml') if kind == 'rust' else ():
+        path = root / name
+        if path.exists():
+            # Do not read potentially credential-bearing configuration; defer to Cargo.
+            return None
+    value = hashlib.sha256(identity.encode())
+    for path in sorted(set(paths)):
+        data = path.read_bytes()
+        relative = str(path.relative_to(root)).encode()
+        value.update(len(relative).to_bytes(8, 'big') + relative)
+        value.update(len(data).to_bytes(8, 'big') + data)
+    return value.hexdigest()
+
+
+def output_state(paths):
+    try:
+        return [[str(path), path.stat().st_ino, path.stat().st_size, path.stat().st_mtime_ns]
+                for path in paths if path.is_file()] if all(path.is_file() for path in paths) else None
+    except FileNotFoundError:
+        return None
+
+
+def guarded_build(root, kind, identity, outputs, command, *, reusable=True):
+    cache = root / '.build/native-inputs'
+    cache.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    with (cache / (kind + '.lock')).open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError('native build already running; retry when it finishes') from None
+        key = fingerprint(root, kind, identity)
+        receipt = cache / (kind + '.json')
+        try:
+            previous = json.loads(receipt.read_text())
+        except (FileNotFoundError, ValueError):
+            previous = {}
+        current = output_state(outputs)
+        hit = reusable and key is not None and current is not None and previous == {'inputs': key, 'outputs': current}
+        if not hit:
+            subprocess.run(command, cwd=root, check=True)
+            if fingerprint(root, kind, identity) != key:
+                raise RuntimeError('native inputs changed during build; rerun before using candidate')
+            current = output_state(outputs)
+            if current is None:
+                raise RuntimeError('native build did not produce all declared outputs')
+            with tempfile.NamedTemporaryFile(mode='w', dir=cache, delete=False) as pending:
+                json.dump({'inputs': key, 'outputs': current}, pending)
+            Path(pending.name).replace(receipt)
+    print(json.dumps({'native': kind, 'cache': 'hit' if hit else 'miss',
+                      'seconds': round(time.monotonic() - started, 4)}), flush=True)
+    return hit
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('kind', choices=TREES)
+    parser.add_argument('--release', action='store_true', help='release-equivalent development outputs')
+    parser.add_argument('--diagnostics', action='store_true', help='separate development Go flight recorder outputs')
+    args = parser.parse_args()
+    if args.diagnostics and (args.release or args.kind != 'go'):
+        parser.error('diagnostics is only supported for development Go builds')
+    root = Path(__file__).resolve().parents[1]
+    def query(command, env=None):
+        return subprocess.check_output(command, cwd=root, env=env, text=True, timeout=30).strip()
+    identity = [args.release, args.diagnostics, query(['xcrun', '--sdk', 'macosx', '--show-sdk-path']),
+                query(['xcrun', '--sdk', 'macosx', '--show-sdk-version']),
+                query(['xcrun', 'clang', '--version'])]
+    if args.kind == 'rust':
+        identity += [query(['rustc', '-vV']), query(['cargo', '--version']),
+                     query([str(root / '.toolchains/cbindgen/bin/cbindgen'), '--version'])]
+        command = ['sh', 'scripts/build-rust-macos.sh', '--dev-release' if args.release else '--dev']
+        outputs = [root / name for name in ('include/elarni_ffi.h', 'include/elarni_packet_bridge.h',
+                   '.build/rust-macos/current/libelarni_domain.a', '.build/rust-macos/current/libelarni_packet_bridge.a')]
+        cargo_home = Path(os.environ.get('CARGO_HOME', Path.home() / '.cargo'))
+        external_config = any((base / name).exists() for base in [cargo_home, *[p / '.cargo' for p in root.parents]]
+                              for name in ('config', 'config.toml'))
+    else:
+        go = os.environ.get('ELARNI_GO') or str(root / '.toolchains/go/bin/go')
+        go_env = dict(os.environ, GOWORK=str(root / 'go.work'),
+                      GOTOOLCHAIN='local' if os.environ.get('ELARNI_GO') else 'auto')
+        identity += [query([go, 'version'], env=go_env)]
+        command = ['sh', 'scripts/build-libxray-macos.sh', '--diagnostics' if args.diagnostics else '--dev']
+        output_dir = '.build/libxray-macos-arm64' + ('-diagnostics' if args.diagnostics else '')
+        outputs = [root / output_dir / name for name in ('libXray.a', 'libXray.h', 'elarni-core')]
+        goenv = query([go, 'env', 'GOENV'], env=go_env)
+        external_config = goenv != 'off' and Path(goenv).is_file()
+    flags = {'CC', 'CXX', 'CFLAGS', 'CXXFLAGS', 'LDFLAGS', 'RUSTFLAGS', 'CARGO_INCREMENTAL',
+             'CGO_CFLAGS', 'CGO_CXXFLAGS', 'CGO_LDFLAGS', 'GOFLAGS'}
+    identity.append({name: os.environ[name] for name in sorted(flags) if name in os.environ})
+    identity.append(os.environ.get('ELARNI_RECORDING') == '1')
+    # Unknown compiler overrides invalidate reuse without reading or retaining their values.
+    overrides = any(name.startswith(('CARGO_', 'RUST', 'CGO_', 'GO', 'CC_', 'CXX_'))
+                    for name in os.environ if name not in flags)
+    guarded_build(root, args.kind, json.dumps(identity), outputs, command,
+                  reusable=not external_config and not overrides)
+
+
+if __name__ == '__main__':
+    main()

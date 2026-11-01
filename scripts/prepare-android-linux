@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Install the pinned Android build tools on Linux, and with --emulators the acceptance AVDs.
+
+CI runs it in the check-linux-container container, whose volumes keep the SDK
+($ANDROID_HOME), the AVDs and the checkout's .build, so later runs only check.
+--emulators also clears the AVDs' locks: run it only where no emulator is running.
+"""
+import argparse
+import hashlib
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = 'https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip'
+TOOLS_SHA256 = '4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583'
+PACKAGES = ['platforms;android-37.0', 'build-tools;36.0.0', 'platform-tools', 'ndk;28.2.13676358']
+MOBILE = 'v0.0.0-20260709172247-6129f5bee9d5'  # golang.org/x/mobile in Vendor/libXray/go.mod
+# x86_64 twins of the Mac's arm64 AVDs (medium_phone, 4 cores) and their RAM. With 2 GB the API 36 16 KB-page guest's
+# low-memory killer took the foreground app under test right after boot.
+AVDS = {'Elarni_API_30': ('system-images;android-30;google_apis;x86_64', '2G'),
+        'Elarni_API_36_16K': ('system-images;android-36;google_apis_ps16k;x86_64', '3G')}
+HARDWARE = {'hw.cpu.ncore': '4', 'hw.keyboard': 'no', 'hw.gpu.enabled': 'no', 'disk.dataPartition.size': '10G'}
+
+
+def run(*command, **options):
+    subprocess.run([str(value) for value in command], check=True, cwd=ROOT, **options)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument('--emulators', action='store_true', help='also install the emulator, its images and the AVDs')
+    arguments = parser.parse_args()
+    sdk = Path(os.environ['ANDROID_HOME'])
+    sdkmanager = sdk / 'cmdline-tools/latest/bin/sdkmanager'
+    if not sdkmanager.is_file():
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / 'tools.zip'
+            run('curl', '-fsSL', '-o', archive, TOOLS)
+            if hashlib.sha256(archive.read_bytes()).hexdigest() != TOOLS_SHA256:
+                sys.exit(f'{TOOLS} does not match its published SHA-256')
+            # unzip keeps the tools' executable bits, which zipfile drops.
+            run('unzip', '-q', archive, '-d', temporary)
+            (sdk / 'cmdline-tools').mkdir(parents=True, exist_ok=True)
+            shutil.move(Path(temporary) / 'cmdline-tools', sdk / 'cmdline-tools/latest')
+    packages = PACKAGES + (['emulator', *(image for image, _ in AVDS.values())] if arguments.emulators else [])
+    run(sdkmanager, '--licenses', input=b'y\n' * 20, stdout=subprocess.DEVNULL)
+    run(sdkmanager, '--install', *packages, stdout=subprocess.DEVNULL)
+    # The emulators run x86_64 builds (scripts/check-android).
+    run('rustup', 'target', 'add', 'aarch64-linux-android', *(['x86_64-linux-android'] if arguments.emulators else []))
+    # scripts/build-android-native finds gomobile here.
+    tools = ROOT / '.build/android-preparation/bin'
+    if not (tools / 'gomobile').is_file():
+        run('go', 'install', f'golang.org/x/mobile/cmd/gomobile@{MOBILE}', f'golang.org/x/mobile/cmd/gobind@{MOBILE}',
+            env=dict(os.environ, GOBIN=str(tools)))
+    if not arguments.emulators:
+        return
+    if not (ROOT / '.build/tuic/tools/sing-box').is_file():
+        run('go', 'install', '-tags=with_quic', 'github.com/sagernet/sing-box/cmd/sing-box@v1.14.0',
+            env=dict(os.environ, GOWORK='off', GOBIN=str(ROOT / '.build/tuic/tools')))
+    avds = Path(os.environ.get('ANDROID_AVD_HOME', Path.home() / '.android/avd'))
+    for name, (image, ram) in AVDS.items():
+        config = avds / f'{name}.avd/config.ini'
+        # A run killed with its container leaves locks that make the next boot wait out a pending snapshot and exit;
+        # no emulator can be running in a fresh container.
+        for lock in config.parent.glob('**/*.lock'):
+            shutil.rmtree(lock) if lock.is_dir() else lock.unlink()
+        if not (config.is_file() and image.replace(';', '/') in config.read_text()):
+            run(sdk / 'cmdline-tools/latest/bin/avdmanager', 'create', 'avd', '--force', '-n', name, '-k', image, '-d', 'medium_phone',
+                input=b'no\n', stdout=subprocess.DEVNULL)
+        settings = dict(line.split('=', 1) for line in config.read_text().splitlines() if '=' in line)
+        settings.update(HARDWARE, **{'hw.ramSize': ram})
+        config.write_text(''.join(f'{key}={value}\n' for key, value in settings.items()))
+
+
+if __name__ == '__main__':
+    main()

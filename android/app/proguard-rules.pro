@@ -1,0 +1,3 @@
+-keep class go.** { *; }
+-keep class libXray.** { *; }
+-keep class com.elarni.NativeBindings { *; }

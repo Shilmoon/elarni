@@ -1,0 +1,1 @@
+../../../../macos/Runner/SubscriptionFeedFetcher.swift

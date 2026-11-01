@@ -1,0 +1,32 @@
+language = "C"
+pragma_once = true
+include_guard = "ELARNI_FFI_H"
+documentation = true
+usize_is_size_t = true
+
+[parse]
+parse_deps = false
+
+[export]
+include = [
+  "ElarniBuffer",
+  "ElarniHandle",
+  "ElarniStatus",
+  "ELARNI_STATUS_OK",
+  "ELARNI_STATUS_INVALID_ARGUMENT",
+  "ELARNI_STATUS_UNSUPPORTED_VERSION",
+  "ELARNI_STATUS_REQUEST_TOO_LARGE",
+  "ELARNI_STATUS_RESPONSE_TOO_LARGE",
+  "ELARNI_STATUS_CANCELLED",
+  "ELARNI_STATUS_PARSE_ERROR",
+  "ELARNI_STATUS_COMPILE_ERROR",
+  "ELARNI_STATUS_PANIC",
+  "elarni_abi_version",
+  "elarni_schema_min",
+  "elarni_schema_max",
+  "elarni_handle_new",
+  "elarni_handle_free",
+  "elarni_cancel",
+  "elarni_buffer_free",
+  "elarni_request",
+]

@@ -1,0 +1,2 @@
+<!-- Launchers show the middle 72 of the 108 dp layer, so the full icon goes there, as on the iPhone. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android" android:drawable="@drawable/elarni_icon" android:inset="16.667%" />

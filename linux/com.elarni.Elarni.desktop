@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Elarni
+Comment=Proxy and VPN client
+Exec=elarni %u
+Icon=com.elarni.Elarni
+Terminal=false
+Categories=Network;
+StartupWMClass=com.elarni.Elarni
+MimeType=x-scheme-handler/elarni;x-scheme-handler/happ;x-scheme-handler/incy;x-scheme-handler/vless;x-scheme-handler/vmess;x-scheme-handler/trojan;x-scheme-handler/ss;x-scheme-handler/socks;x-scheme-handler/socks5;x-scheme-handler/hy2;x-scheme-handler/hysteria2;x-scheme-handler/tuic;x-scheme-handler/vpn;x-scheme-handler/wireguard;

@@ -1,0 +1,51 @@
+name: Bug report
+description: Something does not work as described
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove server addresses, subscription URLs, UUIDs and keys from everything you paste.
+        Report security problems privately instead; see SECURITY.md.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Windows, macOS, Linux desktop, Linux headless, iPhone, Android]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Elarni version
+      description: Shown in Settings under Versions.
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Connection mode
+      options: [System VPN, Local proxy, Not connected]
+  - type: input
+    id: protocol
+    attributes:
+      label: Protocol and transport
+      placeholder: e.g. VLESS REALITY over XHTTP
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or redacted diagnostics
+      description: Settings > Export diagnostics leaves out credentials, subscription URLs and destinations.
+      render: text

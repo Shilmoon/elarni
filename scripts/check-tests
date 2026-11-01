@@ -1,0 +1,64 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$root"
+# Windows ships a python3 Store stub that exits non-zero; take the first interpreter that runs.
+for elarni_python in python3 python; do "$elarni_python" -c '' 2>/dev/null && break; done
+if [ -z "${ELARNI_CHECK_REPORT:-}" ]; then
+  exec "$elarni_python" scripts/check_report.py -- sh "$root/scripts/check-tests" "$@"
+fi
+case "${1:-all}" in
+  go)
+    set -- ./Vendor/libXray/share ./Vendor/libXray/geo ./Vendor/libXray ./Vendor/libXray/xray ./Vendor/libXray/cmd/elarni-core ./Vendor/Xray-core/proxy/tun ./Vendor/Xray-core/proxy/wireguard ./Vendor/Xray-core/proxy/socks ./Vendor/Xray-core/infra/conf ./Vendor/Xray-core/transport/internet ./Vendor/Xray-core/transport/internet/websocket ./Vendor/Xray-core/transport/internet/splithttp ./Vendor/Xray-core/transport/internet/grpc ./Vendor/Xray-core/transport/internet/grpc/encoding ./Vendor/Xray-core/common/net ./Vendor/Xray-core/common/flightrecorder ./Vendor/Xray-core/common/buf ./Vendor/Xray-core/common/signal ./Vendor/Xray-core/common/mux ./Vendor/Xray-core/app/proxyman/inbound ./Vendor/Xray-core/app/proxyman/outbound ./Vendor/Xray-core/common/geodata ./Vendor/Xray-core/transport/internet/hysteria ./Vendor/Xray-core/proxy/tuic
+    go vet "$@"
+    go test "$@"
+    # Builds made with the connection recording option compile the collector.
+    set -- ./Vendor/Xray-core/common/flightrecorder ./Vendor/libXray ./Vendor/libXray/cmd/elarni-core
+    go vet -tags=elarni_recording "$@"
+    exec go test -tags=elarni_recording "$@"
+    ;;
+  rust)
+    cargo test --workspace --locked
+    # ipstack sits outside the workspace; its doctests need a TUN device crate.
+    exec cargo test --locked -p ipstack --lib
+    ;;
+  lint)
+    cargo fmt --all -- --check
+    cargo clippy --workspace --all-targets --locked -- -D warnings
+    unformatted=$(gofmt -l Vendor)
+    echo "$unformatted"
+    exec test -z "$unformatted"
+    ;;
+  race)
+    go test -race -count=1 -tags=elarni_recording ./Vendor/Xray-core/common/flightrecorder ./Vendor/libXray/cmd/elarni-core
+    exec go test -race -count=1 ./Vendor/Xray-core/common/flightrecorder ./Vendor/Xray-core/common/buf ./Vendor/Xray-core/common/signal ./Vendor/Xray-core/common/mux ./Vendor/Xray-core/app/proxyman/inbound ./Vendor/Xray-core/app/proxyman/outbound ./Vendor/Xray-core/transport/internet/hysteria ./Vendor/Xray-core/transport/internet/splithttp ./Vendor/Xray-core/transport/internet/grpc ./Vendor/Xray-core/proxy/tun ./Vendor/Xray-core/proxy/socks ./Vendor/libXray/cmd/elarni-core
+    ;;
+  swift)
+    sh scripts/check-core
+    sh scripts/check-subscriptions
+    sh scripts/check-macos-control
+    exec sh scripts/check-live-tunnel
+    ;;
+  flutter)
+    if [ -x .toolchains/flutter/bin/flutter ]; then
+      flutter=.toolchains/flutter/bin/flutter
+    else
+      flutter=$(command -v flutter)
+    fi
+    "$flutter" pub get --offline
+    "$flutter" analyze --no-pub
+    "$flutter" test --no-pub --reporter "${ELARNI_FLUTTER_REPORTER:-expanded}"
+    # The same tests again as a build made with the connection recording option.
+    exec "$flutter" test --no-pub --reporter "${ELARNI_FLUTTER_REPORTER:-expanded}" \
+      --dart-define=ELARNI_RECORDING=true --plain-name 'connection recording' \
+      test/elarni_app_test.dart test/headless_test.dart test/tunnel_channel_test.dart
+    ;;
+  all)
+    "$elarni_python" -m unittest discover -s scripts -p check_report_test.py -v
+    "$0" go
+    "$0" rust
+    "$0" swift
+    exec "$0" flutter
+    ;;
+  *) echo "usage: scripts/check-tests [go|rust|lint|race|swift|flutter|all]" >&2; exit 2 ;;
+esac

@@ -1,0 +1,39 @@
+#!/bin/sh
+# Real Swift method handler with injected fixtures; never loads OS VPN preferences.
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$root"
+if [ -z "${ELARNI_CHECK_REPORT:-}" ]; then
+  exec python3 scripts/check_report.py -- sh "$root/scripts/check-macos-control" "$@"
+fi
+python3 scripts/native-build rust --release
+python3 scripts/native-build go
+if [ -x .toolchains/flutter/bin/flutter ]; then
+  flutter_root="$root/.toolchains/flutter"
+else
+  flutter_root=$(python3 -c 'import pathlib,shutil; print(pathlib.Path(shutil.which("flutter")).resolve().parents[1])')
+fi
+framework="$flutter_root/bin/cache/artifacts/engine/darwin-x64/FlutterMacOS.xcframework/macos-arm64_x86_64"
+mkdir -p .build/checks
+swiftc -swift-version 5 -D DEBUG -D ELARNI_CONTROL_CHECKS -parse-as-library \
+  -import-objc-header macos/Runner/ElarniRunnerBridge.h \
+  -I .build/libxray-macos-arm64 -F "$framework" -framework FlutterMacOS \
+  -Xlinker -rpath -Xlinker "$framework" \
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker macos/Checks/NativeControlInfo.plist \
+  macos/Runner/AppDelegate.swift macos/Runner/TunnelMethodChannel.swift \
+  macos/Runner/TunnelMethodChannel+Manager.swift macos/Runner/TunnelMethodChannel+Probes.swift \
+  macos/Runner/TunnelMethodChannel+Settings.swift macos/Runner/TunnelMethodChannel+Automation.swift \
+  macos/Runner/TunnelCommandCoordinator.swift macos/Runner/ConnectionAutomation.swift \
+  macos/Runner/SubscriptionStore.swift macos/Runner/SubscriptionSafety.swift \
+  macos/Runner/RoutingStore.swift macos/Runner/SubscriptionFeedFetcher.swift \
+  macos/Runner/CatalogImportPanels.swift \
+  macos/Runner/ProfileTitle.swift macos/Runner/ProbeProcess.swift \
+  macos/ElarniPacketTunnel/ProviderDebugFaults.swift \
+  macos/ElarniPacketTunnel/DiagnosticLog.swift \
+  macos/Checks/NativeControlChecks.swift \
+  .build/libxray-macos-arm64/libXray.a .build/rust-macos/current/libelarni_domain.a \
+  -framework SystemConfiguration -lresolv -o .build/checks/native-control
+.build/checks/native-control
+"$flutter_root/bin/dart" compile exe macos/Checks/HeadlessTransportFixture.dart \
+  -o .build/checks/headless-sandbox-probe
+python3 macos/Checks/headless_sandbox_checks.py .build/checks/headless-sandbox-probe

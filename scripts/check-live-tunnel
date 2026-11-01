@@ -1,0 +1,36 @@
+#!/bin/sh
+# Real loopback-only VLESS and packet-bridge traffic. No VPN profile or credentials needed.
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$ROOT"
+if [ -z "${ELARNI_CHECK_REPORT:-}" ]; then
+  exec python3 scripts/check_report.py -- sh "$ROOT/scripts/check-live-tunnel" "$@"
+fi
+python3 scripts/native-build rust --release
+python3 scripts/native-build go
+mkdir -p .build/checks
+swiftc -swift-version 5 -parse-as-library \
+  macos/Runner/ProbeProcess.swift macos/Checks/ProbeChecks.swift \
+  -o .build/checks/probes
+.build/checks/probes .build/libxray-macos-arm64/elarni-core
+go test -v -tags=elarni_integration ./Vendor/libXray/share -run '^TestCompiledProvider' -count=1 -timeout=60s
+swiftc -swift-version 5 -parse-as-library \
+  -import-objc-header macos/ElarniPacketTunnel/ElarniNativeBridge.h \
+  -I .build/libxray-macos-arm64 -I include \
+  macos/ElarniPacketTunnel/ProviderLifecycleCoordinator.swift \
+  macos/ElarniPacketTunnel/ProviderLifecycleRuntime.swift \
+  macos/ElarniPacketTunnel/ProviderBoundaryFailureLatch.swift \
+  macos/ElarniPacketTunnel/ProviderBoundaryEvidence.swift \
+  macos/ElarniPacketTunnel/DiagnosticLog.swift \
+  macos/ElarniPacketTunnel/KeychainSecretStore.swift \
+  macos/ElarniPacketTunnel/TunnelPlan.swift \
+  macos/ElarniPacketTunnel/TunnelSettingsFactory.swift \
+  macos/ElarniPacketTunnel/TunnelComponents.swift \
+  macos/ElarniPacketTunnel/UtunDescriptorResolver.swift \
+  macos/ElarniPacketTunnel/NativeAdapters.swift \
+  macos/Checks/LiveTunnelChecks.swift \
+  .build/libxray-macos-arm64/libXray.a \
+  .build/rust-macos/current/libelarni_domain.a \
+  .build/rust-macos/current/libelarni_packet_bridge.a \
+  -framework SystemConfiguration -lresolv -o .build/checks/live-tunnel
+.build/checks/live-tunnel

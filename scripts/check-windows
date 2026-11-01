@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""Verify the Windows local-proxy flow on the current host, without a VPN."""
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+from check_report import record_check
+
+root = Path(__file__).resolve().parent.parent
+record_check(root)  # before chdir: the re-exec reuses argv[0] relative to the caller's directory
+os.chdir(root)
+if sys.platform == 'linux':
+    for parent in ('/run/elarni-probes', '/run/elarni'):
+        try:
+            (Path(parent) / str(os.getuid()) / 'probe.sock').stat()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            raise SystemExit('Cannot inspect the Linux VPN broker directory. Use '
+                             'private network/mount/PID namespaces with a private /run.')
+        raise SystemExit('Refusing native checks beside an active Linux VPN broker. '
+                         'Use private network/mount/PID namespaces with a private /run; '
+                         'do not stop the working VPN.')
+output = root / '.build' / 'windows-check' / 'bundle with spaces'
+output.mkdir(parents=True, exist_ok=True)
+windows = sys.platform == 'win32'
+core = output / ('elarni-core.exe' if windows else 'elarni-core')
+recording_core = output / ('elarni-core-recording.exe' if windows else 'elarni-core-recording')
+library = 'elarni_domain.dll' if windows else ('libelarni_domain.dylib' if sys.platform == 'darwin' else 'libelarni_domain.so')
+flutter = root / '.toolchains' / 'flutter' / 'bin' / ('flutter.bat' if windows else 'flutter')
+if not flutter.is_file():
+    flutter = shutil.which('flutter')
+    if not flutter:
+        raise SystemExit('Flutter is required for the Windows proxy checks.')
+
+subprocess.run(['cargo', 'build', '-p', 'elarni-domain', '--locked', '--target-dir', str(output / 'rust')], check=True)
+subprocess.run(['go', 'build', '-o', str(core), './Vendor/libXray/cmd/elarni-core'], check=True)
+# A build made with the connection recording option, for its own test below.
+subprocess.run(['go', 'build', '-tags=elarni_recording', '-o', str(recording_core), './Vendor/libXray/cmd/elarni-core'], check=True)
+subprocess.run(['go', 'test', './Vendor/libXray/cmd/elarni-core'], check=True)
+subprocess.run([str(flutter), 'pub', 'get', '--offline'], check=True)
+environment = dict(os.environ, ELARNI_TEST_CORE=str(core), ELARNI_TEST_DOMAIN=str(output / 'rust' / 'debug' / library), ELARNI_TEST_PYTHON=sys.executable)
+# Tests within one file run serially; shards in separate processes overlap the real-time waits.
+# More than one shard per two CPU threads starves the injected short timeouts.
+shards = max(4, min(8, (os.cpu_count() or 8) // 2))
+# Flutter names build/test_cache after the dart-defines; shards sharing one file race to copy it.
+runs = []
+for index in range(shards):
+    log = tempfile.TemporaryFile()
+    runs.append((subprocess.Popen([str(flutter), 'test', '--no-pub', '--no-test-assets', '--reporter', os.environ.get('ELARNI_FLUTTER_REPORTER', 'expanded'),
+                                   f'--total-shards={shards}', f'--shard-index={index}', f'--dart-define=ELARNI_TEST_SHARD={index}',
+                                   'test/windows_proxy_integration.dart'],
+                                  env=environment, stdout=log, stderr=subprocess.STDOUT), log))
+failed = 0
+for index, (process, log) in enumerate(runs):
+    code = process.wait()
+    log.seek(0)
+    print(f'--- shard {index + 1}/{shards} exited {code}', flush=True)
+    sys.stdout.buffer.write(log.read())
+    sys.stdout.buffer.flush()
+    failed += code != 0
+# The recording test again as a recording build. It runs after the shards: one more
+# process beside them makes their free ports collide and their short timeouts expire.
+print('--- recording build', flush=True)
+code = subprocess.run([str(flutter), 'test', '--no-pub', '--no-test-assets', '--reporter', os.environ.get('ELARNI_FLUTTER_REPORTER', 'expanded'),
+                       '--dart-define=ELARNI_RECORDING=true', '--plain-name', 'connection recording', 'test/windows_proxy_integration.dart'],
+                      env=dict(environment, ELARNI_TEST_CORE=str(recording_core))).returncode
+print(f'--- recording build exited {code}', flush=True)
+failed += code != 0
+raise SystemExit(1 if failed else 0)

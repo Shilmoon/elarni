@@ -1,0 +1,4 @@
+<resources>
+    <!-- The master icon's own background, so launcher motion around the inset icon shows no edge. -->
+    <color name="elarni_icon_background">#295145</color>
+</resources>

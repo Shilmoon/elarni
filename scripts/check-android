@@ -1,0 +1,357 @@
+#!/usr/bin/env python3
+"""Replay Android acceptance only on Elarni's disposable, named emulators."""
+import argparse
+import atexit
+import http.server
+import os
+import platform
+from pathlib import Path
+import re
+import shlex
+import socketserver
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / 'scripts'))
+from check_report import record_check
+from tuic_fixture import android_tuic_peer
+record_check(ROOT)
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--serial', action='append', default=[],
+                    help='Emulator serial; repeat it to test several AVDs at once after one build.')
+parser.add_argument('--avd', action='append', default=[], choices=['Elarni_API_30', 'Elarni_API_36_16K'],
+                    help='Boot a disposable read-only instance of this AVD for the run and stop it after; repeat it, '
+                         'also with the same name: instances of one AVD split its catalog, ui and vpn tests between them.')
+parser.add_argument('--case', choices=['all', 'native', 'catalog', 'vpn', 'ui'], default='all')
+parser.add_argument('--skip-build', action='store_true', help='Use artifacts already built against unchanged source; reports this limitation.')
+parser.add_argument('--test-method', help='Run one instrumentation method in the selected catalog, ui, or vpn suite.')
+parser.add_argument('--sleep-minutes', type=float, default=0.25,
+                    help='How long the vpn suite leaves the screen off in Doze; release acceptance uses 10.')
+parser.add_argument('--shard', help=argparse.SUPPRESS)  # INDEX/COUNT, set by the parent run for instances of one AVD
+args = parser.parse_args()
+if not args.serial and not args.avd:
+    parser.error('name an emulator with --serial or boot one with --avd')
+if args.test_method and (args.case not in ('catalog', 'ui', 'vpn') or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', args.test_method)):
+    parser.error('--test-method needs --case catalog, ui, or vpn and a Kotlin method name')
+os.chdir(ROOT)
+sdk = Path(os.environ.get('ANDROID_HOME', Path.home() / 'Library/Android/sdk'))
+env = os.environ.copy()
+env['ANDROID_HOME'] = str(sdk)
+if sys.platform == 'darwin' and not env.get('JAVA_HOME'):
+    env['JAVA_HOME'] = '/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home'
+adb = sdk / 'platform-tools/adb'
+RUNNER = 'com.elarni.debug.test/androidx.test.runner.AndroidJUnitRunner'
+# Tests per class run (the catalog's without its large-geofile test); shards of one AVD must add up to them.
+EXPECTED = {'com.elarni.AndroidE2E': 68, 'com.elarni.AndroidUIE2E': 38, 'com.elarni.AndroidVpnE2E': 22}
+out = ROOT / '.build/android-development'
+native_env = env.copy()
+host = 'darwin-x86_64' if sys.platform == 'darwin' else 'linux-x86_64'
+# Emulators run the host's architecture: arm64 on the Mac, x86_64 on Linux, whose ARM translation crashes Go binaries.
+abi, goarch, clang = ('x86_64', 'amd64', 'x86_64') if platform.machine() in ('x86_64', 'AMD64') else ('arm64-v8a', 'arm64', 'aarch64')
+native_env.update(GOOS='android', GOARCH=goarch, CGO_ENABLED='1', CC=str(sdk / f'ndk/28.2.13676358/toolchains/llvm/prebuilt/{host}/bin/{clang}-linux-android30-clang'))
+
+def run(*command, capture=False, timeout=240):
+    try:
+        result = subprocess.run([str(value) for value in command], cwd=ROOT, env=env,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        output = error.stdout or b''
+        print(output.decode(errors='replace') if isinstance(output, bytes) else output, end='', flush=True)
+        raise
+    if not capture or result.returncode:
+        print(result.stdout, end='', flush=True)
+    if result.returncode:
+        raise RuntimeError(f'Command exited {result.returncode}: {command[0]}')
+    return result.stdout
+
+def build():
+    run(sys.executable, 'scripts/build-android-native', '--abi', abi, timeout=600)
+    run('android/gradlew', '-p', 'android', ':app:assembleDebug', ':app:assembleDebugAndroidTest',
+        ':traffic-fixture:assembleADebug', ':traffic-fixture:assembleBDebug', f'-Pelarni.abi={abi}', '--no-daemon', '--console=plain', timeout=600)
+    if args.case in ('all', 'native'):
+        out.mkdir(parents=True, exist_ok=True)
+        builds = [subprocess.Popen(['go', 'test', '-c', *tags, '-ldflags=-checklinkname=0', '-o', str(out / f'{binary}.test'), target], cwd=ROOT, env=native_env)
+                  for binary, target, tags in [('tun', './Vendor/Xray-core/proxy/tun', []), ('socket', './Vendor/libXray', []), ('traffic', './Vendor/libXray/share', ['-tags', 'elarni_integration']), ('wireguard', './Vendor/Xray-core/proxy/wireguard', [])]]
+        if any([process.wait(timeout=600) for process in builds]):
+            raise RuntimeError('Building the Android Go test binaries failed')
+
+def boot(avds):
+    """Start each AVD read-only (so one AVD can run several times) on a free port; return the serials once booted."""
+    used = set(re.findall(r'^emulator-(\d+)', run(adb, 'devices', capture=True), re.M))
+    ports = (port for port in range(5554, 5682, 2) if str(port) not in used)
+    started = []
+    for avd in avds:
+        port = next(ports)
+        out.mkdir(parents=True, exist_ok=True)
+        with open(out / f'emulator-{port}.log', 'w') as log:
+            # Without a host GPU (Linux CI), gfxstream's software Vulkan doubled each emulator's memory.
+            gpu = ['-gpu', 'swiftshader_indirect'] if sys.platform.startswith('linux') else []
+            subprocess.Popen([sdk / 'emulator/emulator', '-avd', avd, '-port', str(port), '-read-only', '-no-snapshot',
+                              '-no-window', '-no-audio', '-no-boot-anim', *gpu], env=env, stdout=log, stderr=subprocess.STDOUT,
+                             start_new_session=True)
+        started.append(f'emulator-{port}')
+    for serial in started:
+        deadline = time.monotonic() + 300
+        while subprocess.run([adb, '-s', serial, 'shell', 'getprop', 'sys.boot_completed'], env=env,
+                             capture_output=True, text=True).stdout.strip() != '1':
+            if time.monotonic() > deadline:
+                raise SystemExit(f'{serial} did not boot in 5 minutes; see {out}/emulator-{serial[9:]}.log')
+            time.sleep(2)
+    print(f'Booted {", ".join(f"{avd} as {serial}" for avd, serial in zip(avds, started))}', flush=True)
+    return started
+
+# Build before booting: the builds and two emulators together overran CI's 8 GB container.
+built = bool(args.avd) and not args.skip_build
+if built:
+    build()
+booted = boot(args.avd) if args.avd else []
+# Booted emulators stop when this run ends, however it ends.
+atexit.register(lambda: [subprocess.run([adb, '-s', serial, 'emu', 'kill'], env=env, capture_output=True) for serial in booted])
+args.serial += booted
+if len(args.serial) > 1:
+    # One shared build, then each AVD replays in its own child; outputs print whole, in order.
+    if not args.skip_build and not built:
+        build()
+    forwarded =['--skip-build', '--case', args.case, '--sleep-minutes', str(args.sleep_minutes),
+                 *(['--test-method', args.test_method] if args.test_method else [])]
+    names = {serial: run(adb, '-s', serial, 'emu', 'avd', 'name', capture=True).splitlines()[0].strip() for serial in args.serial}
+    groups = {name: [serial for serial in args.serial if names[serial] == name] for name in names.values()}
+    children = []
+    for serial in args.serial:
+        group = groups[names[serial]]
+        shard = ['--shard', f'{group.index(serial)}/{len(group)}'] if len(group) > 1 and not args.test_method else []
+        log = tempfile.TemporaryFile()
+        children.append((serial, subprocess.Popen([sys.executable, __file__, '--serial', serial, *forwarded, *shard], cwd=ROOT, env=env,
+                                                  stdout=log, stderr=subprocess.STDOUT), log))
+    failed, summary, totals = 0, [], {}
+    for serial, process, log in children:
+        code = process.wait()
+        log.seek(0)
+        output = log.read()
+        print(f'--- {serial} ({names[serial]}) exited {code}', flush=True)
+        sys.stdout.buffer.write(output)
+        sys.stdout.buffer.flush()
+        failed += code != 0
+        text = output.decode(errors='replace')
+        summary += [f'{names[serial]} {serial}: {line}' for line in re.findall(r'^((?:FAILED|FLAKY|INCOMPLETE) .*)$', text, re.M)]
+        for name, count in re.findall(r'^elarni-ran (\S+)=(\d+)$', text, re.M):
+            totals[names[serial], name] = totals.get((names[serial], name), 0) + int(count)
+    if not args.test_method:
+        # Shards pick tests by hash; together they must still run every test once.
+        for (avd, name), count in sorted(totals.items()):
+            if name in EXPECTED and count != EXPECTED[name] and len(groups[avd]) > 1:
+                failed += 1
+                summary.append(f'{avd}: INCOMPLETE {name} ran {count} of {EXPECTED[name]} tests across its shards')
+    print('Summary: ' + ('every suite passed' if not failed else f'{failed} run(s) failed'), flush=True)
+    for line in summary:
+        print('  ' + line, flush=True)
+    raise SystemExit(1 if failed else 0)
+args.serial = args.serial[0]
+device = [str(adb), '-s', args.serial]
+remote = '/data/local/tmp/elarni-android-checks'
+
+def shell(*command, **options):
+    return run(*device, 'shell', shlex.join([str(value) for value in command]), **options)
+
+if not args.serial.startswith('emulator-'):
+    raise SystemExit('Refusing physical-device VPN tests: choose a task-owned emulator.')
+name = run(*device, 'emu', 'avd', 'name', capture=True).splitlines()[0].strip()
+if name not in ('Elarni_API_30', 'Elarni_API_36_16K'):
+    raise SystemExit('The emulator is not one of this task’s isolated AVDs.')
+if shell('getprop', 'sys.boot_completed', capture=True).strip() != '1':
+    raise SystemExit('The selected emulator has not finished booting.')
+api = shell('getprop', 'ro.build.version.sdk', capture=True).strip()
+page_size = shell('getconf', 'PAGESIZE', capture=True).strip()
+expected = ('30', '4096') if name == 'Elarni_API_30' else ('36', '16384')
+if (api, page_size) != expected:
+    raise SystemExit(f'The AVD must run API {expected[0]} with {expected[1]}-byte pages.')
+print(f'Acceptance target: {name}, Android API {api}, {page_size}-byte pages', flush=True)
+# Visual checks change these by hand; one left behind (font scale 1.3 was) fails layout tests on every run.
+shell('settings', 'put', 'system', 'font_scale', '1.0')
+shell('wm', 'density', 'reset')
+shell('wm', 'size', 'reset')
+shell('cmd', 'uimode', 'night', 'no')
+if args.skip_build:
+    print('Build skipped by explicit flag; using the existing local test artifacts.', flush=True)
+elif not built:
+    build()
+
+counts, measurements, failures = [], [], []
+shard_index, shard_count = map(int, args.shard.split('/')) if args.shard else (0, 1)
+first_shard = shard_index == 0
+reruns_left = 5  # a broken build fails everything; rerunning all of it would only double the wait
+
+def attempt(label, action):
+    """Run one step; record a failure and go on, so later suites still report."""
+    try:
+        action()
+        return True
+    except (RuntimeError, subprocess.TimeoutExpired) as error:
+        failures.append(f'FAILED {label}: {error}')
+        print(f'FAILED {label}: {error}', flush=True)
+        return False
+
+if args.case in ('all', 'native') and first_shard:
+    def native():
+        shell('mkdir', '-p', remote)
+        run(*device, 'push', *(out / f'{name}.test' for name in ('tun', 'socket', 'traffic', 'wireguard')), ROOT / f'.build/android-native/jniLibs/{abi}/libelarni_domain.so', remote + '/')
+    if attempt('native push', native):
+        for binary, pattern, expected in [('tun', 'TestAndroidTun', 2), ('socket', 'TestAndroidRequiredSocketProtection|TestAndroidProbeRestoreRefreshesGeodata', 2), ('traffic', 'TestImported.*Traffic|TestCompiledProvider|TestTUIC', 62), ('wireguard', 'TestWireGuardEnginesCarryTCPAndUDP', 3)]:
+            def go_binary(binary=binary, pattern=pattern, expected=expected):
+                output = shell('env', f'LD_LIBRARY_PATH={remote}', f'{remote}/{binary}.test', '-test.v', '-test.run', pattern, '-test.timeout', '180s')
+                count = len(re.findall(r'^\s*--- PASS:', output, re.M))
+                if count != expected or re.search(r'^\s*--- (FAIL|SKIP):|no tests to run', output, re.M) or not re.search(r'^PASS\s*$', output, re.M):
+                    raise RuntimeError(f'expected {expected} passes, got {count}')
+                counts.append((binary, count))
+            attempt(f'native {binary}', go_binary)
+
+def failed_tests(output):
+    """(class#method, code) for every test the raw instrumentation output reports as failed, errored or skipped."""
+    found, test = [], {}
+    for line in output.splitlines():
+        if line.startswith('INSTRUMENTATION_STATUS: class='): test['class'] = line.split('=', 1)[1].strip()
+        elif line.startswith('INSTRUMENTATION_STATUS: test='): test['test'] = line.split('=', 1)[1].strip()
+        elif (code := re.match(r'INSTRUMENTATION_STATUS_CODE: (-?\d+)', line)):
+            if int(code.group(1)) < 0 and test.get('class') and test.get('test'):
+                found.append((f"{test['class']}#{test['test']}", int(code.group(1))))
+            test = {}
+    return found
+
+# An unsharded catalog or ui suite on software-rendered Linux emulators runs past 4 minutes.
+def instrumentation(class_name, expected=None, options=(), timeout=600, sharded=False):
+    """Run a class (or one method); a failed test is rerun once alone and labelled FLAKY or FAILED."""
+    global reruns_left
+    expected = expected or EXPECTED[class_name]
+    if args.test_method:
+        class_name += '#' + args.test_method
+        expected, sharded = 1, False
+    shard = ('-e', 'numShards', str(shard_count), '-e', 'shardIndex', str(shard_index)) if sharded and shard_count > 1 else ()
+    def instrument(target, extra=()):
+        return shell('am', 'instrument', '-w', '-r', '-e', 'class', target, *options, *extra, RUNNER, timeout=timeout)
+    try:
+        output = instrument(class_name, shard)
+    except (RuntimeError, subprocess.TimeoutExpired) as error:
+        failures.append(f'INCOMPLETE {class_name}: {error}')
+        print(failures[-1], flush=True)
+        return
+    measurements.extend(re.findall(r'elarni-measurement=(.*)', output))
+    passed = re.search(r'OK \((\d+) tests?\)', output)
+    ran = int(passed.group(1)) if passed else int((re.search(r'Tests run: (\d+)', output) or [0, 0])[1])
+    if shard:
+        print(f'elarni-ran {class_name}={ran}', flush=True)
+    failed = failed_tests(output)
+    if passed and not failed and (shard or ran == expected) and not re.search(r'FAILURES!!!|INSTRUMENTATION_FAILED|INSTRUMENTATION_STATUS_CODE: -[1234]', output):
+        counts.append((class_name, ran))
+        return
+    if not failed or re.search(r'INSTRUMENTATION_FAILED|Process crashed', output):
+        # A crash or a count mismatch names no single test to rerun.
+        failures.append(f'INCOMPLETE {class_name}: ran {ran} of {"its shard" if shard else expected} tests' +
+                        (' (the instrumentation crashed)' if re.search(r'INSTRUMENTATION_FAILED|Process crashed', output) else ''))
+        print(failures[-1], flush=True)
+    for test, code in failed:
+        if code in (-3, -4):
+            failures.append(f'FAILED {test}: skipped (status {code}); this runner allows no skips')
+        elif reruns_left <= 0:
+            failures.append(f'FAILED {test}: not rerun, too many failures in this run')
+        else:
+            reruns_left -= 1
+            print(f'Rerunning {test} alone', flush=True)
+            try:
+                again = instrument(test)
+                measurements.extend(re.findall(r'elarni-measurement=(.*)', again))
+                ok = re.search(r'OK \(1 test\)', again) and not re.search(r'FAILURES!!!|INSTRUMENTATION_FAILED', again)
+            except (RuntimeError, subprocess.TimeoutExpired):
+                ok = False
+            failures.append(f'FLAKY {test}: failed, then passed when rerun alone' if ok else f'FAILED {test}: failed again when rerun alone')
+        print(failures[-1], flush=True)
+
+if args.case != 'native':
+    run(*device, 'install', '-r', 'android/app/build/outputs/apk/debug/app-debug.apk')
+    run(*device, 'install', '-r', 'android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk')
+    if args.case in ('all', 'catalog'):
+        # The 64 MiB geofile drives the app process near 1.1 GB; sharing that process ran API 30 (2 GB) out of memory later on.
+        large = 'com.elarni.AndroidE2E#e_geofileTooLargeForMemorySaysSo'
+        # The restart sequence reads what this test leaves, so with shards it runs last on the first one.
+        leave = 'com.elarni.AndroidE2E#f_leaveEncryptedCatalogForProcessRestart'
+        excluded = ','.join([large, leave] if shard_count > 1 else [large])
+        # Unsharded on the Linux x86_64 API 30 emulator, beside the API 36 one, the catalog suite takes about 11 minutes.
+        instrumentation('com.elarni.AndroidE2E', options=() if args.test_method else ('-e', 'notClass', excluded), timeout=1500, sharded=True)
+        if not args.test_method and first_shard:
+            if shard_count > 1:
+                instrumentation(leave, 1)
+                print('elarni-ran com.elarni.AndroidE2E=1', flush=True)
+            shell('am', 'force-stop', 'com.elarni.debug')
+            instrumentation('com.elarni.AndroidRestartE2E', 1)
+            instrumentation('com.elarni.AndroidJournalSeedE2E', 1)
+            shell('am', 'force-stop', 'com.elarni.debug')
+            instrumentation('com.elarni.AndroidRestartE2E', 1)
+            shell('am', 'force-stop', 'com.elarni.debug')
+            instrumentation(large, 1)
+
+    if args.case in ('all', 'ui'):
+        instrumentation('com.elarni.AndroidUIE2E', sharded=True)
+
+    if args.case in ('all', 'vpn'):
+        for identity in ('a', 'b'):
+            run(*device, 'install', '-r', f'android/traffic-fixture/build/outputs/apk/{identity}/debug/traffic-fixture-{identity}-debug.apk')
+        class Handler(http.server.BaseHTTPRequestHandler):
+            prefix = b'direct:'
+            def do_GET(self):
+                body = self.prefix + b'elarni-synthetic'
+                self.send_response(200); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+            def log_message(self, *_): pass
+        class UDP(socketserver.BaseRequestHandler):
+            prefix = b'direct:'
+            def handle(self):
+                data, sock = self.request
+                if len(data) >= 12 and not data[2] & 128 and data[5] == 1:
+                    end = 12
+                    while data[end]: end += 1 + data[end]
+                    end += 5
+                    kind = int.from_bytes(data[end-4:end-2], 'big')
+                    address = (bytes.fromhex('20010db8000000000000000000000051') if kind == 28 else
+                               bytes([198, 18, 0, 81 if self.prefix == b'proxy:' else 80]))
+                    reply = bytearray(data[:end]); reply[2:4] = b'\x81\x80'; reply[6:8] = b'\x00\x01'; reply[8:12] = b'\x00'*4
+                    response = reply + b'\xc0\x0c' + kind.to_bytes(2, 'big') + b'\x00\x01\x00\x00\x00\x3c' + len(address).to_bytes(2, 'big') + address
+                else: response = self.prefix + data
+                sock.sendto(response, self.client_address)
+        class ProxyHTTP(Handler): prefix = b'proxy:'
+        class ProxyUDP(UDP): prefix = b'proxy:'
+        with http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler) as http_peer, socketserver.ThreadingUDPServer(('127.0.0.1', 0), UDP) as udp, \
+             http.server.ThreadingHTTPServer(('127.0.0.1', 0), ProxyHTTP) as proxy_http, socketserver.ThreadingUDPServer(('127.0.0.1', 0), ProxyUDP) as proxy_udp:
+            for server in (http_peer, udp, proxy_http, proxy_udp): threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                with android_tuic_peer(ROOT, proxy_http.server_port, proxy_udp.server_address[1]) as (tuic_port, certificate):
+                    peers = ('-e', 'httpPort', str(http_peer.server_port), '-e', 'udpPort', str(udp.server_address[1]),
+                             '-e', 'tuicPort', str(tuic_port), '-e', 'tuicCertificate', certificate)
+                    instrumentation('com.elarni.AndroidVpnE2E', options=(*peers, '-e', 'sleepMinutes', str(args.sleep_minutes)),
+                                    timeout=600 + 60 * args.sleep_minutes, sharded=True)
+                    if not args.test_method and first_shard:
+                        # The first phase of each pair kills its own process; the second is the next process start.
+                        for killed, marker, restarted in [('a_connectedProcessIsKilled', 'killed-while-connected', 'b_vpnReturnsWithoutTheUser'),
+                                                          ('c_processWithoutTheServiceIsKilled', 'killed-without-service', 'd_vpnStaysDownWithoutItsService'),
+                                                          ('e_processPausedForSleepIsKilled', 'killed-while-paused', 'f_vpnStaysPausedUntilTheScreenTurnsOn')]:
+                            def kill(killed=killed, marker=marker):
+                                died = shell('am', 'instrument', '-w', '-r', '-e', 'class', f'com.elarni.AndroidProcessDeathE2E#{killed}', *peers, RUNNER)
+                                if f'elarni={marker}' not in died or 'Process crashed' not in died:
+                                    raise RuntimeError('the process was not killed as planned')
+                            if attempt(f'com.elarni.AndroidProcessDeathE2E#{killed}', kill):
+                                instrumentation(f'com.elarni.AndroidProcessDeathE2E#{restarted}', 1, peers)
+            finally:
+                # An interrupted test must not leave a synthetic VPN active in the emulator.
+                shell('am', 'force-stop', 'com.elarni.debug')
+                for server in (http_peer, udp, proxy_http, proxy_udp): server.shutdown()
+for measurement in measurements:
+    print('Measured: ' + measurement, flush=True)
+shard_note = f' (shard {shard_index + 1} of {shard_count})' if shard_count > 1 else ''
+if failures:
+    print(f'Android acceptance failed on {name}{shard_note}:', flush=True)
+    for failure in failures:
+        print('  ' + failure, flush=True)
+    raise SystemExit(1)
+print(f'Android acceptance passed on {name}{shard_note}: ' + ', '.join(f'{name}={count}' for name, count in counts) + '; no test skips.', flush=True)

@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Export the desktop's pinned flag images for Android Home (macOS with Homebrew librsvg and webp).
+
+Run after flutter pub get and scripts/export-android-locations.dart; licenses are in THIRD_PARTY_NOTICES.
+"""
+import json
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+import shutil
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+ASSETS = ROOT / 'android/app/src/main/assets'
+
+
+def main():
+    if not shutil.which('rsvg-convert') or not shutil.which('cwebp'):
+        raise SystemExit('Install librsvg and webp (brew install librsvg webp) to export the flags.')
+    packages = json.loads((ROOT / '.dart_tool/package_config.json').read_text())['packages']
+    package = next(entry for entry in packages if entry['name'] == 'country_flags')
+    flags = Path(unquote(urlparse(package['rootUri']).path)) / 'res/svg'
+    codes = [row['code'] for row in json.loads((ASSETS / 'server-locations.json').read_text())]
+    missing = [code for code in codes if not (flags / f'{code.lower()}.svg').is_file()]
+    if missing:
+        raise SystemExit(f'country_flags has no flag for {", ".join(missing)}.')
+    output = ASSETS / 'flags'
+    shutil.rmtree(output, ignore_errors=True)
+    output.mkdir()
+    with tempfile.TemporaryDirectory(prefix='elarni-flags-') as temporary:
+        for code in codes:
+            png = Path(temporary) / f'{code}.png'
+            # 4:3 at four times Home's 28 x 21 dp flag, enough for any phone density.
+            subprocess.run(['rsvg-convert', '-w', '112', '-h', '84', '-o', str(png), str(flags / f'{code.lower()}.svg')], check=True)
+            subprocess.run(['cwebp', '-quiet', '-q', '90', '-m', '6', str(png), '-o', str(output / f'{code}.webp')], check=True)
+    size = sum(path.stat().st_size for path in output.iterdir())
+    print(f'Exported {len(codes)} flags ({size // 1024} KiB) to {output.relative_to(ROOT)}')
+
+
+if __name__ == '__main__':
+    main()

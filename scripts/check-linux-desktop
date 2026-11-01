@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+"""Exercise native GTK channels and the release UI in private X11/Wayland sessions."""
+import argparse
+import base64
+import json
+import os
+from pathlib import Path
+import runpy
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+
+ROOT=Path(__file__).resolve().parent.parent
+
+
+def run(*command, env=None):
+    return subprocess.run(command,env=env,check=True,capture_output=True,text=True,timeout=15).stdout
+
+
+def wait_until(ready, timeout=15):
+    deadline=time.monotonic()+timeout
+    while time.monotonic()<deadline:
+        if ready(): return
+        time.sleep(.05)
+    raise AssertionError('Desktop fixture timed out')
+
+
+def click_native_button(label):
+    import pyatspi
+    def nodes(node):
+        yield node
+        for child in node: yield from nodes(child)
+    for application in pyatspi.Registry.getDesktop(0):
+        if application.name!='com.elarni.Elarni': continue
+        for node in nodes(application):
+            if node.getRoleName()=='push button' and node.name==label and node.getState().contains(pyatspi.STATE_SHOWING):
+                assert node.queryAction().doAction(0),'Native button action failed'
+                return
+    raise AssertionError('Native button not found: '+label)
+
+
+def session(args):
+    import dbus
+    import dbus.service
+    import dbus.mainloop.glib
+    from gi.repository import GLib
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    dbus.mainloop.glib.threads_init()
+    bus=dbus.SessionBus()
+    fixture=Path(os.environ['ELARNI_DESKTOP_FIXTURE'])
+    output=args.output;output.mkdir(parents=True,exist_ok=True)
+    children=[]
+    log=(output/'desktop.log').open('w')
+    def spawn(command,env=None):
+        child=subprocess.Popen(command,env=env,stdout=log,stderr=log)
+        children.append(child);return child
+    notifier=[]
+    class Watcher(dbus.service.Object):
+        @dbus.service.method('org.kde.StatusNotifierWatcher',in_signature='s',out_signature='',sender_keyword='sender')
+        def RegisterStatusNotifierItem(self,service,sender=None):
+            notifier.append((str(sender),str(service)) if str(service).startswith('/') else (str(service),'/StatusNotifierItem'))
+        @dbus.service.method('org.freedesktop.DBus.Properties',in_signature='ss',out_signature='v')
+        def Get(self,interface,name): return self.GetAll(interface)[name]
+        @dbus.service.method('org.freedesktop.DBus.Properties',in_signature='s',out_signature='a{sv}')
+        def GetAll(self,interface):
+            return {'IsStatusNotifierHostRegistered':dbus.Boolean(True),'ProtocolVersion':dbus.Int32(0),
+                    'RegisteredStatusNotifierItems':dbus.Array([],signature='s')}
+    class Notifications(dbus.service.Object):
+        @dbus.service.method('org.freedesktop.Notifications',in_signature='',out_signature='as')
+        def GetCapabilities(self): return ['body']
+        @dbus.service.method('org.freedesktop.Notifications',in_signature='',out_signature='ssss')
+        def GetServerInformation(self): return ('Elarni fixture','Elarni','1','1.2')
+        @dbus.service.method('org.freedesktop.Notifications',in_signature='susssasa{sv}i',out_signature='u')
+        def Notify(self,app,replace,icon,summary,body,actions,hints,timeout):
+            (fixture/'notification').write_text(str(summary)+'\n'+str(body));return dbus.UInt32(1)
+        @dbus.service.method('org.freedesktop.Notifications',in_signature='u',out_signature='')
+        def CloseNotification(self,identifier): pass
+    class Login(dbus.service.Object):
+        @dbus.service.signal('org.freedesktop.login1.Manager',signature='b')
+        def PrepareForSleep(self,sleeping): pass
+    names=[dbus.service.BusName(name,bus=bus) for name in
+           ('org.kde.StatusNotifierWatcher','org.freedesktop.Notifications','org.freedesktop.login1')]
+    services=[Watcher(bus,'/StatusNotifierWatcher'),Notifications(bus,'/org/freedesktop/Notifications'),Login(bus,'/org/freedesktop/login1')]
+    loop=GLib.MainLoop();loop_thread=threading.Thread(target=loop.run,daemon=True);loop_thread.start()
+    os.environ['DBUS_SYSTEM_BUS_ADDRESS']=os.environ['DBUS_SESSION_BUS_ADDRESS']
+    try:
+        readfd,writefd=os.pipe()
+        xvfb=subprocess.Popen(['Xvfb','-displayfd',str(writefd),'-screen','0','1280x900x24','-nolisten','tcp','-noreset'],
+                              pass_fds=(writefd,),stdout=log,stderr=log)
+        children.append(xvfb);os.close(writefd)
+        with os.fdopen(readfd) as stream: display=stream.readline().strip()
+        assert display.isdigit(),'Xvfb did not allocate a display'
+        os.environ['DISPLAY']=':'+display
+        os.environ['GDK_BACKEND']='x11'
+        spawn(['openbox'])
+        wait_until(lambda: 'window id #' in run('xprop','-root','_NET_SUPPORTING_WM_CHECK'))
+        if args.display=='wayland':
+            spawn(['weston','--backend=x11-backend.so','--no-config','--socket=elarni-wayland','--width=1100','--height=800'])
+            wait_until(lambda: (Path(os.environ['XDG_RUNTIME_DIR'])/'elarni-wayland').exists())
+            os.environ['WAYLAND_DISPLAY']='elarni-wayland'
+            os.environ['GDK_BACKEND']='wayland'
+        # Set up a private keyring for the real application.
+        keyring=subprocess.Popen(['gnome-keyring-daemon','--foreground','--components=secrets','--unlock'],
+                                 stdin=subprocess.PIPE,stdout=log,stderr=log)
+        children.append(keyring);keyring.stdin.write(b'elarni-desktop-fixture');keyring.stdin.close()
+        wait_until(lambda: bus.name_has_owner('org.freedesktop.secrets'))
+        bundle=fixture/'bundle with spaces'
+        shutil.copytree(args.harness,bundle)
+        (fixture/'import.json').write_text('{"fixture":true}')
+        # A real binary: the picker refuses scripts, whose rules would match /bin/sh.
+        executable=fixture/'Fixture App';shutil.copy('/bin/true',executable);executable.chmod(0o700)
+        browser=fixture/'browser.py'
+        browser.write_text('import pathlib,sys\npathlib.Path('+repr(str(fixture/'opened-url'))+').write_text(sys.argv[1])\n')
+        applications=Path(os.environ['XDG_DATA_HOME'])/'applications';applications.mkdir(parents=True)
+        (applications/'fixture-browser.desktop').write_text('[Desktop Entry]\nType=Application\nName=Fixture browser\nExec=/usr/bin/python3 "'+str(browser)+'" %u\nMimeType=x-scheme-handler/https;\n')
+        run('update-desktop-database',str(applications))
+        (Path(os.environ['XDG_CONFIG_HOME'])/'mimeapps.list').write_text('[Default Applications]\nx-scheme-handler/https=fixture-browser.desktop;\n')
+        Core=runpy.run_path(str(ROOT/'scripts/check-linux-vpn'))['Core']
+        core=Core(args.app/'elarni-core')
+        qr=core.request('clientQR',{'text':'elarni://camera-fixture'});core.close()
+        (fixture/'camera.png').write_bytes(base64.b64decode(qr['png']))
+        camera=spawn(['gst-launch-1.0','-q','filesrc','location='+str(fixture/'camera.png'),'!','pngdec','!','imagefreeze','!',
+                      'videoconvert','!','videoscale','!','video/x-raw,format=YUY2,width=640,height=480,framerate=10/1','!',
+                      'v4l2sink','device=/dev/video63'])
+        time.sleep(.5)
+        assert camera.poll() is None,'Virtual camera producer failed'
+        app=spawn([str(bundle/'elarni'),'elarni://fixture-first'])
+        handled=set()
+        def keys(*args): run('xdotool',*args)
+        def click_button(label):
+            # Keep AT-SPI's event loop separate from the fixture's DBus services.
+            run(sys.executable,str(Path(__file__).resolve()),'--click',label)
+        def select_file(path):
+            # Native Wayland dialogs receive keyboard input through nested Weston.
+            time.sleep(.3)
+            keys('key','--clearmodifiers','ctrl+l')
+            keys('key','--clearmodifiers','ctrl+a')
+            keys('type','--clearmodifiers','--delay','1',str(path))
+            # GTK resolves an entered location asynchronously before accepting it.
+            original=(fixture/'stage').read_text()
+            for attempt in range(3):
+                time.sleep(.5)
+                if (fixture/'stage').read_text()!=original: return
+                click_button('Open' if path.name in ('import.json','Fixture App') else 'Save')
+            wait_until(lambda: (fixture/'stage').read_text()!=original or app.poll() is not None)
+        deadline=time.monotonic()+150
+        while app.poll() is None and time.monotonic()<deadline:
+            stage=(fixture/'stage').read_text() if (fixture/'stage').exists() else ''
+            if stage in handled: time.sleep(.05);continue
+            if stage: print(args.display+': '+stage,flush=True)
+            if stage=='validate-autostart':
+                autostart=Path(os.environ['XDG_CONFIG_HOME'])/'autostart/com.elarni.Elarni.desktop'
+                run('desktop-file-validate',str(autostart))
+                assert str(bundle/'elarni') in autostart.read_text()
+                (fixture/'autostart-validated').touch()
+            elif stage=='second-link':
+                run(str(bundle/'elarni'),'elarni://fixture-second')
+            elif stage in ('pick-file','pick-app','save-backup','save-evidence'):
+                name={'pick-file':'import.json','pick-app':'Fixture App','save-backup':'saved-backup.json','save-evidence':'saved-diagnostics.json'}[stage]
+                select_file(fixture/name)
+            elif stage=='cancel-picker':
+                time.sleep(.3);keys('key','--clearmodifiers','Escape')
+            elif stage=='tray-connect':
+                wait_until(lambda: bool(notifier))
+                service,path=notifier[-1]
+                properties=dbus.Interface(bus.get_object(service,path),'org.freedesktop.DBus.Properties')
+                menu_path=properties.Get('org.kde.StatusNotifierItem','Menu')
+                menu=dbus.Interface(bus.get_object(service,str(menu_path)),'com.canonical.dbusmenu')
+                _,layout=menu.GetLayout(0,-1,dbus.Array([],signature='s'))
+                def find(row):
+                    if row[1].get('label')=='Connect':
+                        assert row[1].get('enabled',True),'Connect tray action disabled'
+                        return int(row[0])
+                    for child in row[2]:
+                        result=find(child)
+                        if result is not None:return result
+                item=find(layout);assert item is not None,'Connect menu item missing'
+                menu.Event(item,'clicked',dbus.Int32(0),dbus.UInt32(0))
+            elif stage=='sleep-events':
+                services[2].PrepareForSleep(True);time.sleep(.15);services[2].PrepareForSleep(False)
+            elif stage=='camera-removed':
+                camera.terminate();camera.wait(timeout=5)
+                (fixture/'camera-removed').touch()
+            if stage:handled.add(stage)
+            time.sleep(.05)
+        if app.poll() is None: raise AssertionError('Native desktop checks exceeded time limit at '+stage)
+        result=json.loads((fixture/'result.json').read_text())
+        (output/'native-result.json').write_text(json.dumps(result,indent=2))
+        if (fixture/'camera-frame.jpg').exists():shutil.copy2(fixture/'camera-frame.jpg',output/'camera-frame.jpg')
+        if result['failed']:
+            print('Fixture files:',[str(path.relative_to(fixture)) for path in fixture.rglob('*.json') if 'bundle with spaces' not in str(path)],flush=True)
+        assert app.returncode==0 and result['failed']==0,result
+        # Launch the actual release entry point with fresh isolated preferences.
+        preferences=Path(os.environ['XDG_CONFIG_HOME'])/'Elarni/preferences.json'
+        preferences.unlink(missing_ok=True)
+        actual=spawn([str(args.app/'elarni')])
+        time.sleep(6)
+        assert actual.poll() is None,'Release application exited during startup'
+        screenshot_env=os.environ.copy();screenshot_env['GDK_BACKEND']='x11'
+        screenshot_code="import gi;gi.require_version('Gdk','3.0');from gi.repository import Gdk;w=Gdk.get_default_root_window();p=Gdk.pixbuf_get_from_window(w,0,0,w.get_width(),w.get_height());p.savev("+repr(str(output/'release.png'))+",'png',[],[])"
+        run('/usr/bin/python3','-c',screenshot_code,env=screenshot_env)
+        run(str(args.app/'elarni'),'socks://127.0.0.1:18090#Linux%20fixture')
+        import_status=None
+        def imported_catalog():
+            nonlocal import_status
+            reader=Core(args.app/'elarni-core')
+            try: catalog=reader.request('loadCatalog',{}).get('catalog',{}).get('committed',{})
+            finally: reader.close()
+            nodes=[node for source in catalog.get('subscriptions',[]) for node in source.get('nodes',[])]
+            summary=[node.get('name') for node in nodes]
+            if import_status!=summary:
+                import_status=summary;print('Imported fixture nodes:',summary,flush=True)
+            return len(nodes)==1 and nodes[0].get('name')=='Linux fixture'
+        def close_release():
+            if args.display=='wayland': click_button('Close')
+            else: keys('key','--clearmodifiers','alt+F4')
+            actual.wait(timeout=10)
+            assert actual.returncode==0,'Release application failed graceful close'
+        # A concurrent helper reader takes the catalog lock and can reject the
+        # app's save. Inspect persistence only after closing its writer.
+        time.sleep(3)
+        run('/usr/bin/python3','-c',screenshot_code.replace('release.png','imported.png'),env=screenshot_env)
+        close_release()
+        assert imported_catalog(),'Release application did not persist the imported profile'
+        actual=spawn([str(args.app/'elarni')])
+        time.sleep(3)
+        assert actual.poll() is None,'Release application exited during relaunch'
+        run('/usr/bin/python3','-c',screenshot_code.replace('release.png','relaunched.png'),env=screenshot_env)
+        close_release()
+        assert imported_catalog(),'Imported profile did not survive relaunch'
+        print(json.dumps({'display':args.display,'native':result,'releaseLaunchClose':True,
+            'releaseImportRelaunch':True,'screenshot':str(output/'release.png')}),flush=True)
+    finally:
+        for child in reversed(children):
+            if child.poll() is None:
+                child.terminate()
+                try:child.wait(timeout=5)
+                except subprocess.TimeoutExpired:child.kill();child.wait(timeout=3)
+        loop.quit();loop_thread.join(timeout=2)
+        log.close()
+
+
+if __name__=='__main__':
+    from check_report import record_check
+    record_check(ROOT)
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--app',type=Path,default=ROOT/'build/linux/x64/release/bundle')
+    parser.add_argument('--harness',type=Path,help='Prebuilt test/linux_desktop_acceptance.dart bundle (default: build it)')
+    parser.add_argument('--output',type=Path,default=ROOT/'.build/linux-development/gui')
+    parser.add_argument('--display',choices=('x11','wayland'),default='x11')
+    parser.add_argument('--session',action='store_true',help=argparse.SUPPRESS)
+    parser.add_argument('--click',help=argparse.SUPPRESS)
+    args=parser.parse_args()
+    if args.click:click_native_button(args.click)
+    elif args.session:session(args)
+    else:
+        if sys.platform!='linux' or os.geteuid()==0:raise SystemExit('Run as the normal test user on Linux.')
+        if not os.access('/dev/video63',os.R_OK|os.W_OK):raise SystemExit('Provision the owned virtual camera /dev/video63 first.')
+        if args.harness is None:
+            # The native-channel exercise is its own Flutter entry point, built beside the release bundle.
+            flutter=ROOT/'.toolchains/flutter/bin/flutter'
+            flutter=str(flutter) if flutter.is_file() else shutil.which('flutter')
+            if not flutter:raise SystemExit('Flutter is required to build the desktop acceptance harness.')
+            subprocess.run([flutter,'build','linux','--debug','--target=test/linux_desktop_acceptance.dart'],cwd=ROOT,check=True)
+            args.harness=ROOT/'build/linux/x64/debug/bundle'
+        with tempfile.TemporaryDirectory(prefix='elarni-desktop-') as temporary:
+            env=os.environ.copy()
+            for name in ('HOME','XDG_DATA_HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_RUNTIME_DIR'):
+                directory=Path(temporary)/name;directory.mkdir(mode=0o700);env[name]=str(directory)
+            env['ELARNI_DESKTOP_FIXTURE']=temporary
+            env.pop('DISPLAY',None);env.pop('WAYLAND_DISPLAY',None)
+            command=['dbus-run-session','--',sys.executable,str(Path(__file__).resolve()),'--session',
+                     '--app',str(args.app.resolve()),'--harness',str(args.harness.resolve()),
+                     '--output',str((args.output/args.display).resolve()),'--display',args.display]
+            raise SystemExit(subprocess.run(command,env=env).returncode)

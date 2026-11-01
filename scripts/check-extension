@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""Compile, or explicitly run, the installed macOS disposable VPN acceptance suite."""
+import argparse
+import datetime
+import ipaddress
+import json
+import os
+import pathlib
+import platform
+import pwd
+import re
+import shutil
+import subprocess
+import sys
+import uuid
+from urllib.parse import urlsplit
+
+CASES = {
+    "lifecycle": "ExtensionIntegrationTests/testInstalledProviderLifecycleAndTraffic",
+    "traffic": "MacOSAcceptanceTests/testBothBackendsDualStackTrafficDNSAndSwitch",
+    "refresh": "MacOSAcceptanceTests/testUnchangedRefreshRetainsTCPStreamOnBothBackends",
+    "controller": "MacOSAcceptanceTests/testControllerRecreationRetainsConnectionAndStopIntent",
+    "reconnect": "MacOSAcceptanceTests/testStopDuringStartupAndRepeatedReconnect",
+    "on-demand-repair": "MacOSAcceptanceTests/testOnDemandStopAndRepairOnBothBackends",
+    "per-app": "MacOSAcceptanceTests/testPerAppRoutingTCPAndUDPBothFamilies",
+    "routes": "MacOSAcceptanceTests/testIncludedExcludedRoutesBothBackends",
+    "xray-failure": "MacOSAcceptanceTests/testXrayStartupAndProtectedCoreFailure",
+    "deletion": "MacOSAcceptanceTests/testSelectedSourceDeletionDisarmsOnDemand",
+    "settings": "MacOSAcceptanceTests/testOccupiedListenerAndInvalidSettingsRecover",
+}
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+
+class ValidationFailure(ValueError):
+    pass
+
+
+def require(condition, message):
+    if not condition:
+        raise ValidationFailure(message)
+
+
+def validate_fixture(path, full):
+    require(path.stat().st_size <= 32768, "fixture exceeds 32 KiB")
+    value = json.loads(path.read_text())
+    require(isinstance(value, dict), "fixture must be an object")
+    for key in ("disposableAccount", "subscriptionID", "expectedBody"):
+        require(isinstance(value.get(key), str) and 0 < len(value[key]) <= 4096,
+                "fixture requires a bounded " + key)
+    nodes = value.get("nodeIDs")
+    require(isinstance(nodes, list) and len(nodes) == 2 and
+            all(isinstance(node, str) and 0 < len(node) <= 128 for node in nodes) and
+            len(set(nodes)) == 2, "fixture requires two distinct node IDs")
+    require(isinstance(value.get("probeURL"), str), "fixture requires probeURL")
+    url = urlsplit(value["probeURL"])
+    require(url.scheme in ("http", "https") and url.hostname and not url.username and
+            not url.password and not url.fragment and not url.query and
+            (url.port is None or 1 <= url.port <= 65535), "invalid credential-free probe URL")
+    if full:
+        net = value.get("network")
+        require(isinstance(net, dict), "full/case run requires network fixture")
+        for key, version in (("ipv4", 4), ("ipv6", 6)):
+            require(isinstance(net.get(key), str), "network addresses must be strings")
+            address = ipaddress.ip_address(net.get(key, ""))
+            require(address.version == version and not address.is_loopback and not address.is_unspecified
+                    and not address.is_link_local and not address.is_multicast,
+                    "network requires routable responder " + key)
+        for key in ("tcpPort", "udpPort"):
+            require(type(net.get(key)) is int and 1 <= net[key] <= 65535, "invalid " + key)
+        require(isinstance(net.get("directEgress"), list) and 0 < len(net["directEgress"]) <= 16,
+                "network requires directEgress addresses")
+        require(all(isinstance(address, str) for address in net["directEgress"]), "egress addresses must be strings")
+        egress = net.get("nodeEgress")
+        require(isinstance(egress, dict) and set(egress) == set(nodes), "nodeEgress must match both node IDs")
+        direct = {ipaddress.ip_address(address) for address in net["directEgress"]}
+        for node in nodes:
+            require(isinstance(egress[node], list) and 0 < len(egress[node]) <= 16, "missing node egress addresses")
+            require(all(isinstance(address, str) for address in egress[node]), "egress addresses must be strings")
+            proxy = {ipaddress.ip_address(address) for address in egress[node]}
+            require(direct.isdisjoint(proxy), "direct and proxy egress must be distinguishable")
+        for key in ("dnsIPv4Suffix", "dnsIPv6Suffix"):
+            suffix = net.get(key)
+            require(isinstance(suffix, str) and 0 < len(suffix) <= 190 and "." in suffix and
+                    all(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", part)
+                        for part in suffix.split(".")), "invalid wildcard DNS suffix")
+        require(net["dnsIPv4Suffix"] != net["dnsIPv6Suffix"], "use separate A-only and AAAA-only wildcard zones")
+    return value
+
+
+def preflight(path, fixture, acknowledged):
+    require(acknowledged, "execution requires --disposable-machine; build-only never starts a VPN")
+    require(platform.system() == "Darwin" and platform.machine() == "arm64",
+            "installed suite requires an Apple Silicon Mac")
+    account = pwd.getpwuid(os.getuid())
+    require(os.getuid() != 0 and fixture["disposableAccount"] == account.pw_name,
+            "fixture must name the current non-root disposable account")
+    container = pathlib.Path(account.pw_dir) / "Library/Containers/com.elarni.mac/Data"
+    require(path.is_relative_to(container.resolve()), "place the fixture inside the test app's sandbox container")
+    require(path.stat().st_uid == os.getuid(), "fixture must belong to the disposable account")
+    processes = subprocess.check_output(["ps", "-axo", "comm="], text=True, timeout=10)
+    require(not any(line.strip().endswith(("/Elarni", "/ElarniPacketTunnel")) or
+                    line.strip() in ("Elarni", "ElarniPacketTunnel") for line in processes.splitlines()),
+            "quit every Elarni host and stop its test VPN before running; runner will not stop them")
+    services = subprocess.check_output(["scutil", "--nc", "list"], text=True, timeout=10)
+    require(not re.search(r"\((?:Connected|Connecting|Disconnecting)\)", services),
+            "an active VPN was detected; use a disposable machine with all VPNs stopped")
+
+
+def check_summary(summary, expected):
+    return (isinstance(summary, dict) and summary.get("result") == "Passed" and summary.get("totalTestCount") == expected and
+            summary.get("passedTests") == expected and summary.get("failedTests") == 0 and
+            summary.get("skippedTests") == 0 and summary.get("expectedFailures") == 0)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--build-only", action="store_true", help="unsigned compile; no app launch or VPN changes")
+    mode.add_argument("--fixture", type=pathlib.Path, help="execute using a provisioned disposable-account JSON")
+    mode.add_argument("--validate-fixture", type=pathlib.Path, help="schema validation only; no network or app access")
+    mode.add_argument("--list", action="store_true", help="list independently selectable installed cases")
+    parser.add_argument("--suite", choices=("lifecycle", "full"), default="lifecycle")
+    parser.add_argument("--case", choices=CASES, action="append", default=[], help="select cases; overrides --suite")
+    parser.add_argument("--disposable-machine", action="store_true", help="acknowledge that runtime cases change this test Mac's VPN")
+    args = parser.parse_args(argv)
+    if args.list:
+        for name, test in CASES.items():
+            print(name + "\t" + test)
+        return 0
+    selected = list(dict.fromkeys(args.case or (CASES if args.suite == "full" else ["lifecycle"])))
+    if args.fixture or args.validate_fixture:
+        path = (args.fixture or args.validate_fixture).resolve(strict=True)
+        fixture = validate_fixture(path, full=selected != ["lifecycle"])
+        if args.validate_fixture:
+            print("Fixture schema valid; no account, signing, networking or runtime checks performed.")
+            return 0
+        preflight(path, fixture, args.disposable_machine)
+    require(platform.system() == "Darwin" and platform.machine() == "arm64", "build requires Apple Silicon macOS")
+    for tool in ("xcodebuildmcp", "xcrun"):
+        require(shutil.which(tool) is not None, "missing prerequisite: " + tool)
+    output = ROOT / ".build/macos-acceptance"
+    output.mkdir(parents=True, exist_ok=True)
+    options = {"projectPath": str(ROOT / "macos/Runner.xcodeproj"),
+               "scheme": "ExtensionIntegration", "configuration": "Debug"}
+    if args.build_only:
+        options.update(derivedDataPath=str(output / "unsigned"), buildForTesting=True, arch="arm64",
+                       extraArgs=["ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES", "CODE_SIGNING_ALLOWED=NO"])
+        result = subprocess.call(["xcodebuildmcp", "macos", "build", "--json", json.dumps(options)], cwd=ROOT)
+        if result == 0:
+            print("BUILD ONLY: compiled all installed cases; executed 0. Runtime acceptance remains pending.")
+        return result
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run = output / ("run-" + stamp + "-" + uuid.uuid4().hex[:8])
+    run.mkdir(mode=0o700)
+    result_bundle = run / "TestResults.xcresult"
+    options.update(derivedDataPath=str(run / "build"),
+                   testRunnerEnv={"ELARNI_EXTENSION_FIXTURE": str(path), "ELARNI_EXTENSION_TEST_HOST": "1"},
+                   extraArgs=["ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES", "-parallel-testing-enabled", "NO",
+                              "-resultBundlePath", str(result_bundle), "-test-timeouts-enabled", "YES",
+                              "-default-test-execution-time-allowance", "600",
+                              "-maximum-test-execution-time-allowance", "900"] +
+                   ["-only-testing:ExtensionIntegrationTests/" + CASES[name] for name in selected])
+    report = {"schemaVersion": 1, "scope": "installed-macos-debug", "cases": selected,
+              "expectedTests": len(selected), "status": "running", "operatorAcceptance": "pending"}
+    report_path = run / "summary.json"
+    report_path.write_text(json.dumps(report, indent=2) + "\n")
+    try:
+        result = subprocess.call(["xcodebuildmcp", "macos", "test", "--json", json.dumps(options)], cwd=ROOT)
+        report["exitCode"] = result
+        summary = json.loads(subprocess.check_output([
+            "xcrun", "xcresulttool", "get", "test-results", "summary", "--path", str(result_bundle), "--compact"
+        ], text=True, timeout=30))
+        for key in ("totalTestCount", "passedTests", "failedTests", "skippedTests", "expectedFailures"):
+            report[key] = summary.get(key)
+        passed = result == 0 and check_summary(summary, len(selected))
+        report["status"] = "passed" if passed else "failed"
+        return 0 if passed else 1
+    finally:
+        if report["status"] == "running":
+            report["status"] = "incomplete"
+        report_path.write_text(json.dumps(report, indent=2) + "\n")
+        print("Installed test report: " + str(report_path))
+        print("Physical/UI operator acceptance remains separate; see docs/MACOS_ACCEPTANCE.md.")
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        print("check-extension: " + (str(error) if isinstance(error, ValidationFailure)
+              else type(error).__name__), file=sys.stderr)
+        raise SystemExit(1)

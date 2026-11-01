@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""Collect the exact Go module sources used by the shared runtime, without SDKs.
+
+Local workspace modules are in package-source. External sources stay in their
+verified Go module ZIP format, including upstream notices and license files.
+"""
+import argparse
+import json
+from pathlib import Path
+import subprocess
+import tarfile
+import zipfile
+
+from release_support import ROOT, digest, prepare_output
+
+
+def objects(text):
+    decoder = json.JSONDecoder()
+    while text.strip():
+        text = text.lstrip()
+        value, length = decoder.raw_decode(text)
+        yield value
+        text = text[length:]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', required=True, type=Path)
+    args = parser.parse_args()
+    prepare_output(args.output)
+    modules = list(objects(subprocess.check_output(
+        ['go', 'list', '-m', '-json', 'all'], cwd=ROOT, text=True)))
+    identities = sorted({(module.get('Replace') or module)['Path'] + '@' +
+                         (module.get('Replace') or module)['Version']
+                         for module in modules if not module.get('Main')
+                         and (module.get('Replace') or module).get('Version')})
+    downloaded = list(objects(subprocess.check_output(
+        ['go', 'mod', 'download', '-json', *identities], cwd=ROOT, text=True)))
+    if len(downloaded) != len(identities) or any(item.get('Error') for item in downloaded):
+        raise RuntimeError('Incomplete module source download')
+    subprocess.run(['go', 'mod', 'verify'], cwd=ROOT, check=True)
+    inventory = []
+    archive = args.output / 'elarni-go-module-sources.tar.gz'
+    with tarfile.open(archive, 'x:gz') as package:
+        for item in sorted(downloaded, key=lambda value: (value['Path'], value['Version'])):
+            source = Path(item['Zip'])
+            name = item['Path'] + '@' + item['Version'] + '.zip'
+            with zipfile.ZipFile(source) as contents:
+                notices = sorted(entry.filename for entry in contents.infolist()
+                                 if Path(entry.filename).name.upper().startswith(('LICENSE', 'COPYING', 'NOTICE')))
+            package.add(source, arcname='go-modules/' + name, recursive=False)
+            inventory.append({'module': item['Path'], 'version': item['Version'],
+                              'sum': item['Sum'], 'goModSum': item['GoModSum'],
+                              'archive': 'go-modules/' + name, 'sha256': digest(source),
+                              'notices': notices})
+        manifest = args.output / 'go-module-source-manifest.json'
+        manifest.write_text(json.dumps({'schemaVersion': 1, 'modules': inventory,
+            'localSource': 'Matching package-source archive includes all local workspace modules.',
+            'scope': 'Shared Go runtime dependency graph; SDKs and test-only external server binaries excluded.'}, indent=2) + '\n')
+        package.add(manifest, arcname=manifest.name, recursive=False)
+    (args.output / 'SHA256SUMS').write_text(digest(archive) + '  ' + archive.name + '\n' +
+                                        digest(manifest) + '  ' + manifest.name + '\n')
+    print(f'Collected {len(inventory)} verified external Go module source archives: {archive}')
+
+
+if __name__ == '__main__':
+    main()
