@@ -55,8 +55,10 @@ python scripts/package-windows --bundle build/windows/x64/runner/Release `
 
 The script signs and verifies every EXE and DLL and keeps Wintun's own signature.
 `--msi` needs WiX 5 (`dotnet tool install --global wix --version 5.0.2`). The MSI
-installs to `%ProgramFiles%\Elarni` and sets up the VPN helper service so
-connecting needs no UAC prompt; uninstalling removes it.
+installs to `%ProgramFiles%\Elarni`; a fresh install also sets up the VPN helper
+service for the installing account, so connecting needs no UAC prompt. Upgrades
+keep each account's setting and never add one (Settings › Connection › Connect
+without administrator approval does). Uninstalling removes the service.
 
 The portable ZIP asks for administrator approval to install the helper on the
 first connection. To remove it: quit Elarni, run `elarni.exe --unregister`, then
