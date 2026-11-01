@@ -2,31 +2,69 @@ name: Development checks
 
 on:
   push:
-    # Dependabot branches are checked by their pull request run.
-    branches-ignore: ['dependabot/**']
-    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
+    # Other branches are checked by their pull request run.
+    branches: [main]
   pull_request:
-    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
   workflow_dispatch:
+    inputs:
+      hosted:
+        description: Run on GitHub-hosted runners instead of the self-hosted ones
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
   group: checks-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A new push replaces a pull request's run; main finishes each run, so its emulator acceptance completes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    # Documentation-only changes skip the builds; "checks passed" still reports for them.
+    name: changed files
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.files.outputs.code }}
+    steps:
+      - id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')
+          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "${BEFORE#0000000}" = "$BEFORE" ]; then
+            # The compare API lists at most 300 files; a longer list counts as code.
+            files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq 'if (.files | length) < 300 then .files[].filename else "many" end')
+          else
+            files=many
+          fi
+          if printf '%s\n' "$files" | grep -qvE '(\.md$|^docs/|^LICENSE$)'; then code=true; else code=false; fi
+          echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+
   linux:
     # The self-hosted runner on the Linux server: the warm Ubuntu 22.04 container of
     # scripts/check-linux-container keeps apt packages, toolchains, caches and an incremental
     # checkout, and runs every Linux check at once (check-changed --all) on 16 threads.
     # Pull requests from forks run on a GitHub-hosted runner instead, so their code never reaches the server.
     # Before approving a fork's run, check that it leaves .github/ alone: a pull request runs its own workflow file.
+    # The repository variable ELARNI_HOSTED=true (or the hosted input of a manual run) moves every job to
+    # GitHub-hosted runners, for when the server is down.
     name: linux checks and release
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-24.04' || fromJSON('["self-hosted", "elarni-linux"]') }}
-    timeout-minutes: 60
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ${{ (github.event.pull_request.head.repo.fork || inputs.hosted || vars.ELARNI_HOSTED == 'true') && 'ubuntu-24.04' || fromJSON('["self-hosted", "elarni-linux"]') }}
+    timeout-minutes: 90
     steps:
+      - name: Free disk space for the container's toolchains
+        if: runner.environment == 'github-hosted'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -77,7 +115,8 @@ jobs:
             python scripts/check_report.py -- android/gradlew -p android :app:assembleRelease --no-daemon --console=plain
             mkdir -p /out/android-release && cp android/app/build/outputs/apk/release/*.apk /out/android-release/'
       - name: Android acceptance on emulators
-        if: steps.android.outputs.emulators == 'true'
+        # Hosted runners have 16 GB, too little for the three emulators.
+        if: steps.android.outputs.emulators == 'true' && runner.environment == 'self-hosted'
         # x86_64 twins of the Mac's AVDs over the server's KVM; check-android builds x86_64 for them. Two API 30
         # instances split its slower suites. The release acceptance (signed APK, 10-minute Doze) stays on the Mac.
         env:
@@ -88,11 +127,10 @@ jobs:
             set -e
             python scripts/prepare-android-linux --emulators
             python scripts/check-android --avd Elarni_API_36_16K --avd Elarni_API_30 --avd Elarni_API_30'
-      # Artifact storage is billed: while the account's billing is blocked, uploads fail
-      # ("storage quota has been hit"), and the runner's checkout keeps the files until the next run.
+      # Release builds come from release.yml on GitHub-hosted runners; these candidates are for testing main.
       - name: Retain candidates (not production releases)
-        continue-on-error: true
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsigned-candidate-linux
           path: |
@@ -106,7 +144,7 @@ jobs:
       - name: Retain synthetic check results
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: checks-linux
           path: |
@@ -118,21 +156,32 @@ jobs:
 
   checks:
     name: ${{ matrix.os }} ${{ matrix.part }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     # Windows runs on the self-hosted VM on the Linux server (scripts/windows-ci-vm), which keeps its own caches;
-    # pull requests from forks use the GitHub-hosted image, as in the linux job.
-    runs-on: ${{ startsWith(matrix.os, 'windows') && !github.event.pull_request.head.repo.fork && fromJSON('["self-hosted", "elarni-windows"]') || matrix.os }}
+    # pull requests from forks, and ELARNI_HOSTED runs, use the GitHub-hosted image, as in the linux job.
+    runs-on: ${{ startsWith(matrix.os, 'windows') && !(github.event.pull_request.head.repo.fork || inputs.hosted || vars.ELARNI_HOSTED == 'true') && fromJSON('["self-hosted", "elarni-windows"]') || matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        # Hosted runners have 2 (Windows) or 3 (macOS) cores, so their checks stay one after another:
-        # all at once, the timing tests flake.
-        os: [windows-2022, macos-15]
-        # Tests and release candidates build independently; separate jobs overlap them.
-        part: [checks, release]
         include:
+          # One Windows VM: tests and release candidate share a job, which saves a checkout and setup per run.
+          - os: windows-2022
+            part: checks and release
+            checks: true
+            release: true
+          # Hosted macOS runners are separate machines, so the two parts overlap.
+          - os: macos-15
+            part: checks
+            checks: true
+          - os: macos-15
+            part: release
+            release: true
           # The iPhone app needs Xcode 26.4 or newer, which runs only on macOS 26.
           - os: macos-26
             part: ios
+            ios: true
     defaults:
       run:
         shell: bash
@@ -152,6 +201,8 @@ jobs:
       - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           version: 2026.9.8
+          # The iPhone build needs only Go (and Rust through rustup), not Flutter.
+          install_args: ${{ matrix.ios && 'go' || '' }}
           # A self-hosted runner keeps its installs; restoring the 2 GB cache over them took 6 minutes.
           cache: ${{ runner.environment == 'github-hosted' }}
       - name: Install the Rust toolchain selected by the repository
@@ -177,20 +228,23 @@ jobs:
             deps-${{ runner.os }}-${{ matrix.part }}-
             deps-${{ runner.os }}-
       - name: Restore Rust caches
-        if: matrix.part == 'checks' && runner.environment == 'github-hosted'
+        if: runner.environment == 'github-hosted'
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          key: ${{ matrix.part }}
           workspaces: |
             . -> target
             . -> .build/windows-check/bundle with spaces/rust
+            . -> .build/ios/rust
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Fetch Flutter dependencies
+        if: ${{ !matrix.ios }}
         run: flutter pub get
       - name: Check report process integration
-        if: matrix.part == 'checks'
+        if: matrix.checks
         run: python scripts/check_report.py -- python -m unittest discover -s scripts -p check_report_test.py -v
       - name: Change selection checks
-        if: matrix.part == 'checks'
+        if: matrix.checks
         run: python scripts/check_report.py -- python -m unittest discover -s scripts -p check_changed_test.py -v
       - name: Install WiX Toolset v5
         if: runner.os == 'Windows'
@@ -198,76 +252,81 @@ jobs:
           dotnet tool update --global wix --version 5.0.2
           echo "$USERPROFILE\\.dotnet\\tools" >> "$GITHUB_PATH"
       - name: Packaging process checks
-        if: matrix.part == 'checks'
+        if: matrix.checks
         run: python scripts/check_report.py -- python -m unittest discover -s scripts -p package_release_test.py -v
       - name: Flutter analysis and widget checks
-        if: matrix.part == 'checks'
+        if: matrix.checks
         run: sh scripts/check-tests flutter
       - name: Rust checks
-        if: matrix.part == 'checks'
+        if: matrix.checks
         run: sh scripts/check-tests rust
       - name: Go checks
-        if: matrix.part == 'checks'
+        if: matrix.checks
         run: sh scripts/check-tests go
       - name: Shared desktop integration
-        if: matrix.part == 'checks' && runner.os != 'macOS'
+        if: matrix.checks && runner.os != 'macOS'
         run: python scripts/check-windows
+      - name: Restore cbindgen
+        if: runner.os == 'macOS' && !matrix.ios
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .toolchains/cbindgen
+          key: cbindgen-0.29.4-${{ runner.os }}-${{ runner.arch }}
       - name: Prepare macOS native tools
-        if: runner.os == 'macOS' && matrix.part != 'ios'
+        if: runner.os == 'macOS' && !matrix.ios
         run: |
-          cargo install cbindgen --version 0.29.4 --locked --root .toolchains/cbindgen
+          [ -x .toolchains/cbindgen/bin/cbindgen ] || cargo install cbindgen --version 0.29.4 --locked --root .toolchains/cbindgen
           ln -s "$(mise where go)" .toolchains/go
       - name: Swift and native FFI checks
-        if: matrix.part == 'checks' && runner.os == 'macOS'
+        if: matrix.checks && runner.os == 'macOS'
         run: sh scripts/check-tests swift
       - name: Newest server core gate
-        if: matrix.part == 'release'
+        if: matrix.release
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python scripts/check-server-cores
       - name: Windows release build
-        if: matrix.part == 'release' && runner.os == 'Windows'
+        if: matrix.release && runner.os == 'Windows'
         run: flutter build windows --release --target=lib/main.dart
       - name: Pinned Wintun load
-        if: matrix.part == 'release' && runner.os == 'Windows'
+        if: matrix.release && runner.os == 'Windows'
         env:
           # The Windows build extracted the pinned archive; setting this makes the test fail instead of skip.
           ELARNI_TEST_WINTUN: ${{ github.workspace }}\build\windows\x64\native\wintun\bin\amd64\wintun.dll
         run: python scripts/check_report.py -- go test -run '^TestWintunLoadRequiresThePinnedBuild$' ./Vendor/libXray/cmd/elarni-core
       - name: Windows routing metadata boundary
-        if: matrix.part == 'release' && runner.os == 'Windows'
+        if: matrix.release && runner.os == 'Windows'
         run: |
           python scripts/check_report.py -- cmake --build build/windows/x64 --config Release --target elarni_routing_checks
           python scripts/check_report.py -- build/windows/x64/checks/Release/elarni_routing_checks.exe
       - name: macOS unsigned Release build
-        if: matrix.part == 'release' && runner.os == 'macOS'
+        if: matrix.release && runner.os == 'macOS'
         run: |
           flutter build macos --release --config-only --target=lib/main.dart
           python scripts/check_report.py -- xcodebuild -quiet -workspace macos/Runner.xcworkspace -scheme Runner -configuration Release -derivedDataPath .build/release-macos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES build
       - name: Package Windows candidate
-        if: matrix.part == 'release' && runner.os == 'Windows'
+        if: matrix.release && runner.os == 'Windows'
         run: python scripts/check_report.py -- python scripts/package-windows --bundle build/windows/x64/runner/Release --output .build/release-candidate --unsigned --msi
       - name: Package macOS candidate
-        if: matrix.part == 'release' && runner.os == 'macOS'
-        run: python scripts/check_report.py -- python scripts/package-macos --app .build/release-macos/Build/Products/Release/Elarni.app --output .build/release-candidate --unsigned --dmg
+        if: matrix.release && runner.os == 'macOS'
+        # The disk image is packaged on main and manual runs; pull requests check the ZIP.
+        run: python scripts/check_report.py -- python scripts/package-macos --app .build/release-macos/Build/Products/Release/Elarni.app --output .build/release-candidate --unsigned ${{ github.event_name != 'pull_request' && '--dmg' || '' }}
       - name: Windows diagnostic candidate
-        if: matrix.part == 'release' && runner.os == 'Windows'
+        if: matrix.release && runner.os == 'Windows'
         run: python scripts/check_report.py -- python scripts/build-diagnostics-windows --bundle build/windows/x64/runner/Release --output .build/diagnostics-windows
       - name: macOS unsigned diagnostic build
-        if: matrix.part == 'release' && runner.os == 'macOS'
+        if: matrix.release && runner.os == 'macOS' && github.event_name != 'pull_request'
         # scripts/build-diagnostics-macos needs the team's signing identity; this builds its configuration unsigned.
         run: python scripts/check_report.py -- xcodebuild -quiet -workspace macos/Runner.xcworkspace -scheme Runner -configuration Debug -derivedDataPath .build/diagnostics-macos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES ELARNI_DIAGNOSTICS_SUFFIX=-diagnostics 'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG ELARNI_DIAGNOSTICS' build
       - name: iOS unsigned device build
-        if: matrix.part == 'ios'
+        if: matrix.ios
         run: |
           rustup target add aarch64-apple-ios
           sh scripts/build-ios-native iphoneos
           python scripts/check_report.py -- xcodebuild -quiet -project ios/Elarni/Elarni.xcodeproj -scheme Elarni -configuration Debug -destination 'generic/platform=iOS' -derivedDataPath .build/ios/Device CODE_SIGNING_ALLOWED=NO build
-      # Uploads fail while billing is blocked; see the linux job.
       - name: Retain candidates (not production releases)
-        if: matrix.part == 'release'
-        continue-on-error: true
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: matrix.release && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsigned-candidate-${{ matrix.os }}
           path: |
@@ -280,7 +339,7 @@ jobs:
       - name: Retain synthetic check results
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: checks-${{ matrix.os }}-${{ matrix.part }}
           path: |
@@ -289,3 +348,14 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14
+
+  passed:
+    # The one required check: it fails when any job failed or was cancelled, and passes when they were skipped.
+    name: checks passed
+    if: always()
+    needs: [changes, linux, checks]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail when a check failed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

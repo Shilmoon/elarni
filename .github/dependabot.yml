@@ -1,38 +1,47 @@
 version: 2
-# Monthly, one grouped pull request per ecosystem; security updates still arrive as soon as they are published.
+# One monthly pull request for every ecosystem: each run of the checks occupies the single self-hosted Linux runner
+# and Windows VM, so five separate pull requests queued for an hour. Security updates still arrive as soon as they
+# are published, and are not delayed by the cooldown.
+multi-ecosystem-groups:
+  dependencies:
+    schedule:
+      interval: monthly
 updates:
+  # Version updates wait a week after release (patch-only updates merge on their own once the checks pass).
   - package-ecosystem: github-actions
     directory: /
-    schedule:
-      interval: monthly
-    groups:
-      actions:
-        patterns: ['*']
+    patterns: ['*']
+    multi-ecosystem-group: dependencies
+    cooldown:
+      default-days: 7
   - package-ecosystem: cargo
     directory: /
-    schedule:
-      interval: monthly
-    groups:
-      cargo:
-        patterns: ['*']
+    patterns: ['*']
+    multi-ecosystem-group: dependencies
+    cooldown:
+      default-days: 7
   - package-ecosystem: pub
     directory: /
-    schedule:
-      interval: monthly
-    groups:
-      pub:
-        patterns: ['*']
+    patterns: ['*']
+    multi-ecosystem-group: dependencies
+    cooldown:
+      default-days: 7
+    ignore:
+      # Pinned country names: 2.2.0 renamed Nauru to "Naoero" in English. Update by hand and regenerate
+      # android/app/src/main/assets/server-locations.json (scripts/export-android-locations.dart).
+      - dependency-name: l10n_countries
   - package-ecosystem: gradle
     directory: /android
-    schedule:
-      interval: monthly
-    groups:
-      gradle:
-        patterns: ['*']
+    patterns: ['*']
+    multi-ecosystem-group: dependencies
+    cooldown:
+      default-days: 7
   - package-ecosystem: npm
     directory: /
-    schedule:
-      interval: monthly
+    patterns: ['*']
+    multi-ecosystem-group: dependencies
+    cooldown:
+      default-days: 7
   # The Go forks follow upstream Xray-core and libXray: security updates only.
   - package-ecosystem: gomod
     directories: [/Vendor/Xray-core, /Vendor/libXray]
