@@ -4,6 +4,32 @@ Desktop releases are direct downloads: a notarized macOS ZIP (optionally a DMG),
 a signed Windows ZIP and MSI, and a Linux `.deb`, AppImage and portable archive.
 CI builds **unsigned** candidates only; signing happens on a release machine.
 
+## Release flow
+
+Release files are built by `.github/workflows/release.yml` on GitHub-hosted runners, which start without
+any cache from earlier builds. The self-hosted CI runners also run pull request and Dependabot code, so
+nothing they build is published.
+
+1. Run the workflow with stage `build` on the commit to release (green on Development checks). It builds
+   the Linux packages, the Windows ZIP and MSI, the source archives and the unsigned APK, and records
+   build provenance for each file.
+2. On the release machine, sign the APK and collect the files: `assemble.sh <run id> <dir>` (token and
+   keystore password on stdin), then `gh_release.py draft <tag> <notes.md> <run id> <dir>/*` creates a
+   draft release at the run's commit.
+3. Run the workflow with stage `publish` and the tag. It checks every file against `SHA256SUMS` and,
+   except for the signed APK, against the build provenance; then it signs `SHA256SUMS` (Sigstore,
+   keyless) and publishes the release.
+
+Users can check a download:
+
+```sh
+gh attestation verify Elarni-0.4.1-12-x86_64.AppImage --repo Shilmoon/elarni
+cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/Shilmoon/elarni/\.github/workflows/release\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+sha256sum -c SHA256SUMS
+```
+
 Upgrades are manual. Release builds read
 `https://api.github.com/repos/Shilmoon/elarni/releases/latest` once a day and show
 a notice when a newer version exists (Settings › General › Update feed changes or
