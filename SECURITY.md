@@ -6,9 +6,9 @@ Security fixes go into the latest release. Update to it before reporting.
 
 ## Reporting a vulnerability
 
-Do not open a public issue. Report privately through GitHub: open the
-repository's **Security** tab, then **Advisories**, and choose
-**Report a vulnerability**. Include the
+Do not open a public issue. Report privately through GitHub:
+[report a vulnerability](https://github.com/Shilmoon/elarni/security/advisories/new)
+(the repository's **Security** tab, then **Advisories**). Include the
 affected platform and version, steps to reproduce, and the impact you observed.
 The report stays private until a fix is released.
 

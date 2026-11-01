@@ -7,6 +7,7 @@ import plistlib
 import subprocess
 import sys
 import tempfile
+import time
 
 from release_support import prepare_output, require_files, version, write_manifest
 
@@ -124,8 +125,18 @@ def main():
             run('ditto', app, image / 'Elarni.app')
             (image / 'Applications').symlink_to('/Applications')
             disk = args.output / (name + '.dmg')
-            run('hdiutil', 'create', '-volname', 'Elarni', '-srcfolder', image, '-format', 'UDZO', disk)
-            run('hdiutil', 'verify', disk)
+            # hdiutil fails now and then on busy machines (hosted CI runners: "Resource busy", failed verify);
+            # a fresh image on a later attempt passes.
+            for attempt in range(3):
+                disk.unlink(missing_ok=True)
+                try:
+                    run('hdiutil', 'create', '-volname', 'Elarni', '-srcfolder', image, '-format', 'UDZO', disk)
+                    run('hdiutil', 'verify', disk)
+                    break
+                except subprocess.CalledProcessError:
+                    if attempt == 2:
+                        raise
+                    time.sleep(10)
             artifacts.append(disk)
         print(json.dumps(write_manifest(args.output, artifacts, 'macos-arm64',
                          'unsigned-candidate' if args.unsigned else

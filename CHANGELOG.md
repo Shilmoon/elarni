@@ -4,6 +4,11 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Changed
+
+- Release files are built on GitHub-hosted runners and come with build provenance
+  (`gh attestation verify`) and a Sigstore-signed `SHA256SUMS`; see docs/RELEASING.md.
+
 ## 0.4.0 - 2026-11-01
 
 First open-source release.

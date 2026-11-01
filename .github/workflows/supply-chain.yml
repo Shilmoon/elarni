@@ -1,0 +1,53 @@
+name: Supply chain
+
+# Known vulnerabilities in the Go core and Rust crates, and a tampered Gradle wrapper. GitHub-hosted runners,
+# a few minutes; the weekly run catches advisories published after the last change.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gradle-wrapper:
+    name: gradle wrapper
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Compares gradle-wrapper.jar with the checksums Gradle publishes for its releases.
+      - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+  govulncheck:
+    name: go vulnerabilities
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          version: 2026.9.8
+          install_args: go
+      # Reports only vulnerabilities the shipped core can reach (libXray and the Xray-core code it calls).
+      - working-directory: Vendor/libXray
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  cargo-audit:
+    name: rust advisories
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-audit@0.22.2
+      # Vulnerabilities fail the job; "unmaintained" notices are listed as warnings.
+      - run: cargo audit --file Cargo.lock

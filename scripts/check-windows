@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from check_report import record_check
 
 root = Path(__file__).resolve().parent.parent
@@ -48,6 +49,11 @@ shards = max(4, min(8, (os.cpu_count() or 8) // 2))
 # Flutter names build/test_cache after the dart-defines; shards sharing one file race to copy it.
 runs = []
 for index in range(shards):
+    # Started together, the shards collide in Flutter's startup (flutter.bat rewrites bin/cache/engine.realm,
+    # which another shard holds open) and in the native assets build (build/native_assets is replaced while
+    # another shard copies from it). shortcut: a fixed 5 s stagger; wait on each shard's first output if it recurs.
+    if index:
+        time.sleep(5)
     log = tempfile.TemporaryFile()
     runs.append((subprocess.Popen([str(flutter), 'test', '--no-pub', '--no-test-assets', '--reporter', os.environ.get('ELARNI_FLUTTER_REPORTER', 'expanded'),
                                    f'--total-shards={shards}', f'--shard-index={index}', f'--dart-define=ELARNI_TEST_SHARD={index}',
