@@ -88,11 +88,12 @@ jobs:
       - run: flutter pub get
       - run: flutter build windows --release --target=lib/main.dart
       - name: Package the unsigned ZIP and MSI
-        run: python scripts/package-windows --bundle build/windows/x64/runner/Release --output .build/release-candidate --unsigned --msi
+        run: python scripts/package-windows --bundle build/windows/x64/runner/Release --output .build/windows-release/release-candidate --unsigned --msi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsigned-candidate-windows-2022
-          path: .build/release-candidate/
+          # The parent keeps release-candidate/ in the artifact; a lone directory's files land at its root.
+          path: .build/windows-release/
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 30
