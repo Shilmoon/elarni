@@ -9,7 +9,7 @@ rust-version.workspace = true
 crate-type = ["lib", "staticlib"]
 
 [dependencies]
-tokio = { version = "=1.53.3", features = ["io-util", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "=1.54.1", features = ["io-util", "rt-multi-thread", "sync", "time"] }
 tun2proxy = { path = "../../Vendor/tun2proxy", default-features = false }
 
 [dev-dependencies]
