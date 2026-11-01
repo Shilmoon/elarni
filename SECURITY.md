@@ -12,6 +12,10 @@ repository's **Security** tab, then **Advisories**, and choose
 affected platform and version, steps to reproduce, and the impact you observed.
 The report stays private until a fix is released.
 
+Elarni has one maintainer: expect a first reply within a week, on a best-effort
+basis. Reproduce the problem yourself before reporting; unverified tool output
+is closed without a fix.
+
 Examples of what to report:
 
 - traffic, DNS or IPv6 leaking outside the tunnel when the app reports it as connected

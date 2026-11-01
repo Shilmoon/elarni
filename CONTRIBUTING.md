@@ -40,3 +40,15 @@ fixtures and must inject short timeouts instead of sleeping.
 - Conventional Commits, e.g. `fix(android): keep the tile state after a reconnect`.
 - Add a line under "Unreleased" in [CHANGELOG.md](CHANGELOG.md).
 - Contributions are licensed under GPL-3.0-or-later.
+- CI runs on a pull request from a fork after a maintainer approves it.
+
+## AI tools
+
+AI help is fine, and [AGENTS.md](AGENTS.md) gives coding agents the project's
+commands. You answer for what you submit:
+
+- Name the tool in the pull request and say what it did.
+- Understand every line and be able to explain it without the tool.
+- Run the checks yourself before opening the pull request.
+- Reproduce a bug or security report yourself before filing it; unverified
+  generated reports are closed.

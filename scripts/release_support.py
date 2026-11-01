@@ -13,7 +13,7 @@ PUBLIC_ROOT_FILES = {
     '.gitignore', '.metadata', 'Cargo.toml', 'Cargo.lock', 'pubspec.yaml', 'pubspec.lock',
     'go.work', 'go.work.sum', 'rust-toolchain.toml', 'mise.toml', 'ffigen.yaml', 'l10n.yaml', '.gitattributes',
     'package.json', 'package-lock.json', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES',
-    'README.md', 'CONTRIBUTING.md', 'SECURITY.md', 'CHANGELOG.md',
+    'README.md', 'CONTRIBUTING.md', 'SECURITY.md', 'CHANGELOG.md', 'AGENTS.md', 'CLAUDE.md',
 }
 PUBLIC_DIRECTORIES = {'.github', 'Vendor', 'android', 'docs', 'ios', 'bin', 'include', 'lib', 'linux', 'macos', 'windows',
                       'native', 'scripts', 'test', 'third_party', 'assets'}

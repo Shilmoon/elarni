@@ -19,8 +19,10 @@ jobs:
     # The self-hosted runner on the Linux server: the warm Ubuntu 22.04 container of
     # scripts/check-linux-container keeps apt packages, toolchains, caches and an incremental
     # checkout, and runs every Linux check at once (check-changed --all) on 16 threads.
+    # Pull requests from forks run on a GitHub-hosted runner instead, so their code never reaches the server.
+    # Before approving a fork's run, check that it leaves .github/ alone: a pull request runs its own workflow file.
     name: linux checks and release
-    runs-on: [self-hosted, elarni-linux]
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-24.04' || fromJSON('["self-hosted", "elarni-linux"]') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -114,8 +116,9 @@ jobs:
 
   checks:
     name: ${{ matrix.os }} ${{ matrix.part }}
-    # Windows runs on the self-hosted VM on the Linux server (scripts/windows-ci-vm), which keeps its own caches.
-    runs-on: ${{ startsWith(matrix.os, 'windows') && fromJSON('["self-hosted", "elarni-windows"]') || matrix.os }}
+    # Windows runs on the self-hosted VM on the Linux server (scripts/windows-ci-vm), which keeps its own caches;
+    # pull requests from forks use the GitHub-hosted image, as in the linux job.
+    runs-on: ${{ startsWith(matrix.os, 'windows') && !github.event.pull_request.head.repo.fork && fromJSON('["self-hosted", "elarni-windows"]') || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
