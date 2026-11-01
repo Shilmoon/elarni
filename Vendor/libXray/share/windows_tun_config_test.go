@@ -319,12 +319,13 @@ func TestWindowsTunnelDNSForwardsOtherQueryTypes(t *testing.T) {
 // Windows retries a truncated answer over TCP; forwarding that retry over UDP
 // truncates it again, so large answers never resolve.
 func TestWindowsTunnelDNSKeepsTCPQueriesOnTCP(t *testing.T) {
-	udp, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	// A system-chosen UDP port can have its TCP twin taken; trafficPort finds one free for both.
+	port := trafficPort(t)
+	udp, err := net.ListenPacket("udp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer udp.Close()
-	port := udp.LocalAddr().(*net.UDPAddr).Port
 	tcp, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		t.Fatal(err)

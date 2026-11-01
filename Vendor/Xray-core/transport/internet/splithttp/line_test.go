@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math/rand/v2"
 	gonet "net"
 	"slices"
 	"strconv"
@@ -295,14 +296,28 @@ func xhttpTransport(t *testing.T, l *line, name, settings string) transport {
 	}}
 }
 
-// freePort is needed because the Xray listeners treat port 0 as a unix socket.
+// freePort is needed because the Xray listeners treat port 0 as a unix socket. It picks a port
+// below the ephemeral ranges (Linux 32768 and up, Windows and macOS 49152 and up): a port the
+// system handed out could go to another test's outgoing connection before the listener binds it.
+// The port is free for TCP and UDP, which XHTTP/3 listens on.
 func freePort(t *testing.T) net.Port {
-	ln, err := gonet.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	t.Helper()
+	for range 64 {
+		port := 20000 + rand.IntN(12000)
+		address := gonet.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+		tcp, err := gonet.Listen("tcp", address)
+		if err != nil {
+			continue
+		}
+		udp, err := gonet.ListenPacket("udp", address)
+		tcp.Close()
+		if err == nil {
+			udp.Close()
+			return net.Port(port)
+		}
 	}
-	defer ln.Close()
-	return net.Port(ln.Addr().(*gonet.TCPAddr).Port)
+	t.Fatal("no free port below the ephemeral range")
+	return 0
 }
 
 func destination(t *testing.T, addr string) net.Destination {

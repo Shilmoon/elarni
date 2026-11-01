@@ -16,6 +16,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	mathrand "math/rand/v2"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -932,7 +933,9 @@ func startTrafficCore(t *testing.T, profile map[string]any) (*core.Instance, fun
 
 // trafficPort returns a port free for both TCP and UDP: SOCKS, Shadowsocks and
 // QUIC fixtures bind both, and a one-protocol check can land on a busy port
-// (Windows mDNS holds UDP 5353).
+// (Windows mDNS holds UDP 5353). It stays below the ephemeral ranges (Linux 32768
+// and up, Windows and macOS 49152 and up), so another test's outgoing connection
+// cannot take the port before the fixture binds it.
 func trafficPort(t *testing.T, hosts ...string) int {
 	t.Helper()
 	host := "127.0.0.1"
@@ -940,11 +943,11 @@ func trafficPort(t *testing.T, hosts ...string) int {
 		host = hosts[0]
 	}
 	for range 64 {
-		tcp, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+		port := 20000 + mathrand.IntN(12000)
+		tcp, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 		if err != nil {
-			t.Fatal(err)
+			continue
 		}
-		port := tcp.Addr().(*net.TCPAddr).Port
 		udp, err := net.ListenPacket("udp", net.JoinHostPort(host, strconv.Itoa(port)))
 		tcp.Close()
 		if err == nil {
