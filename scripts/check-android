@@ -84,24 +84,40 @@ def boot(avds):
     """Start each AVD read-only (so one AVD can run several times) on a free port; return the serials once booted."""
     used = set(re.findall(r'^emulator-(\d+)', run(adb, 'devices', capture=True), re.M))
     ports = (port for port in range(5554, 5682, 2) if str(port) not in used)
-    started = []
-    for avd in avds:
-        port = next(ports)
+    def launch(avd, port):
         out.mkdir(parents=True, exist_ok=True)
-        with open(out / f'emulator-{port}.log', 'w') as log:
+        with open(out / f'emulator-{port}.log', 'a') as log:
             # Without a host GPU (Linux CI), gfxstream's software Vulkan doubled each emulator's memory.
             gpu = ['-gpu', 'swiftshader_indirect'] if sys.platform.startswith('linux') else []
-            subprocess.Popen([sdk / 'emulator/emulator', '-avd', avd, '-port', str(port), '-read-only', '-no-snapshot',
+            return subprocess.Popen([sdk / 'emulator/emulator', '-avd', avd, '-port', str(port), '-read-only', '-no-snapshot',
                               '-no-window', '-no-audio', '-no-boot-anim', *gpu], env=env, stdout=log, stderr=subprocess.STDOUT,
                              start_new_session=True)
-        started.append(f'emulator-{port}')
-    for serial in started:
-        deadline = time.monotonic() + 300
-        while subprocess.run([adb, '-s', serial, 'shell', 'getprop', 'sys.boot_completed'], env=env,
-                             capture_output=True, text=True).stdout.strip() != '1':
-            if time.monotonic() > deadline:
-                raise SystemExit(f'{serial} did not boot in 5 minutes; see {out}/emulator-{serial[9:]}.log')
+    def booted(serial, minutes):
+        deadline = time.monotonic() + 60 * minutes
+        while time.monotonic() < deadline:
+            if subprocess.run([adb, '-s', serial, 'shell', 'getprop', 'sys.boot_completed'], env=env,
+                              capture_output=True, text=True).stdout.strip() == '1':
+                return True
             time.sleep(2)
+        return False
+    started, processes = [], []
+    for avd in avds:
+        port = next(ports)
+        (out / f'emulator-{port}.log').unlink(missing_ok=True)
+        processes.append(launch(avd, port))
+        started.append(f'emulator-{port}')
+    for index, (avd, serial) in enumerate(zip(avds, started)):
+        if booted(serial, 5):
+            continue
+        # A cold boot beside other emulators on a loaded host sometimes hangs for good; a second start succeeds.
+        print(f'{serial} did not boot in 5 minutes; restarting it once', flush=True)
+        # The emulator leads its own session, so this also stops its qemu child and frees the port.
+        os.killpg(processes[index].pid, 9)
+        processes[index].wait()
+        time.sleep(5)
+        processes[index] = launch(avd, int(serial[9:]))
+        if not booted(serial, 5):
+            raise SystemExit(f'{serial} did not boot after a restart; see {out}/emulator-{serial[9:]}.log')
     print(f'Booted {", ".join(f"{avd} as {serial}" for avd, serial in zip(avds, started))}', flush=True)
     return started
 
