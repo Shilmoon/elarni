@@ -927,6 +927,5 @@ private struct ProviderSwitchRequest: Decodable {
 enum ProviderError: Error {
   case invalidState
   case missingPlan
-  case coreExited
   case startCancelled
 }

@@ -6,7 +6,6 @@ enum RoutingStoreError: Error {
   case invalidCatalog
   case invalidImport
   case notFound
-  case inUse
   case noSelectedSubscription
   case sharedContainerUnavailable
   // Selectors whose codes the geofiles lack although a Proxy rule or another reference needs them.

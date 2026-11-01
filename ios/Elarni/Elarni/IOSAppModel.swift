@@ -1360,7 +1360,7 @@ final class IOSAppModel {
       case .hwidLimit: return String(localized: "The provider’s device limit has been reached. Manage registered devices in your provider account.")
       case .invalidDisplayName: return String(localized: "Use a nonempty name without control characters.")
       case .feedTooLarge: return String(localized: "This subscription exceeds the supported size. Ask the provider for a smaller feed.")
-      case .fetchFailed, .fetchRejected: return String(localized: "The subscription could not be downloaded. Check the provider address and try again.")
+      case .fetchFailed: return String(localized: "The subscription could not be downloaded. Check the provider address and try again.")
       case .fetchClass("dns_failed"): return String(localized: "The address could not be looked up. Check this device’s network and DNS, then retry.")
       case .fetchClass("provider_unreachable"): return String(localized: "The provider’s server did not answer. Your network may block it, or it is down. Retry later or ask the provider for a mirror.")
       case .fetchClass("provider_error"): return String(localized: "The provider’s server reported an error. Nothing is wrong with Elarni or this device; retry later.")

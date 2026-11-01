@@ -131,12 +131,6 @@ final class TunnelMethodChannel {
             result(try await store.refresh(id: id).channelMap)
             return
           }
-          if call.method == "importAndPrepare" {
-            guard let endpoint = try Self.arguments(call)["endpoint"] as? String else { throw RunnerTunnelError.invalidEndpoint }
-            try await self.importAndPrepare(endpoint)
-            result(["state": "prepared"])
-            return
-          }
           // Downloads must not occupy the connection command owner.
           if ["refreshSubscription", "addSubscription", "refreshRoutingGeofiles"].contains(call.method) {
             let arguments = try Self.arguments(call)
@@ -265,12 +259,6 @@ final class TunnelMethodChannel {
                 throw RoutingStoreError.invalidImport
               }
               result(try await self.importRoutingContent(content))
-            case "importRoutingFile":
-              result(try await self.importRoutingContent(RoutingImportReader.file()))
-            case "importRoutingQRImage":
-              result(try await self.importRoutingContent(RoutingImportReader.qrImage()))
-            case "importRoutingQRCamera":
-              result(try await self.importRoutingContent(try await RoutingImportReader.camera()))
             case "updateRoutingProfile":
               let arguments = try Self.arguments(call)
               guard let id = arguments["id"] as? String,
@@ -701,30 +689,6 @@ final class TunnelMethodChannel {
     window.makeKeyAndOrderFront(nil)
     return await withCheckedContinuation { done in
       alert.beginSheetModal(for: window) { done.resume(returning: $0 == .alertFirstButtonReturn) }
-    }
-  }
-
-  @MainActor
-  func importAndPrepare(_ endpoint: String) async throws {
-    let store = try subscriptionStore()
-    let nodes = try store.parseFeed(Data(endpoint.utf8))
-    guard nodes.count == 1, nodes[0].format == "xrayProfile" else { throw RunnerTunnelError.invalidEndpoint }
-    let current = try? await loadManager()
-    try Task.checkCancellation()
-    guard current?.connection.status != .connected, current?.connection.status != .connecting,
-          current?.connection.status != .reasserting else { throw RunnerTunnelError.invalidState }
-    var id = ""
-    try await commands.perform { id = try store.registerProfiles(endpoint) }
-    _ = try await store.refresh(id: id)
-    guard let nodeID = try store.nodeID(subscriptionID: id, matching: nodes[0]) else {
-      throw RunnerTunnelError.invalidEndpoint
-    }
-    try await commands.perform {
-      let latest = try? await self.loadManager()
-      guard self.commands.intent != .connected,
-            latest?.connection.status != .connected, latest?.connection.status != .connecting,
-            latest?.connection.status != .reasserting else { throw RunnerTunnelError.invalidState }
-      _ = try await self.selectNode(id: nodeID)
     }
   }
 

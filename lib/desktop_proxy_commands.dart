@@ -379,11 +379,7 @@ extension _ProxyCommands on DesktopProxy {
       'deleteSubscription',
       'updateTunnelSettings',
       'updateInboundCredentials',
-      'importAndPrepare',
       'importRouting',
-      'importRoutingFile',
-      'importRoutingQRImage',
-      'importRoutingQRCamera',
       'updateRoutingProfile',
       'duplicateRoutingProfile',
       'deleteRoutingProfile',
@@ -399,9 +395,6 @@ extension _ProxyCommands on DesktopProxy {
       if (_automationBusy) await _operation?.future;
       if (_automation.intent) _automation.healthAt = _now;
     }
-    if (method == 'importAndPrepare' &&
-        !{'disconnected', 'prepared', 'failed'}.contains(_state))
-      throw desktopError('busy');
     PlatformException? refreshError;
     final result = await _mutate((candidate) async {
       CatalogMap? warning;
@@ -525,13 +518,6 @@ extension _ProxyCommands on DesktopProxy {
                 'russianEntryNodeIDs': old.where(ids.contains).toList(),
             };
           }
-        case 'importAndPrepare':
-          final nodes = await candidate.importLocal(
-            await _importContent('text', args['endpoint']),
-          );
-          if (nodes.length != 1 || nodes.single['format'] != 'xrayProfile')
-            throw desktopError('unsupported_profile');
-          candidate.data['selectedNodeId'] = nodes.first['id'];
         case 'setNodeIPPreference':
           candidate.setNodeIPPreference(
             args['nodeId']! as String,
@@ -687,19 +673,9 @@ extension _ProxyCommands on DesktopProxy {
               .copyWith(inboundAuthEnabled: true)
               .toMap();
         case 'importRouting':
-        case 'importRoutingFile':
-        case 'importRoutingQRImage':
-        case 'importRoutingQRCamera':
         case 'updateRoutingProfile':
-          final source = method == 'importRoutingFile'
-              ? 'file'
-              : method == 'importRoutingQRImage'
-              ? 'qrImage'
-              : method == 'importRoutingQRCamera'
-              ? 'camera'
-              : 'text';
           candidate.importRouting(
-            await _importContent(source, args['content']),
+            await _importContent('text', args['content']),
             update: method == 'updateRoutingProfile'
                 ? args['id']! as String
                 : null,
@@ -787,7 +763,6 @@ extension _ProxyCommands on DesktopProxy {
         'updateSubscriptionFetchOptions' => candidate.snapshot(),
         'updateTunnelSettings' ||
         'updateInboundCredentials' => candidate.settingsSnapshot(),
-        'importAndPrepare' => <String, Object?>{},
         _ => candidate.routingSnapshot(),
       };
     });
@@ -797,8 +772,7 @@ extension _ProxyCommands on DesktopProxy {
       _refreshBackoff.remove('source:${args['id']}');
     if (method == 'refreshRoutingGeofiles')
       _refreshBackoff.remove('geo:${args['id']}');
-    if (method == 'selectNode' || method == 'importAndPrepare')
-      result['state'] = _state;
+    if (method == 'selectNode') result['state'] = _state;
     if (result.containsKey('profiles')) return _catalog!.routingSnapshot();
     return result;
   }

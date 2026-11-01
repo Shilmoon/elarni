@@ -148,15 +148,6 @@ struct GettingStarted: View {
   }
 }
 
-struct AppSettingLabel: View {
-  let title: String
-  let systemImage: String
-  var body: some View {
-    Label { Text(title) } icon: {
-      Image(systemName: systemImage).foregroundStyle(AppPalette.secondary).frame(width: 24)
-    }
-  }
-}
 
 struct LocationFlag: View {
   let location: ServerLocation?

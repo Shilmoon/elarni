@@ -18,6 +18,7 @@ These use loopback fixtures and never change routes, DNS or adapters.
 | Release tooling in `scripts/` | `python -m unittest discover -s scripts -p package_release_test.py` |
 | Windows local proxy | `python scripts/check-windows` |
 | Everything CI runs on this OS | `python scripts/check-changed --all` |
+| Any check on a Mac, over SSH | `python scripts/check-mac --host user@mac [-- <command>]` |
 
 Lint, as CI runs it:
 
@@ -53,8 +54,11 @@ another VPN, against a release build.
   (as root), `check-linux-storage` and `check-linux-desktop` (as a normal user).
 - Windows: `python scripts/check-windows-vpn` from an elevated terminal.
 - macOS: `python3 scripts/check-extension --fixture <file>` on a disposable Mac
-  account (`--list` shows the cases, `--build-only` only compiles).
+  account (`--list` shows the cases, `--build-only` only compiles);
+  `scripts/check-macos-harness` self-tests its network fixture on loopback.
 - Android: `scripts/check-android`, see [android/README.md](../android/README.md).
 - iOS: `scripts/check-ios <simulator-udid>`, see [ios/README.md](../ios/README.md).
+- Protocol benchmark: `scripts/benchmark-protocols` against live servers;
+  `scripts/check-protocol-benchmark` self-tests it on loopback with Chromium.
 - Sleep and idle cost: with Elarni connected, `python scripts/measure-wake`
   (close and open the lid) and `python scripts/measure-idle`.

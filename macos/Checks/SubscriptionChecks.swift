@@ -202,9 +202,7 @@ struct SubscriptionChecks {
       let revision = try routes.runtimeRevision(subscriptionID: "first")!.digest
       let checkpoint = try routes.checkpoint()
 
-      let deleted: [String: Any]
-      do { deleted = try routes.delete(id: id) }
-      catch RoutingStoreError.inUse { throw Failure(message: "assigned routing profile deletion was rejected as in use") }
+      let deleted = try routes.delete(id: id)
       try expect((deleted["profiles"] as! [[String: Any]]).map { $0["id"] as! String } == [keptID], "deletion removed an unrelated profile")
       try expect(deleted["assignments"] as? [String: String] == ["unrelated": keptID], "deletion retained assignments or detached an unrelated profile")
       try expect(routes.runtimeRevision(subscriptionID: "first") == nil && routes.runtimeRevision(subscriptionID: "second") == nil, "deleted routing is still active")

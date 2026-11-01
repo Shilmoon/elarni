@@ -178,9 +178,6 @@ abstract interface class TunnelControl {
   Future<NodeSelectionResult> selectNode(String id);
   Future<RoutingSnapshot> routingProfiles();
   Future<RoutingSnapshot> importRouting(String content);
-  Future<RoutingSnapshot> importRoutingFile();
-  Future<RoutingSnapshot> importRoutingQRImage();
-  Future<RoutingSnapshot> importRoutingQRCamera();
   Future<RoutingSnapshot> updateRoutingProfile(String id, String content);
   Future<RoutingSnapshot> duplicateRoutingProfile(String id);
   Future<RoutingSnapshot> deleteRoutingProfile(String id);
@@ -191,7 +188,6 @@ abstract interface class TunnelControl {
     String? profileId,
   );
   Future<RoutingSnapshot> refreshRoutingGeofiles(String id, {String? file});
-  Future<String> importAndPrepare(String endpointText);
   Future<String> connect();
   Future<String> disconnect();
   Future<String> state();
@@ -531,18 +527,6 @@ final class NativeTunnelControl implements TunnelControl {
   }
 
   @override
-  Future<RoutingSnapshot> importRoutingFile() async =>
-      RoutingSnapshot.fromMap(await _mapResult('importRoutingFile'));
-
-  @override
-  Future<RoutingSnapshot> importRoutingQRImage() async =>
-      RoutingSnapshot.fromMap(await _mapResult('importRoutingQRImage'));
-
-  @override
-  Future<RoutingSnapshot> importRoutingQRCamera() async =>
-      RoutingSnapshot.fromMap(await _mapResult('importRoutingQRCamera'));
-
-  @override
   Future<RoutingSnapshot> updateRoutingProfile(
     String id,
     String content,
@@ -615,17 +599,6 @@ final class NativeTunnelControl implements TunnelControl {
       TunnelSettings.fromMap(
         await _mapResult('updateTunnelSettings', settings.toMap()),
       );
-
-  @override
-  Future<String> importAndPrepare(String endpointText) async {
-    if (endpointText.isEmpty || endpointText.length > 64 * 1024) {
-      throw const FormatException('Endpoint input is invalid.');
-    }
-    final value = await _mapResult('importAndPrepare', <String, Object?>{
-      'endpoint': endpointText,
-    });
-    return value['state'] as String? ?? 'failed';
-  }
 
   @override
   Future<String> connect() => _stateResult('connect');

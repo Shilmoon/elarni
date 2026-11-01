@@ -12,7 +12,7 @@ extension TunnelMethodChannel {
   static let automationKey = "ElarniAutomationV1"
   private static let episodeKey = "ElarniRecoveryEpisodeV1"
   static let automationMutationMethods: Set<String> = [
-    "selectNode", "refreshSubscription", "deleteSubscription", "deleteNode", "importAndPrepare", "importClientProfiles", "selectProfileGroup", "setNodeIPPreference",
+    "selectNode", "refreshSubscription", "deleteSubscription", "deleteNode", "importClientProfiles", "selectProfileGroup", "setNodeIPPreference",
     "updateTunnelSettings", "updateInboundCredentials", "updateRoutingProfile",
     "assignRoutingProfile", "setRoutingProfileEnabled", "resetRoutingProfile", "deleteRoutingProfile",
     "refreshRoutingGeofiles", "importRouting", "configureAutomation",

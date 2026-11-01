@@ -1308,14 +1308,6 @@ final class SubscriptionStore {
     try parseImport(data).nodes
   }
 
-  /// The stored server with this configuration, which a local import may have kept.
-  func nodeID(subscriptionID: String, matching node: ParsedNode) throws -> String? {
-    let identity = try outboundIdentity(node.outbound)
-    return try catalog.subscriptions.first { $0.id == subscriptionID }?.nodes.first {
-      try outboundIdentity(readSecret(ref: $0.outboundRef)) == identity
-    }?.id
-  }
-
   func normalizeClientInput(_ text: String) throws -> (text: String, name: String?, shareLink: String?) {
     guard text.utf8.count <= Self.maxFeedBytes else { throw SubscriptionError.feedTooLarge }
     let data = try JSONSerialization.data(withJSONObject: ["apiVersion": 1,
@@ -1910,20 +1902,12 @@ enum SubscriptionError: Error, Equatable {
   case fetchFailed
   /// The core's download failure class, such as rate_limited, so the app can say whose fault it is.
   case fetchClass(String)
-  case fetchRejected(Int)
   case feedTooLarge
   case hwidRequired
   case hwidLimit
 
   var hwidStatus: String? {
     switch self { case .hwidRequired: "device_required"; case .hwidLimit: "device_limit"; default: nil }
-  }
-
-  static func hwidFailure(_ response: HTTPURLResponse) -> Self? {
-    guard !(200...299).contains(response.statusCode) else { return nil }
-    if ["X-Hwid-Limit", "X-Hwid-Max-Devices-Reached"].contains(where: { response.value(forHTTPHeaderField: $0)?.lowercased() == "true" }) { return .hwidLimit }
-    if response.value(forHTTPHeaderField: "X-Hwid-Not-Supported")?.lowercased() == "true" { return .hwidRequired }
-    return nil
   }
 }
 
