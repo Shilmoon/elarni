@@ -52,6 +52,11 @@ int? compareVersions(String a, String b) {
   return 0;
 }
 
+/// Release builds read Elarni's releases until the user changes or clears
+/// the feed; debug builds start with the check off.
+const elarniReleasesFeed =
+    'https://api.github.com/repos/Shilmoon/elarni/releases/latest';
+
 /// Tests swap the network for a fixed reply.
 Future<String> Function(Uri url) updateFeedFetch = fetchUpdateFeed;
 

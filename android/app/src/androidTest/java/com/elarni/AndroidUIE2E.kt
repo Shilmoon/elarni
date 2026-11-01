@@ -261,7 +261,7 @@ class AndroidUIE2E {
         assertEquals("none", snapshot().settings.getString("logLevel"))
     }
 
-    // The feed is the user's: off by default and https only. Its notice installs nothing, and Not now hides that version.
+    // The feed is the user's: off by default in debug builds (release builds read Elarni's releases) and https only. Its notice installs nothing, and Not now hides that version.
     @Test fun updateNoticeFollowsTheFeedTheUserSets() {
         // A GitHub reply's own url is its API address; the notice links to html_url.
         assertEquals("0.4.1" to "https://github.com/o/elarni/releases/tag/v0.4.1", UpdateCheck.parse(

@@ -41,7 +41,7 @@ object Settings {
         SettingField("allowLAN", tr(R.string.allow_lan_clients), false, "Connection", detail = tr(R.string.requires_inbound_authentication_hotspot_traffic_is)),
         SettingField("inboundAuthEnabled", tr(R.string.allow_apps_without_a_login_2), false, "Connection", detail = tr(R.string.in_local_proxy_mode_any_app_2)),
         SettingField("subscriptionAutoUpdateHours", tr(R.string.refresh_interval), 4, "General", detail = tr(R.string.t_1_168_hours_background_work_follows)),
-        SettingField("updateFeedURL", tr(R.string.update_feed), "", "General", detail = tr(R.string.leave_empty_to_turn_the_check)),
+        SettingField("updateFeedURL", tr(R.string.update_feed), if (BuildConfig.DEBUG) "" else UpdateCheck.ELARNI_RELEASES, "General", detail = tr(R.string.leave_empty_to_turn_the_check)),
         SettingField("allowExternalControl", tr(R.string.let_other_apps_control_the_connection), false, "General", detail = tr(R.string.automation_apps_such_as_tasker_can)),
         SettingField("useDNSFromJSON", tr(R.string.use_profile_dns), true, "DNS"),
         SettingField("profileDNSMode", tr(R.string.dns_override), "inherit", "DNS", listOf("inherit", "default", "routing")),

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'tunnel_channel.dart';
@@ -81,7 +82,9 @@ final class DesktopIntegration extends ChangeNotifier {
       final nextLanguage = value['language'] as String? ?? 'system';
       final nextSort = value['sort'] as String? ?? 'provider';
       final nextPins = (value['pinned'] as List? ?? []).cast<String>().toSet();
-      final nextFeed = value['updateFeedURL'] as String? ?? '';
+      final nextFeed =
+          value['updateFeedURL'] as String? ??
+          (kReleaseMode ? elarniReleasesFeed : '');
       final nextDismissed = value['dismissedUpdate'] as String? ?? '';
       if ((value['version'] ?? 1) != 1 ||
           !accents.containsKey(nextAccent) ||

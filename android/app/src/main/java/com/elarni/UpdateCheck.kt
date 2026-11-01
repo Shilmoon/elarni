@@ -13,6 +13,8 @@ object UpdateCheck {
     @Volatile var fetch: (String) -> String = { url ->
         Native.call("fetchSubscription", obj("url" to url, "proxy" to (Engine.fetchProxy ?: JSONObject.NULL))).getString("body")
     }
+    /** Release builds read Elarni's releases until the user changes or clears the feed; debug builds start with it off. */
+    const val ELARNI_RELEASES = "https://api.github.com/repos/Shilmoon/elarni/releases/latest"
     /** A newer release's version and page. */
     val available = MutableStateFlow<Pair<String, String>?>(null)
     private var checked: Triple<String, Long, Boolean>? = null

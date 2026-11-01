@@ -3,8 +3,12 @@
 Supported build targets are macOS arm64 (minimum 13.0), Windows x64, and Ubuntu
 22.04+ x64. The existing shared UI is unchanged. Distribution consists of a
 notarized macOS application ZIP, a signed complete Windows portable ZIP, and the
-Linux `.deb`, AppImage and portable archive. First releases use manual upgrades. There is no
-automatic updater or update feed.
+Linux `.deb`, AppImage and portable archive. Upgrades are manual: nothing downloads or installs
+by itself. Release builds read
+`https://api.github.com/repos/Shilmoon/elarni/releases/latest` once a day and
+show a notice on Home when it names a newer version (Settings > General >
+Update feed changes or clears it; debug builds start with it off). That address
+needs the repository to be public.
 
 ## Candidate and source identity
 
