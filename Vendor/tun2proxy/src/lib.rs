@@ -131,10 +131,13 @@ impl SocketQueue {
 }
 
 async fn create_tcp_stream(socket_queue: &Option<Arc<SocketQueue>>, peer: SocketAddr) -> std::io::Result<TcpStream> {
-    match &socket_queue {
+    let stream = match &socket_queue {
         None => TcpStream::connect(peer).await,
         Some(queue) => queue.recv_tcp(peer.ip().into()).await?.connect(peer).await,
-    }
+    }?;
+    // Elarni: Nagle held a small write behind an unacknowledged one on the proxy leg.
+    let _ = stream.set_nodelay(true);
+    Ok(stream)
 }
 
 async fn create_udp_stream(socket_queue: &Option<Arc<SocketQueue>>, peer: SocketAddr) -> std::io::Result<UdpSocket> {

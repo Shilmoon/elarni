@@ -2,15 +2,16 @@ use super::seqnum::SeqNum;
 use etherparse::TcpHeader;
 use std::{collections::BTreeMap, time::Duration};
 
-pub(super) const MAX_UNACK: u32 = 1024 * 16; // 16KB
-pub(super) const READ_BUFFER_SIZE: usize = 1024 * 16; // 16KB
+// Elarni: 16 KiB capped a stream at 16 KiB per TUN round trip; 64 KiB fits the unscaled window.
+pub(super) const MAX_UNACK: u32 = 1024 * 64; // 64KB
+pub(super) const READ_BUFFER_SIZE: usize = 1024 * 64; // 64KB
 pub(super) const MAX_COUNT_FOR_DUP_ACK: usize = 3; // Maximum number of duplicate ACKs before retransmission
 
 /// Retransmission timeout
-pub(super) const RTO: std::time::Duration = std::time::Duration::from_secs(1);
+pub(super) const RTO: std::time::Duration = std::time::Duration::from_millis(200);
 
-/// Maximum count of retransmissions before dropping the packet
-pub(super) const MAX_RETRANSMIT_COUNT: usize = 3;
+/// Maximum count of retransmissions before resetting the connection
+pub(super) const MAX_RETRANSMIT_COUNT: usize = 5;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum TcpState {
@@ -60,6 +61,15 @@ pub(crate) struct Tcb {
     max_count_for_dup_ack: usize,
     rto: std::time::Duration,
     max_retransmit_count: usize,
+    peer_mss: u16,
+    /// Bytes passed to the application reader but not yet read; they close the receive window.
+    unread: usize,
+    /// The application shut down its write half; FIN goes out once everything is acknowledged.
+    fin_requested: bool,
+    /// A segment ran out of retransmissions, so the stream can no longer be delivered.
+    retransmit_exhausted: bool,
+    /// The ACK and window last sent, to repeat that window in duplicate ACKs.
+    advertised: std::cell::Cell<(SeqNum, u16)>,
 }
 
 impl Tcb {
@@ -92,13 +102,22 @@ impl Tcb {
             max_count_for_dup_ack,
             rto,
             max_retransmit_count,
+            peer_mss: u16::MAX,
+            unread: 0,
+            fin_requested: false,
+            retransmit_exhausted: false,
+            advertised: std::cell::Cell::new((ack, 0)),
         }
     }
 
+    pub(super) fn set_peer_mss(&mut self, mss: u16) {
+        self.peer_mss = mss;
+    }
+
+    /// The largest segment payload; the send window is applied to new data in `send_room`.
     pub fn calculate_payload_max_len(&self, ip_header_size: usize, tcp_header_size: usize) -> usize {
-        let send_window = self.get_send_window() as usize;
         let mtu = self.get_mtu() as usize;
-        std::cmp::min(send_window, mtu.saturating_sub(ip_header_size + tcp_header_size))
+        std::cmp::min(self.peer_mss as usize, mtu.saturating_sub(ip_header_size + tcp_header_size))
     }
 
     pub fn update_duplicate_ack_count(&mut self, rcvd_ack: SeqNum) {
@@ -115,20 +134,36 @@ impl Tcb {
         self.duplicate_ack_count >= self.max_count_for_dup_ack
     }
 
-    pub(super) fn add_unordered_packet(&mut self, seq: SeqNum, buf: Vec<u8>) {
+    /// Keeps the part of a segment that lies inside the receive window.
+    pub(super) fn add_unordered_packet(&mut self, mut seq: SeqNum, mut buf: Vec<u8>) {
         if seq < self.ack {
-            #[rustfmt::skip]
-            log::warn!("{:?}: Received packet seq {seq} < self ack {}, len = {}", self.state, self.ack, buf.len());
-            return;
+            let stale = self.ack.distance(seq) as usize;
+            if stale >= buf.len() {
+                #[rustfmt::skip]
+                log::trace!("{:?}: Received packet seq {seq} < self ack {}, len = {}", self.state, self.ack, buf.len());
+                return;
+            }
+            buf.drain(..stale);
+            seq = self.ack;
         }
-        self.unordered_packets.insert(seq, buf);
+        let offset = seq.distance(self.ack) as usize;
+        buf.truncate(self.get_available_read_buffer_size().saturating_sub(offset));
+        if !buf.is_empty() {
+            self.unordered_packets.insert(seq, buf);
+        }
     }
     pub(super) fn get_available_read_buffer_size(&self) -> usize {
-        self.read_buffer_size.saturating_sub(self.get_unordered_packets_total_len())
+        self.read_buffer_size.saturating_sub(self.unread)
     }
-    #[inline]
-    pub(crate) fn get_unordered_packets_total_len(&self) -> usize {
-        self.unordered_packets.values().map(|p| p.len()).sum()
+    pub(super) fn add_unread(&mut self, len: usize) {
+        self.unread += len;
+    }
+    /// Records `len` bytes read by the application and tells whether the window reopened enough to announce it.
+    pub(super) fn take_unread(&mut self, len: usize) -> bool {
+        let half = self.read_buffer_size / 2;
+        let before = self.get_available_read_buffer_size();
+        self.unread = self.unread.saturating_sub(len);
+        before < half && self.get_available_read_buffer_size() >= half && self.unordered_packets.is_empty()
     }
 
     pub(super) fn consume_unordered_packets(&mut self, max_bytes: usize) -> Option<Vec<u8>> {
@@ -137,12 +172,17 @@ impl Tcb {
 
         while remaining_bytes > 0 {
             if let Some(seq) = self.unordered_packets.keys().next().copied() {
-                if seq != self.ack {
+                if seq > self.ack {
                     break; // sequence number is not continuous, stop extracting
                 }
 
-                // remove and get the first packet
+                // remove and get the first packet, without the part an overlapping segment already delivered
                 let mut payload = self.unordered_packets.remove(&seq).unwrap();
+                let stale = self.ack.distance(seq) as usize;
+                if stale >= payload.len() {
+                    continue;
+                }
+                payload.drain(..stale);
                 let payload_len = payload.len();
 
                 if payload_len <= remaining_bytes {
@@ -197,7 +237,28 @@ impl Tcb {
         self.send_window
     }
     pub(super) fn get_recv_window(&self) -> u16 {
-        self.get_available_read_buffer_size().try_into().unwrap_or(u16::MAX)
+        let mut window = self.get_available_read_buffer_size().try_into().unwrap_or(u16::MAX);
+        // Elarni: without SACK, macOS counts an ACK as a duplicate only if its window is unchanged,
+        // so keep the window while a gap holds the ACK still; it updates once the gap fills.
+        let (ack, last) = self.advertised.get();
+        if ack == self.ack && !self.unordered_packets.is_empty() {
+            window = last;
+        }
+        self.advertised.set((self.ack, window));
+        window
+    }
+    pub(super) fn request_fin(&mut self) {
+        self.fin_requested = true;
+    }
+    /// The application shut down and every byte it wrote is acknowledged.
+    pub(super) fn is_fin_due(&self) -> bool {
+        self.fin_requested && self.inflight_packets.is_empty()
+    }
+    pub(super) fn is_retransmit_exhausted(&self) -> bool {
+        self.retransmit_exhausted
+    }
+    pub(super) fn next_retransmit_deadline(&self) -> Option<std::time::Instant> {
+        self.inflight_packets.values().map(|p| p.send_time + p.retransmit_timeout).min()
     }
     // #[inline(always)]
     // pub(super) fn buffer_size(&self, payload_len: u16) -> u16 {
@@ -292,9 +353,11 @@ impl Tcb {
     pub(crate) fn collect_timed_out_inflight_packets(&mut self) -> Vec<InflightPacket> {
         let mut retransmit_list = Vec::new();
 
+        let mut exhausted = false;
         self.inflight_packets.retain(|_, packet| {
             if packet.retransmit_count >= self.max_retransmit_count {
                 log::warn!("Packet with seq {:?} reached max retransmit count, dropping packet", packet.seq);
+                exhausted = true;
                 return false; // remove this packet
             }
             if packet.is_timed_out() {
@@ -305,11 +368,8 @@ impl Tcb {
             }
             true // keep the packet in the inflight_packets
         });
+        self.retransmit_exhausted |= exhausted;
         retransmit_list
-    }
-
-    pub(crate) fn get_inflight_packets_total_len(&self) -> usize {
-        self.inflight_packets.values().map(|p| p.payload.len()).sum()
     }
 
     #[allow(dead_code)]
@@ -317,10 +377,10 @@ impl Tcb {
         self.inflight_packets.values().collect::<Vec<_>>()
     }
 
-    pub fn is_send_buffer_full(&self) -> bool {
-        // To respect the receiver's window (remote_window) size and avoid sending too many unacknowledged packets, which may cause packet loss
-        // Simplified version: min(cwnd, rwnd)
-        self.seq.distance(self.get_last_received_ack()) >= self.max_unacked_bytes.min(self.get_send_window() as u32)
+    /// New bytes that fit in min(cwnd, rwnd) beside the unacknowledged ones.
+    pub(super) fn send_room(&self) -> usize {
+        let limit = self.max_unacked_bytes.min(self.get_send_window() as u32);
+        limit.saturating_sub(self.seq.distance(self.get_last_received_ack())) as usize
     }
 }
 

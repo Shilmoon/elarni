@@ -48,6 +48,10 @@ class CheckChangedSelection(unittest.TestCase):
         (self.root / 'native/elarni-domain/src/lib.rs').unlink()
         self.assertEqual(self.selection()[0], ['go', 'rust', 'windows'] if DESKTOP else ['go', 'rust', 'swift'])
 
+    def test_the_wireguard_go_fork_runs_the_go_checks(self):
+        self.write('Vendor/wireguard-go/device/send.go')
+        self.assertEqual(self.selection()[0], ['go', 'windows'] if DESKTOP else ['go', 'swift'])
+
     def test_documentation_only_runs_nothing(self):
         self.write('README.md', 'changed\n')
         self.write('docs/guide.md')

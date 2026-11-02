@@ -371,6 +371,13 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## wireguard-go 0.0.0-20250521234502-f333402bd9cb
+
+Module: golang.zx2c4.com/wireguard
+Copyright (C) 2017-2025 WireGuard LLC. Licensed under MIT.
+Source snapshot with Elarni changes recorded in `third_party/modifications.json`:
+`Vendor/wireguard-go`. License: `Vendor/wireguard-go/LICENSE`.
+
 ## tun2proxy v0.8.3
 
 Copyright (c) @ssrlive, B. Blechschmidt and contributors. Licensed under MIT.

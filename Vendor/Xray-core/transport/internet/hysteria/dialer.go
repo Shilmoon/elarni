@@ -238,23 +238,26 @@ func (c *client) tcp(ctx context.Context) (stat.Connection, error) {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case c.lock <- struct{}{}:
-		defer c.unlock()
 	}
 
 	err := c.dial(ctx)
+	conn := c.conn
+	c.unlock()
 	if err != nil {
 		return nil, err
 	}
 
-	stream, err := c.conn.OpenStream()
+	// Elarni: past the server's stream limit, wait for the credit of a closed stream
+	// instead of failing; other dials may proceed meanwhile.
+	stream, err := conn.OpenStreamSync(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	return &interConn{
 		stream: stream,
-		local:  c.conn.LocalAddr(),
-		remote: c.conn.RemoteAddr(),
+		local:  conn.LocalAddr(),
+		remote: conn.RemoteAddr(),
 
 		client: true,
 		lock:   make(chan struct{}, 1),

@@ -173,6 +173,10 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 	// when handling is done with any outcome, always signal back to the incoming connection
 	// to close, send completion packets back to the network, and cleanup
 	defer conn.Close()
+	var ready func() bool
+	if stream, ok := conn.(*tcpConn); ok {
+		ready = stream.readable
+	}
 	ctx, cancel := context.WithCancel(t.ctx)
 	defer cancel()
 	admission := &t.tcpAdmission
@@ -253,6 +257,10 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 	link := &transport.Link{
 		Reader: &buf.TimeoutWrapperReader{Reader: buf.NewReader(conn)},
 		Writer: buf.NewWriter(conn),
+	}
+	if ready != nil {
+		link.Reader = &buf.TimeoutWrapperReader{Reader: &drainReader{Reader: conn, ready: ready}}
+		link.Writer = newTCPWriter(conn)
 	}
 	if destination.Network == net.Network_UDP {
 		// Count datagrams without hiding udpConn's per-packet destinations behind

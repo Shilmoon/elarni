@@ -10,6 +10,7 @@ import (
 	"github.com/xtls/xray-core/common/geodata"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/platform/filesystem"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -137,6 +138,30 @@ func TestOnlyOptionalSelectorsMaySkipMissingCodes(t *testing.T) {
 				!slices.Equal(missing, MissingError{"geoip:ru"}) || err.Error() != "missing_geodata" {
 				t.Fatalf("%s (reduce=%v): %v", fixture.why, reduce, err)
 			}
+		}
+	}
+}
+
+// Records are decoded one at a time; the list framing must accept and reject what proto.Unmarshal of the whole list did.
+func TestRecordFramingMatchesWholeListDecoding(t *testing.T) {
+	record, _ := proto.Marshal(&geodata.GeoSite{Code: "TEST", Domain: []*geodata.Domain{{Value: "example.com", Type: geodata.Domain_Full}}})
+	list := protowire.AppendBytes(protowire.AppendTag(nil, 1, protowire.BytesType), record)
+	cases := map[string][]byte{
+		"plain":                 list,
+		"unknown field":         protowire.AppendVarint(protowire.AppendTag(slices.Clone(list), 7, protowire.VarintType), 1),
+		"record field as int":   protowire.AppendVarint(protowire.AppendTag(slices.Clone(list), 1, protowire.VarintType), 1),
+		"truncated record":      list[:len(list)-1],
+		"truncated tag":         append(slices.Clone(list), 0x80),
+		"invalid wire type":     append(slices.Clone(list), 0x0f),
+		"invalid record":        protowire.AppendBytes(protowire.AppendTag(slices.Clone(list), 1, protowire.BytesType), []byte{0x0a, 0x05}),
+		"group end without one": protowire.AppendTag(slices.Clone(list), 3, protowire.EndGroupType),
+	}
+	for name, data := range cases {
+		var whole geodata.GeoSiteList
+		want := proto.Unmarshal(data, &whole) == nil
+		_, _, _, err := Reduce("geosite", data, nil, nil, false)
+		if got := err == nil; got != want {
+			t.Errorf("%s: accepted %v, whole-list decoding accepted %v", name, got, want)
 		}
 	}
 }

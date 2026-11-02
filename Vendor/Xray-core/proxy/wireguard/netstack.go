@@ -16,10 +16,12 @@ import (
 	"net/netip"
 	"os"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	xnet "github.com/xtls/xray-core/common/net"
+	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/tun"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -42,6 +44,7 @@ type netTun struct {
 	events         chan tun.Event
 	notifyHandle   *channel.NotificationHandle
 	incomingPacket chan *buffer.View
+	closed         chan struct{}
 	mtu            int
 	dnsServers     []netip.Addr
 	hasV4, hasV6   bool
@@ -52,12 +55,14 @@ func CreateNetTUN(localAddresses, dnsServers []netip.Addr, mtu int, handleLocal 
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
 		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol, icmp.NewProtocol6, icmp.NewProtocol4},
 		HandleLocal:        handleLocal,
+		Clock:              tunnelClock(),
 	}
 	dev := &netTun{
 		ep:             channel.New(1024, uint32(mtu), ""),
 		stack:          stack.New(opts),
 		events:         make(chan tun.Event, 10),
-		incomingPacket: make(chan *buffer.View),
+		incomingPacket: make(chan *buffer.View, conn.IdealBatchSize),
+		closed:         make(chan struct{}),
 		dnsServers:     dnsServers,
 		mtu:            mtu,
 	}
@@ -65,6 +70,12 @@ func CreateNetTUN(localAddresses, dnsServers []netip.Addr, mtu int, handleLocal 
 	tcpipErr := dev.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &sackEnabledOpt)
 	if tcpipErr != nil {
 		return nil, nil, nil, fmt.Errorf("could not enable TCP SACK: %v", tcpipErr)
+	}
+	// Elarni: gVisor grows a receive buffer up to 4 MiB and a stalled reader keeps it full, about
+	// 4 MB per such connection; 2 MiB still covers 130 Mbit/s at 120 ms for one stream.
+	receiveBuffer := tcpip.TCPReceiveBufferSizeRangeOption{Min: tcp.MinBufferSize, Default: tcp.DefaultReceiveBufferSize, Max: 2 << 20}
+	if tcpipErr := dev.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &receiveBuffer); tcpipErr != nil {
+		return nil, nil, nil, fmt.Errorf("could not set the TCP receive buffer: %v", tcpipErr)
 	}
 	dev.notifyHandle = dev.ep.AddNotify(dev)
 	tcpipErr = dev.stack.CreateNIC(1, dev.ep)
@@ -123,18 +134,28 @@ func (tun *netTun) Events() <-chan tun.Event {
 	return tun.events
 }
 
+// Read returns the packets already queued, up to len(buf), after waiting for the first.
 func (tun *netTun) Read(buf [][]byte, sizes []int, offset int) (int, error) {
-	view, ok := <-tun.incomingPacket
-	if !ok {
+	var view *buffer.View
+	select {
+	case view = <-tun.incomingPacket:
+	case <-tun.closed:
 		return 0, os.ErrClosed
 	}
-
-	n, err := view.Read(buf[0][offset:])
-	if err != nil {
-		return 0, err
+	n := 0
+	for {
+		sizes[n] = copy(buf[n][offset:], view.AsSlice())
+		view.Release()
+		n++
+		if n == len(buf) {
+			return n, nil
+		}
+		select {
+		case view = <-tun.incomingPacket:
+		default:
+			return n, nil
+		}
 	}
-	sizes[0] = n
-	return 1, nil
 }
 
 func (tun *netTun) Write(buf [][]byte, offset int) (int, error) {
@@ -144,15 +165,19 @@ func (tun *netTun) Write(buf [][]byte, offset int) (int, error) {
 			continue
 		}
 
-		pkb := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithData(packet)})
+		var protocol tcpip.NetworkProtocolNumber
 		switch packet[0] >> 4 {
 		case 4:
-			tun.ep.InjectInbound(header.IPv4ProtocolNumber, pkb)
+			protocol = header.IPv4ProtocolNumber
 		case 6:
-			tun.ep.InjectInbound(header.IPv6ProtocolNumber, pkb)
+			protocol = header.IPv6ProtocolNumber
 		default:
 			return 0, syscall.EAFNOSUPPORT
 		}
+		pkb := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithData(packet)})
+		tun.ep.InjectInbound(protocol, pkb)
+		// The stack takes its own references; this one returns the buffers to gVisor's pools.
+		pkb.DecRef()
 	}
 	return len(buf), nil
 }
@@ -166,7 +191,12 @@ func (tun *netTun) WriteNotify() {
 	view := pkt.ToView()
 	pkt.DecRef()
 
-	tun.incomingPacket <- view
+	// Elarni: the queue holds one batch; a full one makes the stack's sender wait, as before.
+	select {
+	case tun.incomingPacket <- view:
+	case <-tun.closed:
+		view.Release()
+	}
 }
 
 func (tun *netTun) Close() error {
@@ -179,9 +209,8 @@ func (tun *netTun) Close() error {
 		close(tun.events)
 	}
 
-	if tun.incomingPacket != nil {
-		close(tun.incomingPacket)
-	}
+	// Closing incomingPacket instead could panic a WriteNotify still sending to it.
+	close(tun.closed)
 
 	return nil
 }
@@ -191,7 +220,7 @@ func (tun *netTun) MTU() (int, error) {
 }
 
 func (tun *netTun) BatchSize() int {
-	return 1
+	return conn.IdealBatchSize
 }
 
 func (tun *netTun) DialContextTCPAddrPort(ctx context.Context, addr netip.AddrPort) (net.Conn, error) {
@@ -219,6 +248,7 @@ type Net struct {
 	DialUDPAddrPort        func(laddr, raddr netip.AddrPort) (net.Conn, error)
 	dnsServers             []netip.Addr
 	hasV4, hasV6           bool
+	cache                  cache
 }
 
 func convertToFullAddr(endpoint netip.AddrPort) (tcpip.FullAddress, tcpip.NetworkProtocolNumber) {
@@ -568,6 +598,9 @@ func (tnet *Net) tryOneName(ctx context.Context, name string, qtype dnsmessage.T
 }
 
 func (tnet *Net) LookupContextHost(ctx context.Context, host string) ([]string, error) {
+	if saddr := tnet.cache.LookupHost(host); saddr != nil {
+		return saddr, nil
+	}
 	if host == "" || (!tnet.hasV6 && !tnet.hasV4) {
 		return nil, &net.DNSError{Err: errNoSuchHost.Error(), Name: host, IsNotFound: true}
 	}
@@ -611,6 +644,7 @@ func (tnet *Net) LookupContextHost(ctx context.Context, host string) ([]string, 
 			lane <- result{p, server, err}
 		}()
 	}
+	ttl := uint32(300)
 	for l := 0; l < lanes; l++ {
 		result := <-lane
 		if result.error != nil {
@@ -644,6 +678,7 @@ func (tnet *Net) LookupContextHost(ctx context.Context, host string) ([]string, 
 					}
 					break loop
 				}
+				ttl = min(ttl, h.TTL)
 				addrsV4 = append(addrsV4, netip.AddrFrom4(a.A))
 
 			case dnsmessage.TypeAAAA:
@@ -656,6 +691,7 @@ func (tnet *Net) LookupContextHost(ctx context.Context, host string) ([]string, 
 					}
 					break loop
 				}
+				ttl = min(ttl, h.TTL)
 				addrsV6 = append(addrsV6, netip.AddrFrom16(aaaa.AAAA))
 
 			default:
@@ -686,5 +722,74 @@ func (tnet *Net) LookupContextHost(ctx context.Context, host string) ([]string, 
 	for _, ip := range addrs {
 		saddrs = append(saddrs, ip.String())
 	}
+	if len(saddrs) > 0 {
+		tnet.cache.Cache(host, saddrs, ttl)
+	}
 	return saddrs, nil
+}
+
+// Elarni: the tunnel DNS cache from upstream's MASQUE change (XTLS/Xray-core#6878),
+// which the fork left out. Without it every WireGuard flow to a domain, and every
+// UDP packet to one, waited for a query through the tunnel.
+type entry struct {
+	saddr    []string
+	deadline time.Time
+}
+
+type cache struct {
+	running bool
+	m       map[string]entry
+	mu      sync.Mutex
+}
+
+func (c *cache) run() {
+	if c.running {
+		return
+	}
+	c.running = true
+	if c.m == nil {
+		c.m = make(map[string]entry)
+	}
+	go c.gc()
+}
+
+func (c *cache) gc() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for now := range ticker.C {
+		c.mu.Lock()
+		for key, entry := range c.m {
+			if now.After(entry.deadline) {
+				delete(c.m, key)
+			}
+		}
+		if len(c.m) == 0 {
+			c.running = false
+			c.mu.Unlock()
+			return
+		}
+		c.mu.Unlock()
+	}
+}
+
+func (c *cache) LookupHost(host string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.run()
+	if entry, ok := c.m[host]; ok {
+		if time.Now().Before(entry.deadline) {
+			return entry.saddr
+		}
+		delete(c.m, host)
+	}
+	return nil
+}
+
+func (c *cache) Cache(host string, saddr []string, ttl uint32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.m[host] = entry{
+		saddr:    saddr,
+		deadline: time.Now().Add(time.Second * time.Duration(ttl)),
+	}
 }

@@ -33,7 +33,7 @@ func Record(msg Message) {
 		(*h).Handle(msg)
 	}
 	if tap := logTap.Load(); tap != nil {
-		(*tap)(msg)
+		tap.record(msg)
 	}
 }
 
@@ -43,32 +43,39 @@ type SeverityLogger interface {
 }
 
 func GetSeverity() Severity {
-	// The tap keeps its own filtered copy, so it must see every message.
-	if logTap.Load() != nil {
-		return Severity_Debug
-	}
+	// log everything by default
+	severity := Severity_Debug
 	if h := logHandler.Load(); h != nil {
 		if sh, ok := (*h).(SeverityLogger); ok {
-			return sh.Severity()
+			severity = sh.Severity()
 		}
 	}
-	// log everything by default
-	return Severity_Debug
+	// The tap keeps its own filtered copy, so it must see every message its level keeps.
+	if tap := logTap.Load(); tap != nil {
+		severity = max(severity, tap.level())
+	}
+	return severity
 }
 
 var logHandler atomic.Pointer[Handler]
 
 // The tap sees every message whatever handler the log config registered, so an
 // embedding app can keep its own filtered copy while the core logs nothing.
-var logTap atomic.Pointer[func(Message)]
+var logTap atomic.Pointer[logTapEntry]
 
-// SetTap sends every recorded message to tap as well; nil removes it.
-func SetTap(tap func(Message)) {
+type logTapEntry struct {
+	record func(Message)
+	level  func() Severity
+}
+
+// SetTap sends every recorded message to tap as well; nil removes it. Messages above
+// level() are not built unless the registered handler wants them.
+func SetTap(tap func(Message), level func() Severity) {
 	if tap == nil {
 		logTap.Store(nil)
 		return
 	}
-	logTap.Store(&tap)
+	logTap.Store(&logTapEntry{record: tap, level: level})
 }
 
 // RegisterHandler registers a new handler as current log handler. Previous registered handler will be discarded.

@@ -430,17 +430,20 @@ const preconnectTTL = 2 * time.Second
 // is done. The transport's first dial takes that connection over.
 // h2Transport is XHTTP's HTTP/2 client over dial's (already secured) connections.
 func h2Transport(dial func(context.Context) (net.Conn, error), keepAlivePeriod time.Duration) *http2.Transport {
-	return &http2.Transport{
-		DialTLSContext: func(ctxInner context.Context, network string, addr string, cfg *gotls.Config) (net.Conn, error) {
-			conn, err := dial(ctxInner)
-			if err != nil {
-				return nil, err
-			}
-			return &maxFrameClamp{Conn: conn}, nil
-		},
-		IdleConnTimeout: net.ConnIdleTimeout,
-		ReadIdleTimeout: keepAlivePeriod,
+	// Go's 4 MiB default per stream stayed full for each download the app stopped reading.
+	// 2 MiB still carries 130 Mbit/s per stream at 120 ms, like the WireGuard tunnel's cap.
+	transport, err := http2.ConfigureTransports(&http.Transport{HTTP2: &http.HTTP2Config{MaxReceiveBufferPerStream: 2 << 20}})
+	common.Must(err)
+	transport.DialTLSContext = func(ctxInner context.Context, network string, addr string, cfg *gotls.Config) (net.Conn, error) {
+		conn, err := dial(ctxInner)
+		if err != nil {
+			return nil, err
+		}
+		return &maxFrameClamp{Conn: conn}, nil
 	}
+	transport.IdleConnTimeout = net.ConnIdleTimeout
+	transport.ReadIdleTimeout = keepAlivePeriod
+	return transport
 }
 
 // maxFrameClamp shows the HTTP/2 client every SETTINGS_MAX_FRAME_SIZE as the spec minimum,

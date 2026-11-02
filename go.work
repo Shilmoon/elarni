@@ -3,4 +3,5 @@ go 1.27.3
 use (
 	./Vendor/Xray-core
 	./Vendor/libXray
+	./Vendor/wireguard-go
 )

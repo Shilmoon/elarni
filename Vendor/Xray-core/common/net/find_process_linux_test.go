@@ -42,6 +42,42 @@ func TestLinuxProcessLookupPeerAndAmbiguity(t *testing.T) {
 	}
 }
 
+// Apps open many connections in a row. Once a process owned a socket, finding
+// its next one must not readlink every open file on the host (14 ms at 10k fds).
+func TestLinuxRecentOwnerSkipsTheFullScan(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	lookup := func() {
+		t.Helper()
+		client, err := net.Dial("tcp", listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close()
+		local, remote := client.LocalAddr().(*net.TCPAddr), listener.Addr().(*net.TCPAddr)
+		pid, _, _, err := FindProcess("tcp", "127.0.0.1", uint16(local.Port), "127.0.0.1", uint16(remote.Port))
+		if err != nil || pid != os.Getpid() {
+			t.Fatalf("pid=%d err=%v", pid, err)
+		}
+	}
+	lookup()
+	own, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	readLink = func(path string) (string, error) { reads++; return os.Readlink(path) }
+	defer func() { readLink = os.Readlink }()
+	lookup()
+	// Our own descriptors, the new client socket, and the exe link.
+	if reads > len(own)+2 {
+		t.Fatalf("lookup read %d links; this process has %d descriptors", reads, len(own))
+	}
+}
+
 // An unconnected application's UDP socket stays wildcard-bound in /proc even
 // though its outgoing packet has the selected interface address.
 func TestLinuxWildcardUDPProcess(t *testing.T) {

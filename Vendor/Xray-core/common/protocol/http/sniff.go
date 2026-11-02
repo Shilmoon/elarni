@@ -45,16 +45,21 @@ var (
 )
 
 func beginWithHTTPMethod(b []byte) error {
+	prefix := false
 	for _, m := range &methods {
-		if len(b) >= len(m) && strings.EqualFold(string(b[:len(m)]), m) {
+		n := min(len(b), len(m))
+		if !strings.EqualFold(string(b[:n]), m[:n]) {
+			continue
+		}
+		if n == len(m) {
 			return nil
 		}
-
-		if len(b) < len(m) {
-			return common.ErrNoClue
-		}
+		prefix = true
 	}
-
+	// Elarni: only bytes that can still become a method wait for more data.
+	if prefix {
+		return common.ErrNoClue
+	}
 	return errNotHTTPMethod
 }
 

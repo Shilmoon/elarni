@@ -22,6 +22,7 @@ import (
 // then create a network interface, to be provided as file descriptor to gVisor ip stack
 type LinuxTun struct {
 	tunFd   int
+	vnet    bool // opened with IFF_VNET_HDR and TCP segmentation offload
 	tunLink netlink.Link
 	options *Config
 	ownsTun bool
@@ -49,7 +50,18 @@ func NewTun(options *Config) (Tun, error) {
 		}, nil
 	}
 
-	tunFd, err = open(options.Name)
+	// With a virtio_net_hdr on every packet the kernel leaves TCP segments unsplit
+	// both ways; kernels or devices that refuse it get plain packets.
+	vnet := true
+	tunFd, err = open(options.Name, unix.IFF_VNET_HDR)
+	if err == nil && unix.IoctlSetInt(tunFd, unix.TUNSETOFFLOAD, unix.TUN_F_CSUM|unix.TUN_F_TSO4|unix.TUN_F_TSO6) != nil {
+		_ = unix.Close(tunFd)
+		err = unix.EINVAL
+	}
+	if err != nil {
+		vnet = false
+		tunFd, err = open(options.Name, 0)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -62,6 +74,7 @@ func NewTun(options *Config) (Tun, error) {
 
 	linuxTun := &LinuxTun{
 		tunFd:   tunFd,
+		vnet:    vnet,
 		tunLink: tunLink,
 		options: options,
 		ownsTun: true,
@@ -118,7 +131,7 @@ func openFromEnv(expectedName string) (int, netlink.Link, bool, error) {
 }
 
 // open the file that implements tun interface in the OS
-func open(name string) (int, error) {
+func open(name string, features int) (int, error) {
 	fd, err := unix.Open("/dev/net/tun", unix.O_RDWR, 0)
 	if err != nil {
 		return -1, err
@@ -130,7 +143,7 @@ func open(name string) (int, error) {
 		return 0, err
 	}
 
-	flags := unix.IFF_TUN | unix.IFF_NO_PI
+	flags := unix.IFF_TUN | unix.IFF_NO_PI | features
 	ifr.SetUint16(uint16(flags))
 	err = unix.IoctlIfreq(fd, unix.TUNSETIFF, ifr)
 	if err != nil {
@@ -221,6 +234,9 @@ func (t *LinuxTun) Index() (int, error) {
 
 // newEndpoint builds new gVisor stack.LinkEndpoint from the tun interface file descriptor
 func (t *LinuxTun) newEndpoint() (stack.LinkEndpoint, error) {
+	if t.vnet {
+		return newVnetEndpoint(t.tunFd, t.options.MTU)
+	}
 	endpoint, err := fdbased.New(&fdbased.Options{
 		FDs:               []int{t.tunFd},
 		MTU:               t.options.MTU,
