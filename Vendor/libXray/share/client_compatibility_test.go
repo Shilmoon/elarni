@@ -823,6 +823,32 @@ func TestImportedProfilesCannotReadCertificateFilesOrLogTLSKeys(t *testing.T) {
 	}
 }
 
+func TestImportedProfilesCannotReadEnvironmentVariables(t *testing.T) {
+	profile := func(settings, extra string) string {
+		return `{"remarks":"env: staging",` + extra + `"outbounds":[{"protocol":"trojan","settings":` + settings + `,"streamSettings":{"security":"tls","tlsSettings":{"serverName":"example.org"}}}]}`
+	}
+	safe := `{"address":"127.0.0.1","port":443,"password":"fixture"}`
+	for name, value := range map[string]string{
+		"address":    profile(`{"address":"env:HOME","port":443,"password":"fixture"}`, ""),
+		"port":       profile(`{"address":"127.0.0.1","port":"env:PORT","password":"fixture"}`, ""),
+		"port list":  profile(`{"servers":[{"address":"127.0.0.1","port":443,"password":"fixture"}]}`, `"routing":{"rules":[{"port":"80, env:PORT","outboundTag":"direct"}]},`),
+		"dns server": profile(safe, `"dns":{"servers":["env:SECRET"]},`),
+	} {
+		if !json.Valid([]byte(value)) {
+			t.Fatalf("%s: invalid fixture", name)
+		}
+		if _, err := ImportClientProfiles(value); err == nil {
+			t.Errorf("%s: profile reading the environment accepted", name)
+		}
+		if ValidateClientFileAccess([]byte(value)) == nil {
+			t.Errorf("%s: runtime check accepted it", name)
+		}
+	}
+	if _, err := ImportClientProfiles(profile(safe, "")); err != nil {
+		t.Fatalf("remarks starting with env: rejected: %v", err)
+	}
+}
+
 func TestAdvancedShareAndClashFieldsSurviveImport(t *testing.T) {
 	key := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 	verification := base64.RawURLEncoding.EncodeToString(make([]byte, 1952))

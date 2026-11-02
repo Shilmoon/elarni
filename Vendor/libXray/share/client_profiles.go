@@ -233,6 +233,9 @@ func validateProfileFiles(value any) error {
 	switch value := value.(type) {
 	case map[string]any:
 		for key, child := range value {
+			if key == "remarks" { // display text, never an address
+				continue
+			}
 			// Xray decodes JSON field names case-insensitively, including nested
 			// transports. Both TLS and REALITY support session-key log files.
 			if text, _ := child.(string); text != "" {
@@ -251,6 +254,15 @@ func validateProfileFiles(value any) error {
 		for _, child := range value {
 			if err := validateProfileFiles(child); err != nil {
 				return err
+			}
+		}
+	case string:
+		// Xray reads an address or port written as env:NAME (or a port list entry)
+		// from the core's environment, so a provider could pull local values into
+		// server hosts and DNS lookups.
+		for _, part := range strings.Split(value, ",") {
+			if strings.HasPrefix(strings.TrimSpace(part), "env:") {
+				return fmt.Errorf("client profiles cannot read environment variables")
 			}
 		}
 	}

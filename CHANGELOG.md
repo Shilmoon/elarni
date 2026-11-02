@@ -4,12 +4,6 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
-### Fixed
-
-- A JSON or Clash profile whose server has no port, or a host name with a space,
-  slash or colon, is refused on import, as its share link already was, instead of
-  failing to connect.
-
 ### Changed
 
 - Release files are built on GitHub-hosted runners and come with build provenance
@@ -24,14 +18,17 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   key shown under Settings › General › Let other apps control the connection, as
   the string extra `key`; others are ignored. Existing automations need the key
   added (android/README.md has a Tasker example).
+- Imported profiles can no longer name an address or port as `env:NAME`, which made
+  the core substitute that local environment variable into server hosts and DNS
+  lookups.
 
 ### Fixed
 
 - A subscription refresh no longer reconnects when the active server changed only its
   REALITY shortId, which 3x-ui picks at random on every fetch.
-
-### Fixed
-
+- A JSON or Clash profile whose server has no port, or a host name with a space,
+  slash or colon, is refused on import, as its share link already was, instead of
+  failing to connect.
 - `elarni-cli` without `HOME` (a systemd unit without `User=`) finds the root service's
   socket, or `$XDG_RUNTIME_DIR/elarni/control.sock`, instead of failing.
 - Linux: a tunnel killed while it started can no longer leave a DNS redirect that the
