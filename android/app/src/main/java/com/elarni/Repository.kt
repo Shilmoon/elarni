@@ -87,7 +87,8 @@ class Repository(private val app: ElarniApplication) {
                         // Recovery publishes only the last committed configuration, never an interrupted candidate.
                         catalog = Catalog(saved.getJSONObject("committed"))
                         catalog.validate()
-                        if (catalog.migrateSessionLimits() or saved.has("pending")) persist(catalog)
+                        // A catalog that allowed external control before keys existed gets one, which Settings shows.
+                        if (catalog.migrateSessionLimits() or catalog.ensureControlKey() or saved.has("pending")) persist(catalog)
                     }
                     automation = Automation(catalog.data.mapObject("automationEpisode"))
                     automation.intent = catalog.data.optBoolean("connectionIntent")
@@ -569,7 +570,10 @@ class Repository(private val app: ElarniApplication) {
                 if (args.getJSONObject("settings").optBoolean("inboundAuthEnabled") && candidate.data.optJSONObject("inboundCredentials") == null)
                     candidate.data.put("inboundCredentials", Catalog.generatedLogin())
                 candidate.data.put("settings", Settings.normalize(candidate.settings.merge(args.getJSONObject("settings")), candidate.data.optJSONObject("inboundCredentials")))
+                candidate.ensureControlKey()
             }
+            // Apps that hold the old key stop working until they get this one.
+            "newControlKey" -> candidate.data.put("externalControlKey", RemoteControl.newKey())
             "credentials" -> {
                 val user = args.getString("username"); val password = args.getString("password")
                 if (user.toByteArray().size !in 1..255 || password.toByteArray().size !in 1..255 || (user + password).any(Char::isISOControl) || ':' in user) throw AppFailure("invalid_settings")

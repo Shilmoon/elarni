@@ -8,6 +8,16 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 - Release files are built on GitHub-hosted runners and come with build provenance
   (`gh attestation verify`) and a Sigstore-signed `SHA256SUMS`; see docs/RELEASING.md.
+- Android: server tests run while connected, as on desktop. Other servers, direct
+  TCP and ICMP are tested outside the tunnel; the selected server's proxy test still
+  goes through it.
+
+### Security
+
+- Android: broadcasts from automation apps such as Tasker must carry the control
+  key shown under Settings › General › Let other apps control the connection, as
+  the string extra `key`; others are ignored. Existing automations need the key
+  added (android/README.md has a Tasker example).
 
 ### Fixed
 

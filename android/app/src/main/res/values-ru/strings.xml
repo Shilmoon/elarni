@@ -326,7 +326,7 @@
     <string name="import_this_link">Импортировать эту ссылку?</string>
     <string name="a_link_wants_to_add_profiles">Ссылка хочет добавить профили в Elarni.</string>
     <string name="connecting_needs_a_chosen_server_and">Для подключения нужен выбранный сервер, а для системного VPN — разрешение на VPN, выданное в Elarni. В режиме локального прокси Android может отклонить команду подключения, отправленную, пока Elarni работает в фоне.</string>
-    <string name="receiver_com_elarni_remotecontrol_with_the">"получателю com.elarni.RemoteControl, с действием com.elarni.action.CONNECT, com.elarni.action.DISCONNECT или com.elarni.action.TOGGLE. "</string>
+    <string name="receiver_com_elarni_remotecontrol_with_the">"получателю com.elarni.RemoteControl, с действием com.elarni.action.CONNECT, com.elarni.action.DISCONNECT или com.elarni.action.TOGGLE и строковым extra key, равным ключу управления под этим переключателем. Broadcast без текущего ключа игнорируется. "</string>
     <string name="with_let_other_apps_control_the">"Если в «Настройки › Общие» включено «Разрешить другим приложениям управлять подключением», приложения вроде Tasker могут отправить явный broadcast пакету %1$s, "</string>
     <string name="automation_apps">Приложения автоматизации</string>
     <string name="copy_link">Копировать ссылку %1$s</string>
@@ -552,7 +552,9 @@
     <string name="dns_override">Свой DNS</string>
     <string name="use_profile_dns">DNS из профиля</string>
     <string name="let_other_apps_control_the_connection">Разрешить другим приложениям управлять подключением</string>
-    <string name="automation_apps_such_as_tasker_can">Приложения автоматизации вроде Tasker смогут подключать и отключать VPN. Что они отправляют, описано в «Ярлыках».</string>
+    <string name="automation_apps_such_as_tasker_can">Приложения автоматизации вроде Tasker смогут подключать и отключать VPN с ключом управления. Что они отправляют, описано в «Ярлыках».</string>
+    <string name="control_key">Ключ управления</string>
+    <string name="new_key">Новый ключ</string>
     <string name="update_feed">Источник обновлений</string>
     <string name="leave_empty_to_turn_the_check">Оставьте пустым, чтобы выключить проверку.</string>
     <string name="refresh_interval">Интервал обновления</string>
@@ -595,7 +597,6 @@
     <string name="vpn_connection">VPN-подключение</string>
     <string name="share_qr_code">Поделиться QR-кодом</string>
     <string name="the_clipboard_is_empty_copy_a">Буфер обмена пуст. Сначала скопируйте ссылку или конфигурацию.</string>
-    <string name="disconnect_before_testing_other_servers_direct">Отключитесь, прежде чем проверять другие серверы, прямой TCP или ICMP. Во время подключения проверяйте выбранный сервер, чтобы проверить текущий путь VPN.</string>
     <string name="destination_approved_tap_connect">Адрес подтверждён. Нажмите «Подключить».</string>
     <string name="file_saved">Файл сохранён.</string>
     <string name="section_general">Общие</string>

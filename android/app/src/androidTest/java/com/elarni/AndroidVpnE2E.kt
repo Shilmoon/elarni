@@ -238,8 +238,10 @@ class AndroidVpnE2E {
             call("settings", obj("settings" to obj("theme" to "dark", "sort" to "alphabet", "probeTimeout" to 7, "probeMode" to "tcp")))
             assertEquals("connected", repo.state.value.connection)
             assertTrue("Preference saves must preserve the running core's traffic counters", Native.call("getRuntimeMetrics").getLong("uplinkBytes") >= connectedMetrics.getLong("uplinkBytes"))
+            // The app is outside its own VPN, so a direct TCP test runs while connected and leaves the tunnel alone.
             ui.runOnIdle { ui.activity.testServers(listOf(id)) }
-            ui.waitUntil(5000) { ui.activity.interaction.notice?.startsWith("Disconnect before testing") == true }
+            ui.waitUntil(10_000) { repo.state.value.pings[id]?.string("protocol") == "tcp" }
+            assertEquals("success", repo.state.value.pings.getValue(id).string("status"))
             assertEquals("connected", repo.state.value.connection)
             assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
             call("settings", obj("settings" to obj("excludedRoutes" to JSONArray(listOf("10.0.2.2/32")))))
@@ -274,6 +276,15 @@ class AndroidVpnE2E {
                 target("block")
                 assertFalse("A blocked app must not reach the network", traffic("a", "tcp", httpPort, expectReply = false).contains("elarni-synthetic"))
                 call("settings", obj("settings" to obj("perAppTargets" to JSONObject())))
+                // While connected, another server's test runs its own core beside the VPN and leaves the selection alone.
+                call("settings", obj("settings" to obj("probeMode" to "proxy", "probeURL" to "http://10.0.2.2:$httpPort/fixture", "probeExpectedStatus" to 200, "probeExpectedBody" to "proxy:elarni-synthetic")))
+                val tested = other.requests
+                ui.runOnIdle { ui.activity.testServers(listOf(secondID)) }
+                ui.waitUntil(15_000) { repo.state.value.pings.containsKey(secondID) }
+                assertEquals("success", repo.state.value.pings.getValue(secondID).string("status"))
+                assertTrue("The test must reach the other server", other.requests > tested)
+                assertEquals(id, snapshot().selected)
+                assertEquals("connected", repo.state.value.connection)
                 call("deleteNode", obj("id" to secondID))
             } }
             call("settings", obj("settings" to obj("perAppMode" to "proxyOnly")))
@@ -740,13 +751,29 @@ class AndroidVpnE2E {
             ui.waitUntil(10_000) { repo.state.value.connection == "disconnected" }
             assertFalse(snapshot().data.optBoolean("connectionIntent"))
             // Automation apps send explicit broadcasts while Elarni is in the background. am broadcast returns once the receiver finishes.
-            fun send(action: String) = assertTrue(shell("am broadcast -a com.elarni.action.$action -n ${context.packageName}/com.elarni.RemoteControl").contains("Broadcast completed"))
+            fun send(action: String, key: String = snapshot().data.string("externalControlKey")) = assertTrue(shell("am broadcast -a com.elarni.action.$action -n ${context.packageName}/com.elarni.RemoteControl" +
+                (if (key.isEmpty()) "" else " --es key $key")).contains("Broadcast completed"))
             shell("input keyevent KEYCODE_HOME")
             try {
                 send("CONNECT")
                 assertEquals("Other apps control the connection only once allowed", "disconnected", repo.state.value.connection)
                 assertFalse(snapshot().data.optBoolean("connectionIntent"))
                 call("settings", obj("settings" to obj("allowExternalControl" to true)))
+                val first = snapshot().data.string("externalControlKey")
+                assertTrue("Allowing other apps makes their key", first.length >= 22)
+                call("newControlKey")
+                val second = snapshot().data.string("externalControlKey")
+                assertNotEquals(first, second)
+                val events = repo.state.value.event
+                // Broadcasts without the current key are ignored, and quietly: the user did nothing wrong.
+                for (key in listOf("", "wrong", first)) {
+                    send("CONNECT", key)
+                    assertEquals("A broadcast with the key \"$key\" connected", "disconnected", repo.state.value.connection)
+                }
+                assertEquals(events, repo.state.value.event)
+                call("settings", obj("settings" to obj("allowExternalControl" to false)))
+                call("settings", obj("settings" to obj("allowExternalControl" to true)))
+                assertEquals("Turning the setting off and on keeps the key", second, snapshot().data.string("externalControlKey"))
                 send("CONNECT"); ui.waitUntil(15_000) { repo.state.value.connection == "connected" }
                 send("TOGGLE"); ui.waitUntil(10_000) { repo.state.value.connection == "disconnected" }
                 send("TOGGLE"); ui.waitUntil(15_000) { repo.state.value.connection == "connected" }

@@ -272,6 +272,12 @@ private fun lines(value: String) = value.lines().map(String::trim).filter(String
         if (section == "General") SettingsGroup(tr(R.string.android_integration)) {
             SettingsTile(tr(R.string.shortcuts)) { navigate("shortcuts", "") }
             fields.filter { it.key == "allowExternalControl" }.forEach { toggle(it) }
+            catalog.data.string("externalControlKey").takeIf { saved.optBoolean("allowExternalControl") && it.isNotEmpty() }?.let { key ->
+                SettingsTile(tr(R.string.control_key), key, trailing = { Row {
+                    TextButton({ activity.copy(key, sensitive = true) }) { Text(tr(R.string.copy)) }
+                    TextButton({ activity.run("newControlKey") }, enabled = !busy) { Text(tr(R.string.new_key)) }
+                } })
+            }
             SettingsTile(tr(R.string.android_vpn_settings)) { activity.vpnSettings() }
             SettingsTile(tr(R.string.app_notifications_battery)) { activity.appSettings() }
             SettingsTile(tr(R.string.open_source_notices)) { navigate("notices", "") }

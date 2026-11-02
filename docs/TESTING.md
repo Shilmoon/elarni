@@ -15,6 +15,7 @@ These use loopback fixtures and never change routes, DNS or adapters.
 | Rust under `native/` or `Vendor/tun2proxy` | `sh scripts/check-tests rust` |
 | Dart under `lib/`, `bin/`, `test/` | `sh scripts/check-tests flutter` |
 | Swift (macOS only) | `sh scripts/check-tests swift` |
+| Kotlin logic under `android/` (needs the Android SDK and native build) | `android/gradlew -p android :app:testDebugUnitTest` |
 | Release tooling in `scripts/` | `python -m unittest discover -s scripts -p package_release_test.py` |
 | Windows local proxy | `python scripts/check-windows` |
 | Everything CI runs on this OS | `python scripts/check-changed --all` |

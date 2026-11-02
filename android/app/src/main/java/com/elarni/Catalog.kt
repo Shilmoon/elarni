@@ -64,6 +64,12 @@ class Catalog(val data: JSONObject) {
         data.put("settings", value).put("sessionLimitsMigrated", true)
         return true
     }
+    /** Allowing other apps makes the key their broadcasts carry, once: turning it off and on keeps the apps working. */
+    fun ensureControlKey(): Boolean {
+        if (!settings.optBoolean("allowExternalControl") || data.string("externalControlKey").isNotEmpty()) return false
+        data.put("externalControlKey", RemoteControl.newKey())
+        return true
+    }
     fun parseNodes(imported: JSONObject, previous: List<JSONObject>): List<JSONObject> {
         val parsed = imported.objects("profiles").map { it.copy().apply {
             if (string("format") == "telegram" && has("url")) put("config", obj("url" to get("url")))
@@ -196,21 +202,8 @@ class Catalog(val data: JSONObject) {
         val hiddenIDs = source.objects("hiddenNodes").map { it.string("id") }.toSet()
         val (hidden, nodes) = parseNodes(imported, source.objects("nodes") + source.objects("hiddenNodes")).partition { it.string("id") in hiddenIDs }
         val metadata = obj("hideURL" to (headers.string("hide-url").lowercase() in listOf("1", "true", "yes") || imported.optBoolean("hideURL")))
-        val seen = mutableSetOf<String>()
-        headers.string("subscription-userinfo").split(';').forEach {
-            val parts = it.split('=').map(String::trim)
-            if (parts.size == 2 && parts[0] in listOf("upload", "download", "total", "expire")) {
-                if (!seen.add(parts[0])) metadata.remove(parts[0])
-                else parts[1].toLongOrNull()?.takeIf { it >= 0 }?.let { number -> metadata.put(parts[0], number) }
-            }
-        }
-        mapOf("announcement" to "announce", "bannerText" to "banner-text", "bannerButtonText" to "banner-button-text").forEach { (key, header) -> display(headers.string(header))?.let { metadata.put(key, it) } }
-        mapOf("routingEnabled" to "routing-enable", "hideSettings" to "hide-settings", "deviceRegistered" to "x-hwid-active").forEach { (key, header) ->
-            when (headers.string(header).lowercase()) { "1", "true" -> metadata.put(key, true); "0", "false" -> metadata.put(key, false) }
-        }
         val links = obj("source" to feed.getString("url"))
-        mapOf("support" to "support-url", "account" to "profile-web-page-url", "banner" to "banner-button-url").forEach { (key, header) -> safeURL(headers.string(header))?.let { links.put(key, it) } }
-        safeURL(headers.string("premium-url"))?.let { links.put("banner", it) }
+        readHeaders(headers, metadata, links)
         val info = runCatching { JSONObject(body).mapObject("info") }.getOrDefault(JSONObject())
         mapOf("enabled" to "enabled", "online" to "isOnline").forEach { (key, field) -> if (info.opt(field) is Boolean) metadata.put(key, info.get(field)) }
         if (!metadata.has("announcement")) display(info.string("announce"))?.let { metadata.put("announcement", it) }
@@ -225,8 +218,6 @@ class Catalog(val data: JSONObject) {
         if (imported.strings("directives").any { !isRoutingLink(it) }) metadata.put("directiveNotice", "Unsupported provider directives")
         if (imported.optBoolean("systemResolverDNS")) metadata.put("dnsNotice", "The provider's DNS asks this device's resolver, outside the tunnel. Elarni uses its own DNS for these servers.")
         val title = display(headers.string("profile-title")) ?: source.string("importedName", source.string("providerName", URI(url).host))
-        Regex("\\d{1,6}").matchEntire(headers.string("profile-update-interval").trim())?.value?.toInt()?.takeIf { it > 0 }
-            ?.let { metadata.put("updateIntervalHours", it.coerceAtMost(168)) }
         val hours = refreshHours(source, metadata)
         source.put("providerName", title).put("name", source.string("manualName", title))
             .put("nodes", JSONArray(nodes)).put("hiddenNodes", JSONArray(hidden)).put("metadata", metadata).put("links", links).put("status", "ready")
@@ -517,6 +508,25 @@ class Catalog(val data: JSONObject) {
                 if (key != null) return key.lowercase()
             }
             return null
+        }
+        /** A subscription response's provider headers, added to [metadata] and [links]. */
+        fun readHeaders(headers: JSONObject, metadata: JSONObject, links: JSONObject) {
+            val seen = mutableSetOf<String>()
+            headers.string("subscription-userinfo").split(';').forEach {
+                val parts = it.split('=').map(String::trim)
+                if (parts.size == 2 && parts[0] in listOf("upload", "download", "total", "expire")) {
+                    if (!seen.add(parts[0])) metadata.remove(parts[0])
+                    else parts[1].toLongOrNull()?.takeIf { it >= 0 }?.let { number -> metadata.put(parts[0], number) }
+                }
+            }
+            mapOf("announcement" to "announce", "bannerText" to "banner-text", "bannerButtonText" to "banner-button-text").forEach { (key, header) -> display(headers.string(header))?.let { metadata.put(key, it) } }
+            mapOf("routingEnabled" to "routing-enable", "hideSettings" to "hide-settings", "deviceRegistered" to "x-hwid-active").forEach { (key, header) ->
+                when (headers.string(header).lowercase()) { "1", "true" -> metadata.put(key, true); "0", "false" -> metadata.put(key, false) }
+            }
+            mapOf("support" to "support-url", "account" to "profile-web-page-url", "banner" to "banner-button-url").forEach { (key, header) -> safeURL(headers.string(header))?.let { links.put(key, it) } }
+            safeURL(headers.string("premium-url"))?.let { links.put("banner", it) }
+            Regex("\\d{1,6}").matchEntire(headers.string("profile-update-interval").trim())?.value?.toInt()?.takeIf { it > 0 }
+                ?.let { metadata.put("updateIntervalHours", it.coerceAtMost(168)) }
         }
         // Subscriptions, managed lists and geodata retry a failed refresh after 60, 300, then 1800 s.
         fun retryDelay(failures: Int) = listOf(60, 300, 1800)[(failures - 1).coerceIn(0, 2)]
