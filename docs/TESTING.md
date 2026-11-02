@@ -31,6 +31,23 @@ gofmt -l Vendor
 
 For Go concurrency changes, also run `sh scripts/check-tests race` (needs cgo).
 
+## Fuzzing
+
+Subscription and link parsing reads provider bytes. The normal suites replay the
+fuzz seeds: `go test` runs the `Fuzz*` targets in `Vendor/libXray/share` over the
+package's test fixtures and `testdata/fuzz`, and `cargo test` runs a short
+mutation pass over the hy2, routing and profile parsers (`fuzz_tests.rs`). To
+fuzz longer, for example after changing a parser:
+
+```sh
+cd Vendor/libXray && go test -run='^$' -fuzz='^FuzzImportClientProfiles$' -fuzztime=90s ./share/
+ELARNI_FUZZ_ITERATIONS=200000 cargo test -p elarni-domain fuzz_ -- --nocapture
+```
+
+The other Go targets are `FuzzClientLink`, `FuzzSubscriptionMigration` and
+`FuzzSubscriptionFetchOptions`. Keep the input Go writes to `testdata/fuzz/` for a
+failure as a regression seed; a Rust failure prints its input.
+
 Helper tools have loopback self-tests: `scripts/check-macos-harness` (the macOS
 acceptance fixture) and `scripts/check-protocol-benchmark` (the live-server
 `scripts/benchmark-protocols`, with Chromium).

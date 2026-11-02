@@ -344,7 +344,13 @@ func TestOutboundsWithMissingServersAreRejectedWithoutPanicking(t *testing.T) {
 	for _, outbound := range []string{`{"protocol":"socks","settings":{"servers":[{"port":1080}]}}`,
 		`{"protocol":"http","settings":{"servers":[null]}}`, `{"protocol":"http","settings":{"servers":[{"port":8080}]}}`,
 		`{"protocol":"hysteria","settings":{"version":2,"port":443}}`,
-		`{"protocol":"vless","settings":{"vnext":[null]}}`, `{"protocol":"dns","settings":{"rules":[null]}}`} {
+		`{"protocol":"vless","settings":{"vnext":[null]}}`, `{"protocol":"dns","settings":{"rules":[null]}}`,
+		// Xray builds these on port 0 or at a host no share link can name.
+		`{"protocol":"vless","settings":{"address":"127.0.0.1","id":"00000000-0000-4000-8000-000000000001","encryption":"none"}}`,
+		`{"protocol":"vmess","settings":{"vnext":[{"address":"127.0.0.1","users":[{"id":"00000000-0000-4000-8000-000000000001"}]}]}}`,
+		`{"protocol":"socks","settings":{"address":"127.0.0.1"}}`, `{"protocol":"hysteria","settings":{"version":2,"address":"127.0.0.1"}}`,
+		`{"protocol":"socks","settings":{"address":"edge.example/path","port":1080}}`, `{"protocol":"http","settings":{"address":"a:b","port":8080}}`,
+		"proxies:\n - {name: spaced, type: ss, server: edge example, port: 8388, cipher: chacha20-ietf-poly1305, password: fixture}"} {
 		if _, err := ImportClientProfiles(outbound); err == nil {
 			t.Fatalf("%s accepted", outbound)
 		}

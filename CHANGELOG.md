@@ -4,6 +4,12 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Fixed
+
+- A JSON or Clash profile whose server has no port, or a host name with a space,
+  slash or colon, is refused on import, as its share link already was, instead of
+  failing to connect.
+
 ### Changed
 
 - Release files are built on GitHub-hosted runners and come with build provenance

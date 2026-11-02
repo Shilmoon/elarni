@@ -2,7 +2,7 @@ use crate::model::{PacketBackend, PreferredIp, RouteModel, RuntimeOptions};
 use crate::profile::compile_profile;
 use serde_json::{Value, json};
 
-fn node(tag: &str, address: &str) -> Value {
+pub(crate) fn node(tag: &str, address: &str) -> Value {
     json!({"tag": tag, "protocol": "vless", "settings": {
         "address": address, "port": 443, "id": "00000000-0000-4000-8000-000000000001", "encryption": "none"
     }, "streamSettings": {"network": "raw", "security": "tls", "tlsSettings": {"serverName": "peer.example.com"}}})
