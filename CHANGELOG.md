@@ -30,6 +30,17 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - A subscription refresh no longer reconnects when the active server changed only its
   REALITY shortId, which 3x-ui picks at random on every fetch.
 
+### Fixed
+
+- `elarni-cli` without `HOME` (a systemd unit without `User=`) finds the root service's
+  socket, or `$XDG_RUNTIME_DIR/elarni/control.sock`, instead of failing.
+- Linux: a tunnel killed while it started can no longer leave a DNS redirect that the
+  next start does not detect.
+- Routing: a `regexp:` rule Go cannot compile (unbalanced groups or classes, a trailing
+  backslash, a leading `*`) is rejected on import instead of failing at connect.
+- Windows: upgrading an install that never had the ElarniVPN service sets it up for the
+  installing account once, so connecting stops asking for administrator approval.
+
 ## 0.4.0 - 2026-11-01
 
 First open-source release.

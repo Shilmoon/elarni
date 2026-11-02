@@ -782,6 +782,7 @@ pub(crate) fn compile_owned_config(
                         domain.is_empty()
                             || domain.len() > 512
                             || unreadable_geodata(domain)
+                            || invalid_regexp(domain)
                             || domain.chars().any(char::is_whitespace)
                             || domain.parse::<IpAddr>().is_ok()
                             || domain.contains('/')
@@ -1235,6 +1236,72 @@ fn unreadable_geodata(target: &str) -> bool {
     code.is_empty() || code.starts_with('@') || code.ends_with('@') || code.contains("@@")
 }
 
+// Xray compiles a `regexp:` rule with Go's regexp package and refuses the whole config on an error.
+// shortcut: catches unbalanced groups and classes, a trailing backslash and a repetition with
+// nothing to repeat (a `*.example.com` glob) only; exact RE2 checks need a regex parser dependency.
+fn invalid_regexp(target: &str) -> bool {
+    let Some(pattern) = target.strip_prefix("regexp:") else {
+        return false;
+    };
+    let bytes = pattern.as_bytes();
+    let (mut depth, mut operand, mut i) = (0usize, false, 0);
+    while i < bytes.len() {
+        match bytes[i] {
+            // \Q...\E, or \Q to the end, is literal text.
+            b'\\' if bytes.get(i + 1) == Some(&b'Q') => {
+                i = pattern[i + 2..]
+                    .find("\\E")
+                    .map_or(bytes.len(), |end| i + end + 4);
+                operand = true;
+                continue;
+            }
+            b'\\' if i + 1 == bytes.len() => return true,
+            b'\\' => {
+                i += 1;
+                operand = true;
+            }
+            b'[' => {
+                i += 1;
+                if bytes.get(i) == Some(&b'^') {
+                    i += 1;
+                }
+                // A leading ']' is a literal.
+                if bytes.get(i) == Some(&b']') {
+                    i += 1;
+                }
+                loop {
+                    match bytes.get(i) {
+                        None => return true,
+                        Some(b']') => break,
+                        Some(b'\\') => i += 2,
+                        // [:alpha:] ends at the next ":]"; without one the '[' is a literal.
+                        Some(b'[') if bytes.get(i + 1) == Some(&b':') => {
+                            i = pattern[i + 2..].find(":]").map_or(i + 1, |end| i + end + 4);
+                        }
+                        Some(_) => i += 1,
+                    }
+                }
+                operand = true;
+            }
+            // "(?" opens flags or a named group, not a repetition.
+            b'(' => {
+                depth += 1;
+                operand = bytes.get(i + 1) == Some(&b'?');
+            }
+            b')' if depth == 0 => return true,
+            b')' => {
+                depth -= 1;
+                operand = true;
+            }
+            b'|' => operand = false,
+            b'*' | b'+' | b'?' if !operand => return true,
+            _ => operand = true,
+        }
+        i += 1;
+    }
+    depth != 0
+}
+
 pub(crate) fn valid_ip_target(target: &str) -> bool {
     // Xray accepts negated IP rules and external geodata references.
     let target = target.trim_start_matches('!');
@@ -1288,6 +1355,7 @@ pub(crate) fn compile_routes(
             if target.is_empty()
                 || target.len() > 512
                 || unreadable_geodata(target)
+                || invalid_regexp(target)
                 || !claimed.insert(target.clone())
             {
                 return Err(CompileError::InvalidRoute);

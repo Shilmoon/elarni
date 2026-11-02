@@ -30,10 +30,13 @@ cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
 sha256sum -c SHA256SUMS
 ```
 
-Upgrades are manual. Release builds read
-`https://api.github.com/repos/Shilmoon/elarni/releases/latest` once a day and show
-a notice when a newer version exists (Settings › General › Update feed changes or
-clears it; debug builds start with it off). It needs the repository to be public.
+Upgrades are manual: nothing downloads or installs. Desktop and Android release
+builds read `https://api.github.com/repos/Shilmoon/elarni/releases/latest` once a
+day (hourly while it cannot be read) and show a notice when it names a newer
+version; pre-release tags never do. Settings › General › Update feed changes it to
+another HTTPS address, serving a GitHub `releases/latest` reply or
+`{"version": "0.4.1", "url": "https://…"}`, or clears it to turn the check off;
+debug builds start with it off. The default feed needs the repository to be public.
 
 ## Before you package
 
@@ -82,9 +85,11 @@ python scripts/package-windows --bundle build/windows/x64/runner/Release `
 The script signs and verifies every EXE and DLL and keeps Wintun's own signature.
 `--msi` needs WiX 5 (`dotnet tool install --global wix --version 5.0.2`). The MSI
 installs to `%ProgramFiles%\Elarni`; a fresh install also sets up the VPN helper
-service for the installing account, so connecting needs no UAC prompt. Upgrades
-keep each account's setting and never add one (Settings › Connection › Connect
-without administrator approval does). Uninstalling removes the service.
+service for the installing account, so connecting needs no UAC prompt. An upgrade
+sets it up too when no service exists and no installer offered it to that account
+before (installs upgraded from 0.3.6 or earlier); otherwise upgrades keep each
+account's setting (Settings › Connection › Connect without administrator approval).
+Uninstalling removes the service.
 
 The portable ZIP asks for administrator approval to install the helper on the
 first connection. To remove it: quit Elarni, run `elarni.exe --unregister`, then

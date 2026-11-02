@@ -382,10 +382,8 @@ func (network linuxNetwork) install(policy *share.WindowsRoutePolicy) error {
 	if err != nil {
 		return err
 	}
-	script := network.firewall(protected)
-	if err := nft(script); err != nil {
-		return err
-	}
+	// Rules before the DNS redirect: an unprivileged linuxGuardLeft sees only rules,
+	// so a SIGKILL between the two must not leave a redirect that no start reports.
 	for _, family := range network.families() {
 		for _, rule := range network.policyRules(family, routes, policy) {
 			if addRule(rule) != nil {
@@ -393,7 +391,7 @@ func (network linuxNetwork) install(policy *share.WindowsRoutePolicy) error {
 			}
 		}
 	}
-	return nil
+	return nft(network.firewall(protected))
 }
 
 // linuxGuardedRoutes lists destinations the guard rejects outside the tunnel.

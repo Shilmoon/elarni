@@ -255,7 +255,7 @@ class PackageReleaseChecks(unittest.TestCase):
                 self.assertEqual(msi_condition(installer, condition, properties), runs, properties)
 
     @unittest.skipUnless(sys.platform == 'win32' and shutil.which('wix'), 'WiX Toolset v5 builds the MSI on Windows')
-    def test_msi_lets_only_a_new_install_connect_without_the_consent_prompt(self):
+    def test_msi_offers_connecting_without_the_consent_prompt_once_per_account(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             output = root / 'output'
@@ -273,9 +273,16 @@ class PackageReleaseChecks(unittest.TestCase):
                         msi_rows(installer, 'SELECT `Action`, `Condition`, `Sequence` FROM `InstallExecuteSequence`')}
             condition, number = sequence[action]
             self.assertGreater(number, sequence[install][1], 'The service runs the helper copy installed before it')
-            # Upgrades and repairs keep the choice each account made in Settings.
-            for properties, runs in (({}, True), ({'Installed': '00:00:00'}, False),
-                                     ({'WIX_UPGRADE_DETECTED': '{00000000-0000-0000-0000-000000000001}'}, False)):
+            # The installer marks the account it offered the service to, and reads that mark back.
+            marker = ['1', 'Software\\Elarni\\Installer', 'VPNServiceOffered']
+            self.assertIn(marker, [row[:3] for row in msi_rows(installer, 'SELECT `Root`, `Key`, `Name` FROM `Registry`')])
+            self.assertIn(marker, [row[1:4] for row in msi_rows(installer, 'SELECT `Signature_`, `Root`, `Key`, `Name` FROM `RegLocator`')])
+            # An upgrade offers it once, to an account that never had it; later upgrades and repairs
+            # keep the choice each account made in Settings, as does an upgrade beside an existing service.
+            upgrade = {'WIX_UPGRADE_DETECTED': '{00000000-0000-0000-0000-000000000001}'}
+            for properties, runs in (({}, True), ({'Installed': '00:00:00'}, False), (upgrade, True),
+                                     ({**upgrade, 'VPNSERVICEOFFERED': '#1'}, False),
+                                     ({**upgrade, 'VPNSERVICEEXISTS': '#%"C:\\helper\\elarni-core.exe" --service S-1-5-21-1'}, False)):
                 self.assertEqual(msi_condition(installer, condition, properties), runs, properties)
 
     def test_diagnostic_candidate_is_labeled_and_contains_export_launcher(self):

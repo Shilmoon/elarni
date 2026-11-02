@@ -29,8 +29,14 @@ bool get _linuxRoot {
   }
 }
 
-String get headlessSocketPath {
-  final env = Platform.environment;
+String get headlessSocketPath =>
+    headlessSocketPathFor(Platform.environment, linuxRoot: _linuxRoot);
+
+/// The default endpoint for [env]; the GUI, the daemon and the CLI all use it.
+String headlessSocketPathFor(
+  Map<String, String> env, {
+  required bool linuxRoot,
+}) {
   if (env['ELARNI_CONTROL_SOCKET'] case final String value
       when value.isNotEmpty)
     return value;
@@ -38,6 +44,12 @@ String get headlessSocketPath {
     final base = env['LOCALAPPDATA'];
     if (base == null) throw StateError('local_app_data_unavailable');
     return '$base/Elarni/control/endpoint.json';
+  }
+  // System units without User= get no HOME; neither Linux default below needs it.
+  if (!Platform.isMacOS) {
+    if (linuxRoot) return '/run/elarni/control.sock';
+    if (env['XDG_RUNTIME_DIR'] case final String runtime)
+      return '$runtime/elarni/control.sock';
   }
   final home = env['HOME'];
   if (home == null) throw StateError('home_unavailable');
@@ -48,11 +60,7 @@ String get headlessSocketPath {
         : '$home/Library/Containers/com.elarni.mac/Data';
     return '$container/.elarni/control.sock';
   }
-  if (_linuxRoot) return '/run/elarni/control.sock';
-  final runtime = env['XDG_RUNTIME_DIR'];
-  return runtime != null
-      ? '$runtime/elarni/control.sock'
-      : '$home/.local/state/Elarni/control/control.sock';
+  return '$home/.local/state/Elarni/control/control.sock';
 }
 
 Future<String> readHeadlessMessage(Stream<List<int>> stream) async {

@@ -1315,6 +1315,52 @@ fn rejects_geodata_forms_xray_cannot_read() {
     }
 }
 
+// Xray compiles regexp: rules with Go's regexp package, so a bad pattern failed only at
+// connect. Each pattern here was checked against Go's regexp.Compile.
+#[test]
+fn rejects_regexp_rules_go_cannot_compile() {
+    for (key, invalid) in [
+        ("BlockSites", "regexp:*.example.com"),
+        ("DirectSites", "regexp:(example\\.com"),
+        ("ProxySites", "regexp:example\\.com)"),
+        ("BlockSites", "regexp:[a-z"),
+        ("BlockSites", "regexp:[]"),
+        ("BlockSites", "regexp:example\\"),
+        ("BlockSites", "regexp:[a\\"),
+        ("BlockSites", "regexp:a|+b"),
+        ("BlockSites", "regexp:(*)"),
+        ("BlockSites", "regexp:?a"),
+        ("DomesticDNSDomains", "regexp:(cn"),
+    ] {
+        let mut value = routing_profile();
+        value[key] = json!([invalid]);
+        assert!(
+            decode_routing(&value.to_string()).is_err(),
+            "accepted {key} {invalid}"
+        );
+    }
+    for valid in [
+        "regexp:^(.+\\.)?example\\.com$",
+        "regexp:(?i)^ads?\\.",
+        "regexp:(?P<n>a)|b*",
+        "regexp:[]a]",
+        "regexp:[^]a]x",
+        "regexp:[[:alpha:]](x)",
+        "regexp:[[:]]",
+        "regexp:[(]\\(",
+        "regexp:\\Q(\\E",
+        "regexp:^*",
+        "regexp:a]{",
+    ] {
+        let mut value = routing_profile();
+        value["BlockSites"] = json!([valid]);
+        assert!(
+            decode_routing(&value.to_string()).is_ok(),
+            "rejected {valid}"
+        );
+    }
+}
+
 // Rust's integer parsing accepts a leading '+', which Xray rejects in a CIDR
 // prefix and in a port set, so the whole config failed to start.
 #[test]

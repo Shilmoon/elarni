@@ -26,7 +26,19 @@
         <RegistryValue Root="HKCU" Key="Software\Elarni\Installer" Name="StartMenuShortcut" Type="integer"
                        Value="1" KeyPath="yes" />
       </Component>
+      <!-- Marks that an installer offered the installing account the ElarniVPN service. -->
+      <Component Id="VPNServiceOffered">
+        <RegistryValue Root="HKCU" Key="Software\Elarni\Installer" Name="VPNServiceOffered" Type="integer"
+                       Value="1" KeyPath="yes" />
+      </Component>
     </StandardDirectory>
+    <!-- AppSearch runs before RemoveExistingProducts, so both read the state from before this install. -->
+    <Property Id="VPNSERVICEOFFERED" Secure="yes">
+      <RegistrySearch Root="HKCU" Key="Software\Elarni\Installer" Name="VPNServiceOffered" Type="raw" />
+    </Property>
+    <Property Id="VPNSERVICEEXISTS" Secure="yes">
+      <RegistrySearch Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\ElarniVPN" Name="ImagePath" Type="raw" />
+    </Property>
     <!-- Link handlers and launch-at-login are under the uninstalling user's HKCU. -->
     <CustomAction Id="Unregister" FileRef="ElarniExe" ExeCommand="--unregister"
                   Execute="deferred" Impersonate="yes" Return="ignore" />
@@ -42,8 +54,10 @@
                   ExeCommand="&quot;[INSTALLFOLDER]elarni-core.exe&quot; --uninstall-helper"
                   Execute="deferred" Impersonate="no" Return="ignore" />
     <!-- A new install lets the installing account connect without a consent prompt, through the
-         ElarniVPN service (Settings > Connection turns it off). Upgrades keep each account's choice;
-         InstallHelper points an existing service at the new build. -->
+         ElarniVPN service (Settings > Connection turns it off). An upgrade does so only for an account
+         no installer offered it to, when no service exists: installs upgraded from builds before the
+         service never had it. Other upgrades keep each account's choice; InstallHelper points an
+         existing service at the new build. -->
     <CustomAction Id="AllowVPNService" Directory="INSTALLFOLDER"
                   ExeCommand="&quot;[INSTALLFOLDER]elarni-core.exe&quot; --vpn-service add [UserSID]"
                   Execute="deferred" Impersonate="no" Return="ignore" />
@@ -53,7 +67,8 @@
       <Custom Action="UninstallHelper" Before="RemoveFiles"
               Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="InstallHelper" After="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot;" />
-      <Custom Action="AllowVPNService" After="InstallHelper" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+      <Custom Action="AllowVPNService" After="InstallHelper"
+              Condition="NOT Installed AND (NOT WIX_UPGRADE_DETECTED OR (NOT VPNSERVICEOFFERED AND NOT VPNSERVICEEXISTS))" />
     </InstallExecuteSequence>
   </Package>
 </Wix>
