@@ -1034,6 +1034,18 @@ struct SubscriptionChecks {
       node(store)["lastSuccessCurrent"] as? Bool == false,
       "unique-name profile representation change lost selection/preferences or retained health")
     print("PASS a changed refresh publishes at once, keeps selection and preferences, and invalidates old success")
+    // The tunnel plan names the outbound's secret, so a kept reference keeps the running tunnel.
+    try await mode("reality_0a1b")
+    _ = try await store.refresh(id: id)
+    let realityRef = try store.outboundRef(nodeID: nodeID)
+    try await mode("reality_c2d3")
+    _ = try await store.refresh(id: id)
+    try expect(store.selectedNodeID() == nodeID && store.outboundRef(nodeID: nodeID) == realityRef,
+      "a refresh that changed only the REALITY shortId replaced the stored outbound")
+    try await mode("reality_sni")
+    _ = try await store.refresh(id: id)
+    try expect(store.outboundRef(nodeID: nodeID) != realityRef, "a refresh that changed the SNI kept the stored outbound")
+    print("PASS a refresh that changes only the REALITY shortId keeps the stored outbound; an SNI change replaces it")
     func dnsNotice() -> String? {
       ((store.snapshot()["subscriptions"] as! [[String: Any]])[0]["metadata"] as? [String: Any])?["dnsNotice"] as? String
     }
@@ -1044,7 +1056,7 @@ struct SubscriptionChecks {
     _ = try await store.refresh(id: id)
     try expect(dnsNotice() == nil, "the DNS notice outlived the provider DNS")
     print("PASS a provider DNS that asks the system resolver is noted until the provider changes it")
-    return 3
+    return 4
   }
 
   static func rejects(_ body: () throws -> Void) throws {

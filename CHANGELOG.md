@@ -9,6 +9,11 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - Release files are built on GitHub-hosted runners and come with build provenance
   (`gh attestation verify`) and a Sigstore-signed `SHA256SUMS`; see docs/RELEASING.md.
 
+### Fixed
+
+- A subscription refresh no longer reconnects when the active server changed only its
+  REALITY shortId, which 3x-ui picks at random on every fetch.
+
 ## 0.4.0 - 2026-11-01
 
 First open-source release.

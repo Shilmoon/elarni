@@ -110,10 +110,15 @@ class Catalog(val data: JSONObject) {
                 old = byName[value.string("name")]?.firstOrNull { it !in claimed && it.string("format") == value.string("format") }
                 if (old != null) claimed.add(old)
             }
-            val config = value.getJSONObject("config")
+            var config = value.getJSONObject("config")
             config.objects("elarniGroups").forEach { group ->
                 val choice = old?.mapObject("groupOverrides")?.string(group.string("name"))
                 if (choice in group.strings("options")) group.put("selected", choice)
+            }
+            // 3x-ui sends one of a server's REALITY shortIds at random per fetch; that alone must not restart the tunnel.
+            if (old != null && canonical(old.getJSONObject("config")) != canonical(config)) {
+                config = Native.domain("keepShortIds", obj("previous" to old.getJSONObject("config"), "config" to config)).getJSONObject("config")
+                value.put("config", config)
             }
             value.put("id", old?.string("id") ?: newId())
                 .put("favorite", old?.optBoolean("favorite") ?: false)

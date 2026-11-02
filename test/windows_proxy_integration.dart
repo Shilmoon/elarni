@@ -4570,6 +4570,57 @@ for line in sys.stdin:
     },
   );
 
+  // 3x-ui sends one of a REALITY server's shortIds at random on each fetch.
+  test(
+    'a refresh that only changes the REALITY shortId keeps the core running',
+    () async {
+      var shortID = '0a1b', sni = 'example.com';
+      final feed = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      feed.listen((request) async {
+        // Connected means only that the local core answers; no server listens.
+        request.response.write(
+          'vless://$userID@127.0.0.1:9?encryption=none&security=reality&type=tcp&fp=chrome'
+          '&pbk=FCNsCTRerqst97Y-_Pc32LnnBu0g_hw-LhJYlaeiEVs&sni=$sni&sid=$shortID#Reality\n',
+        );
+        await request.response.close();
+      });
+      Future<Object?> connectedSince() async =>
+          (await backend.control.runtimeMetrics())['connectedSince'];
+      try {
+        var result = await backend.control.addSubscription(
+          'http://127.0.0.1:${feed.port}/feed',
+        );
+        final id = result.snapshot.subscriptions.single.id;
+        for (
+          var attempt = 0;
+          result.warning != null && attempt < 4;
+          attempt++
+        ) {
+          result = await backend.control.refreshSubscription(
+            id,
+            challenge: result.warning!.challenge,
+          );
+        }
+        await backend.control.selectNode(
+          result.snapshot.subscriptions.single.nodes.single.id,
+        );
+        expect(await backend.control.connect(), 'connected');
+        final started = await connectedSince();
+        expect(started, isNotNull);
+        shortID = 'c2d3';
+        await backend.control.refreshSubscription(id);
+        expect(await connectedSince(), started);
+        // Any other change still restarts the core.
+        sni = 'example.org';
+        await backend.control.refreshSubscription(id);
+        expect(await backend.control.state(), 'connected');
+        expect(await connectedSince(), allOf(isNotNull, isNot(started)));
+      } finally {
+        await feed.close(force: true);
+      }
+    },
+  );
+
   test('a renamed server keeps its name and a deleted one is gone', () async {
     final feed = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     feed.listen((request) async {

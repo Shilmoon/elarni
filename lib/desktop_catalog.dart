@@ -753,7 +753,7 @@ final class DesktopCatalog {
         );
         if (index >= 0) old = available.removeAt(index);
       }
-      final config = catalogMap(item['config']);
+      var config = catalogMap(item['config']);
       final groups = catalogList(config['elarniGroups']);
       for (final group in groups) {
         final choice = catalogMap(old?['groupOverrides'] ?? {})[group['name']];
@@ -761,6 +761,15 @@ final class DesktopCatalog {
           group['selected'] = choice;
       }
       if (config.containsKey('elarniGroups')) config['elarniGroups'] = groups;
+      // 3x-ui sends one of a server's REALITY shortIds at random per fetch;
+      // that alone must not restart the running core.
+      if (old != null && identity(old['config']) != identity(config))
+        config = catalogMap(
+          domain('keepShortIds', {
+            'previous': old['config'],
+            'config': config,
+          })['config'],
+        );
       result.add({
         ...item,
         'id': old?['id'] ?? desktopID(),
