@@ -117,8 +117,10 @@ func (c *Client) Process(ctx context.Context, link *transport.Link, dialer inter
 
 		// write some request payload to buffer
 		// A client that half-closed without data still waits for the server to speak.
-		if err = buf.CopyOnceTimeout(link.Reader, bodyWriter, time.Millisecond*100); err != nil && err != io.EOF && err != buf.ErrNotTimeoutReader && err != buf.ErrReadTimeout {
-			return errors.New("failed to write A request payload").Base(err)
+		if !protocol.ServerFirst(destination) { // Elarni: its client waits for the server's greeting
+			if err = buf.CopyOnceTimeout(link.Reader, bodyWriter, time.Millisecond*100); err != nil && err != io.EOF && err != buf.ErrNotTimeoutReader && err != buf.ErrReadTimeout {
+				return errors.New("failed to write A request payload").Base(err)
+			}
 		}
 
 		// Flush; bufferWriter.WriteMultiBuffer now is bufferWriter.writer.WriteMultiBuffer

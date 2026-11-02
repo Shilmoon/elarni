@@ -65,25 +65,8 @@ func (c *client) close() {
 	c.udpSM = nil
 }
 
-func (c *client) dial(ctx context.Context) error {
-	if c.forced {
-		return errors.New("client is closed")
-	}
-
-	switch c.status() {
-	case StatusActive:
-		return nil
-	case StatusInactive:
-		c.close()
-	}
-
-	quicParams := c.quicParams
-	if quicParams == nil {
-		quicParams = &internet.QuicParams{
-			BbrProfile: string(bbr.ProfileStandard),
-		}
-	}
-
+// newQuicConfig is the client's QUIC configuration for quicParams.
+func newQuicConfig(quicParams *internet.QuicParams) *quic.Config {
 	quicConfig := &quic.Config{
 		InitialStreamReceiveWindow:     quicParams.InitStreamReceiveWindow,
 		MaxStreamReceiveWindow:         quicParams.MaxStreamReceiveWindow,
@@ -113,6 +96,29 @@ func (c *client) dial(ctx context.Context) error {
 	if quicParams.MaxIdleTimeout == 0 {
 		quicConfig.MaxIdleTimeout = 30 * time.Second
 	}
+	return quicConfig
+}
+
+func (c *client) dial(ctx context.Context) error {
+	if c.forced {
+		return errors.New("client is closed")
+	}
+
+	switch c.status() {
+	case StatusActive:
+		return nil
+	case StatusInactive:
+		c.close()
+	}
+
+	quicParams := c.quicParams
+	if quicParams == nil {
+		quicParams = &internet.QuicParams{
+			BbrProfile: string(bbr.ProfileStandard),
+		}
+	}
+	quicConfig := newQuicConfig(quicParams)
+
 	// if quicParams.KeepAlivePeriod == 0 {
 	// 	quicConfig.KeepAlivePeriod = 10 * time.Second
 	// }

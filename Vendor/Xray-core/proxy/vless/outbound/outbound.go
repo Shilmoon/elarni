@@ -325,7 +325,11 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 		}
 		timeoutReader, ok := clientReader.(buf.TimeoutReader)
 		if ok {
-			multiBuffer, err1 := timeoutReader.ReadMultiBufferTimeout(time.Millisecond * 500)
+			var multiBuffer buf.MultiBuffer
+			var err1 error = buf.ErrReadTimeout
+			if !protocol.ServerFirst(request.Destination()) { // Elarni: its client waits for the server's greeting
+				multiBuffer, err1 = timeoutReader.ReadMultiBufferTimeout(time.Millisecond * 500)
+			}
 			if err1 == nil {
 				if err := serverWriter.WriteMultiBuffer(multiBuffer); err != nil {
 					return err // ...

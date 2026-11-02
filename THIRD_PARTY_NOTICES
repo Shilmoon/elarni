@@ -371,6 +371,13 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## quic-go (Apernet) 0.61.1-0.20260806010916-184d081eef3e
+
+Module: github.com/apernet/quic-go
+Copyright (c) 2016 the quic-go authors & Google, Inc. Licensed under MIT.
+Source snapshot with Elarni changes recorded in `third_party/modifications.json`:
+`Vendor/quic-go`. License: `Vendor/quic-go/LICENSE`.
+
 ## wireguard-go 0.0.0-20250521234502-f333402bd9cb
 
 Module: golang.zx2c4.com/wireguard

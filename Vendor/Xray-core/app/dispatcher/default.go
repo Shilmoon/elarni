@@ -292,7 +292,7 @@ func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destin
 				reader: outbound.Reader.(*pipe.Reader),
 			}
 			outbound.Reader = cReader
-			result, err := sniffer(ctx, cReader, sniffingRequest.MetadataOnly, destination.Network)
+			result, err := sniffer(ctx, cReader, sniffingRequest.MetadataOnly, destination)
 			if err == nil {
 				content.Protocol = result.Protocol()
 			}
@@ -347,7 +347,7 @@ func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.De
 			reader: outbound.Reader.(buf.TimeoutReader),
 		}
 		outbound.Reader = cReader
-		result, err := sniffer(ctx, cReader, sniffingRequest.MetadataOnly, destination.Network)
+		result, err := sniffer(ctx, cReader, sniffingRequest.MetadataOnly, destination)
 		if err == nil {
 			content.Protocol = result.Protocol()
 		}
@@ -375,7 +375,7 @@ func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.De
 	return nil
 }
 
-func sniffer(ctx context.Context, cReader *cachedReader, metadataOnly bool, network net.Network) (SniffResult, error) {
+func sniffer(ctx context.Context, cReader *cachedReader, metadataOnly bool, destination net.Destination) (SniffResult, error) {
 	payload := buf.NewWithSize(32767)
 	defer payload.Release()
 
@@ -383,7 +383,7 @@ func sniffer(ctx context.Context, cReader *cachedReader, metadataOnly bool, netw
 
 	metaresult, metadataErr := sniffer.SniffMetadata(ctx)
 
-	if metadataOnly {
+	if metadataOnly || protocol.ServerFirst(destination) {
 		return metaresult, metadataErr
 	}
 
@@ -404,7 +404,7 @@ func sniffer(ctx context.Context, cReader *cachedReader, metadataOnly bool, netw
 				cacheDeadline -= cachingTimeElapsed
 
 				if !payload.IsEmpty() {
-					result, err := sniffer.Sniff(ctx, payload.Bytes(), network)
+					result, err := sniffer.Sniff(ctx, payload.Bytes(), destination.Network)
 					switch err {
 					case common.ErrNoClue: // No Clue: protocol not matches, and sniffer cannot determine whether there will be a match or not
 						totalAttempt++

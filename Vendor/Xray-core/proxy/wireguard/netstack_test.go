@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"runtime"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -145,8 +146,18 @@ func TestTunnelTCPReceiveBuffersStopAtTwoMiB(t *testing.T) {
 	if err := gstack.TransportProtocolOption(tcp.ProtocolNumber, &sizes); err != nil {
 		t.Fatal(err)
 	}
-	if sizes.Max != 2<<20 || sizes.Default > sizes.Max {
-		t.Fatalf("receive buffer range %+v, want at most 2 MiB", sizes)
+	if sizes.Max != receiveBufferMax(runtime.GOOS) || sizes.Default > sizes.Max {
+		t.Fatalf("receive buffer range %+v, want at most %d", sizes, receiveBufferMax(runtime.GOOS))
+	}
+	if got := receiveBufferMax("linux"); got != 2<<20 {
+		t.Fatalf("desktop receive buffers stop at %d, want 2 MiB", got)
+	}
+}
+
+// iOS kills the packet tunnel above about 50 MB; 40 stalled downloads at 2 MiB each held 120 MB.
+func TestTunnelTCPReceiveBuffersStopAtOneMiBOnIOS(t *testing.T) {
+	if got := receiveBufferMax("ios"); got != 1<<20 {
+		t.Fatalf("iOS receive buffers stop at %d, want 1 MiB", got)
 	}
 }
 

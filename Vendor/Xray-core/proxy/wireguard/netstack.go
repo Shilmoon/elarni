@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -37,6 +38,17 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 )
+
+// receiveBufferMax caps each tunnel TCP receive buffer. Elarni: gVisor grows one up to 4 MiB and a
+// stalled download keeps it full, about 1.1 times the cap each; 2 MiB gave one stream 23 MB/s at
+// 40 ms. iOS kills the packet tunnel above about 50 MB, where 40 stalled downloads held 120 MB at
+// 2 MiB; 1 MiB halves that and still gave one stream 12 MB/s at 40 ms (8 streams did better).
+func receiveBufferMax(goos string) int {
+	if goos == "ios" {
+		return 1 << 20
+	}
+	return 2 << 20
+}
 
 type netTun struct {
 	ep             *channel.Endpoint
@@ -71,9 +83,8 @@ func CreateNetTUN(localAddresses, dnsServers []netip.Addr, mtu int, handleLocal 
 	if tcpipErr != nil {
 		return nil, nil, nil, fmt.Errorf("could not enable TCP SACK: %v", tcpipErr)
 	}
-	// Elarni: gVisor grows a receive buffer up to 4 MiB and a stalled reader keeps it full, about
-	// 4 MB per such connection; 2 MiB still covers 130 Mbit/s at 120 ms for one stream.
-	receiveBuffer := tcpip.TCPReceiveBufferSizeRangeOption{Min: tcp.MinBufferSize, Default: tcp.DefaultReceiveBufferSize, Max: 2 << 20}
+	maxReceive := receiveBufferMax(runtime.GOOS)
+	receiveBuffer := tcpip.TCPReceiveBufferSizeRangeOption{Min: tcp.MinBufferSize, Default: min(tcp.DefaultReceiveBufferSize, maxReceive), Max: maxReceive}
 	if tcpipErr := dev.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &receiveBuffer); tcpipErr != nil {
 		return nil, nil, nil, fmt.Errorf("could not set the TCP receive buffer: %v", tcpipErr)
 	}

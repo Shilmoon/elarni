@@ -167,8 +167,10 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 			bodyWriter = xudp.NewPacketWriter(bodyWriter, target, xudp.GetGlobalID(ctx))
 		}
 		// A client that half-closed without data still waits for the server to speak.
-		if err := buf.CopyOnceTimeout(input, bodyWriter, time.Millisecond*100); err != nil && err != io.EOF && err != buf.ErrNotTimeoutReader && err != buf.ErrReadTimeout {
-			return errors.New("failed to write first payload").Base(err)
+		if !protocol.ServerFirst(target) { // Elarni: its client waits for the server's greeting
+			if err := buf.CopyOnceTimeout(input, bodyWriter, time.Millisecond*100); err != nil && err != io.EOF && err != buf.ErrNotTimeoutReader && err != buf.ErrReadTimeout {
+				return errors.New("failed to write first payload").Base(err)
+			}
 		}
 
 		if err := writer.SetBuffered(false); err != nil {
