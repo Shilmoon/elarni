@@ -47,3 +47,8 @@ Local TCP repairs (`src/stream/tcp.rs`, `src/stream/tcb.rs`, tests in
 - A read takes every queued segment that fits, not one, so the proxy writes an
   upload in up to 8 KiB instead of one system call per segment. Per-packet log
   lines format their sequence numbers only when the line is logged.
+
+Local device repair (`src/lib.rs`, test in `src/stream/tcp_tests.rs`): packets go
+to the device from their own task over `tokio::io::split`, so a device write
+waiting for room (the packet bridge's full output queue) no longer stops the
+stack reading its input, which the bridge then dropped.

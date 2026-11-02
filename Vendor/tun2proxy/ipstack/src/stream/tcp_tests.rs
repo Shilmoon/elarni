@@ -638,3 +638,57 @@ async fn one_read_takes_every_queued_segment_that_fits() {
     assert_eq!(n, 5000, "one read returned {n} of 5000 queued bytes");
     assert!((0..5).all(|i| buffer[i * 1000..(i + 1) * 1000].iter().all(|&b| b == i as u8)));
 }
+
+struct WaitingDevice {
+    input: UnboundedReceiver<Vec<u8>>,
+}
+
+impl AsyncRead for WaitingDevice {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+        match self.input.poll_recv(cx) {
+            Poll::Ready(Some(packet)) => {
+                buf.put_slice(&packet);
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(None) => Poll::Ready(Ok(())),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl AsyncWrite for WaitingDevice {
+    fn poll_write(self: Pin<&mut Self>, _: &mut Context<'_>, _: &[u8]) -> Poll<std::io::Result<usize>> {
+        Poll::Pending
+    }
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+// The stack wrote to the device inside its read loop, so a device waiting for room (the packet
+// bridge's full output queue) also stopped it reading, and the bridge dropped incoming packets.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_waiting_device_write_does_not_stop_reads() {
+    let (input, device_input) = unbounded_channel();
+    let mut config = IpStackConfig::default();
+    config.mtu(1500).unwrap();
+    let mut stack = IpStack::new(config, WaitingDevice { input: device_input });
+    let mut streams = Vec::new();
+    for port in [41000, 41001] {
+        let mut syn = Vec::new();
+        PacketBuilder::ipv4(CLIENT, SERVER, 64)
+            .tcp(port, 443, ISN, 65535)
+            .syn()
+            .write(&mut syn, &[])
+            .unwrap();
+        input.send(syn).unwrap();
+        match tokio::time::timeout(Duration::from_secs(2), stack.accept()).await {
+            Ok(Ok(IpStackStream::Tcp(stream))) => streams.push(stream),
+            _ => panic!("the SYN from port {port} was not read"),
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await; // the SYN-ACK write is now waiting
+    }
+}

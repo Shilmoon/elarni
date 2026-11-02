@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::io;
+use std::task::Waker;
 
 #[derive(Debug)]
 pub struct FrameAssembler {
@@ -8,6 +9,8 @@ pub struct FrameAssembler {
     max_packet_bytes: usize,
     max_queued_packets: usize,
     dropped: u64,
+    // A writer waiting for room, woken by `pop`.
+    writer: Option<Waker>,
 }
 
 impl FrameAssembler {
@@ -18,12 +21,22 @@ impl FrameAssembler {
             max_packet_bytes,
             max_queued_packets,
             dropped: 0,
+            writer: None,
         }
     }
 
     /// Packets dropped because the output queue was full.
     pub fn dropped(&self) -> u64 {
         self.dropped
+    }
+
+    /// Whether the queue is full; if so, `waker` runs once `pop` makes room.
+    pub fn full_or_park(&mut self, waker: &Waker) -> bool {
+        let full = self.output.len() >= self.max_queued_packets;
+        if full {
+            self.writer = Some(waker.clone());
+        }
+        full
     }
 
     pub fn ingest(&mut self, bytes: &[u8]) -> io::Result<usize> {
@@ -46,8 +59,8 @@ impl FrameAssembler {
             }
             let remainder = self.pending.split_off(length);
             let packet = std::mem::replace(&mut self.pending, remainder);
-            // A full queue is congestion: drop the packet as a link would; an
-            // error here would end the whole packet stack.
+            // Writers wait for room (`full_or_park`), so only a write carrying several
+            // packets can overfill the queue: drop the excess, as an error would end the stack.
             if self.output.len() >= self.max_queued_packets {
                 self.dropped += 1;
                 continue;
@@ -62,7 +75,13 @@ impl FrameAssembler {
     }
 
     pub fn pop(&mut self) -> Option<Vec<u8>> {
-        self.output.pop_front()
+        let packet = self.output.pop_front();
+        if packet.is_some()
+            && let Some(writer) = self.writer.take()
+        {
+            writer.wake();
+        }
+        packet
     }
 }
 

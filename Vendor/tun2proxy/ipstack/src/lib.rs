@@ -306,7 +306,7 @@ impl Drop for IpStack {
 
 fn run<Device: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     config: IpStackConfig,
-    mut device: Device,
+    device: Device,
     accept_sender: UnboundedSender<IpStackStream>,
 ) -> JoinHandle<Result<()>> {
     let mut sessions: SessionCollection = AHashMap::new();
@@ -320,11 +320,26 @@ fn run<Device: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     // Keep the read boundary intact; TCP segmentation still uses config.mtu.
     let mut buffer = vec![0_u8; u16::MAX as usize + offset];
     let (up_pkt_sender, mut up_pkt_receiver) = mpsc::unbounded_channel::<NetworkPacket>();
+    // Elarni: writes run in their own task, so a device waiting for room does not stop reads.
+    let (mut reader, mut writer) = tokio::io::split(device);
+    let upstream = tokio::spawn(async move {
+        while let Some(packet) = up_pkt_receiver.recv().await {
+            process_upstream_recv(
+                packet,
+                &mut writer,
+                #[cfg(unix)]
+                pi,
+            )
+            .await?;
+        }
+        Ok::<(), IpStackError>(())
+    });
 
     tokio::spawn(async move {
+        let mut upstream = AbortOnDrop(upstream);
         loop {
             select! {
-                Ok(n) = device.read(&mut buffer) => {
+                Ok(n) = reader.read(&mut buffer) => {
                     if let Err(e) = process_device_read(&buffer[offset..n], &mut fragments, &mut sessions, &session_remove_tx, &up_pkt_sender, &config, &accept_sender).await {
                         let io_err: std::io::Error = e.into();
                         if io_err.kind() == std::io::ErrorKind::ConnectionRefused {
@@ -339,12 +354,21 @@ fn run<Device: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
                     log::debug!("session destroyed: {network_tuple}");
                 }
                 _ = fragment_expiry.tick(), if !fragments.is_empty() => fragments.expire(),
-                Some(packet) = up_pkt_receiver.recv() => {
-                    process_upstream_recv(packet, &mut device, #[cfg(unix)]pi).await?;
+                result = &mut upstream.0 => {
+                    return result.map_err(std::io::Error::other)?;
                 }
             }
         }
     })
+}
+
+/// Aborts the device writer when the stack's task ends or is aborted.
+struct AbortOnDrop(JoinHandle<Result<()>>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 async fn process_device_read(

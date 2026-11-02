@@ -146,20 +146,46 @@ fn device_wakes_on_input_preserves_partial_reads_and_reports_eof() {
     assert!(buffer.filled().is_empty());
 }
 
+struct CountingWaker(AtomicUsize);
+
+impl Wake for CountingWaker {
+    fn wake(self: Arc<Self>) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+// A full output queue dropped the stack's packets; 64 parallel downloads lost thousands and
+// their synchronized retransmissions overflowed it again until the connections reset.
 #[test]
-fn device_propagates_framing_errors_and_drops_queue_overflow() {
+fn device_waits_for_room_instead_of_dropping_and_propagates_framing_errors() {
     let (_sender, receiver) = mpsc::channel(1);
     let output = Arc::new(Mutex::new(FrameAssembler::new(1280, 1)));
     let mut device = PacketDevice::new(receiver, output.clone(), Arc::default());
-    let mut context = Context::from_waker(Waker::noop());
-    let bytes = packet(6, 2);
-    for _ in 0..2 {
-        assert!(
-            matches!(Pin::new(&mut device).poll_write(&mut context, &bytes), Poll::Ready(Ok(n)) if n == bytes.len())
-        );
-    }
-    assert_eq!(output.lock().unwrap().dropped(), 1);
-    assert_eq!(output.lock().unwrap().pop(), Some(bytes));
+    let wakes = Arc::new(CountingWaker(AtomicUsize::new(0)));
+    let waker = Waker::from(wakes.clone());
+    let mut context = Context::from_waker(&waker);
+    let first = packet(6, 2);
+    let second = packet(4, 3);
+    assert!(
+        matches!(Pin::new(&mut device).poll_write(&mut context, &first), Poll::Ready(Ok(n)) if n == first.len())
+    );
+    assert!(
+        Pin::new(&mut device)
+            .poll_write(&mut context, &second)
+            .is_pending()
+    );
+    assert_eq!(wakes.0.load(Ordering::SeqCst), 0);
+    assert_eq!(output.lock().unwrap().pop(), Some(first));
+    assert_eq!(
+        wakes.0.load(Ordering::SeqCst),
+        1,
+        "receiving made room but left the writer asleep"
+    );
+    assert!(
+        matches!(Pin::new(&mut device).poll_write(&mut context, &second), Poll::Ready(Ok(n)) if n == second.len())
+    );
+    assert_eq!(output.lock().unwrap().pop(), Some(second));
+    assert_eq!(output.lock().unwrap().dropped(), 0);
 
     let (_sender, receiver) = mpsc::channel(1);
     let mut device = PacketDevice::new(
