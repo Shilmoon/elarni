@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Network
 import NetworkExtension
 
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
@@ -23,6 +24,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
   private var liveness: (generation: UInt64, state: String?)?
 #if os(iOS)
   private var alertArmedAt = -Double.infinity
+  // Pooled outbound connections stay on a path that is gone after a handoff,
+  // and the app is not running to notice; the extension restarts the core itself.
+  private let pathMonitor = NWPathMonitor()
+  private var pathMonitorStarted = false
+  private var latestPath: (signature: String, satisfied: Bool)?
+  // The path the core last opened its connections on, and whether the primary path left it since.
+  private var corePath: String?
+  private var pathMoved = false
+  private var pathSettle: Task<Void, Never>?
+  // A handoff often flaps for a few seconds; restart once it has held.
+  private static let pathSettleTime = Duration.seconds(6)
 #endif
 #if DEBUG
   private let debugFaults = ProviderDebugFaults(save: ProviderDebugFaults.save)
@@ -43,6 +55,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       completionHandler(ProviderError.invalidState)
       return
     }
+#if os(iOS)
+    startPathMonitor()
+#endif
     let attempt = ProviderBoundaryEvidence.reset()
     guard runtime.setAttempt(attempt, generation: generation) else {
       ProviderBoundaryEvidence.finish(attempt)
@@ -299,7 +314,76 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
   override func wake() {
     backendLock.withLock { sleeping = false }
     DiagnosticLog.record("wake")
+#if os(iOS)
+    // A handoff during sleep is acted on now.
+    backendLock.withLock { schedulePathCheck() }
+#endif
   }
+
+#if os(iOS)
+  private func startPathMonitor() {
+    let start = backendLock.withLock {
+      defer { pathMonitorStarted = true }
+      return !pathMonitorStarted
+    }
+    guard start else { return }
+    pathMonitor.pathUpdateHandler = { [weak self] path in self?.pathChanged(path) }
+    pathMonitor.start(queue: DispatchQueue(label: "elarni.provider.path"))
+  }
+
+  private func pathChanged(_ path: Network.NWPath) {
+    // New connections take the preferred physical interface (the tunnel's utun is
+    // `.other`). Cellular coming and going behind Wi-Fi leaves the core's connections
+    // alone; any departure of the primary path, even one that returns, may not.
+    let interfaces = path.availableInterfaces.filter { $0.type != .other && $0.type != .loopback }
+    let satisfied = path.status == .satisfied
+    let signature = satisfied ? ((interfaces.first.map { ["\($0.type):\($0.index)"] } ?? []) +
+      path.gateways.map { "\($0)" }).joined(separator: ",") : ""
+    DiagnosticLog.record("network_path", ["available": satisfied ? 1 : 0, "interfaces": Int64(interfaces.count),
+      "ipv4": path.supportsIPv4 ? 1 : 0, "ipv6": path.supportsIPv6 ? 1 : 0, "expensive": path.isExpensive ? 1 : 0])
+    backendLock.withLock {
+      latestPath = (signature, satisfied)
+      if corePath == nil, activeConfiguration != nil { corePath = signature }
+      if let corePath, signature != corePath { pathMoved = true }
+      schedulePathCheck()
+    }
+  }
+
+  /// Call with backendLock held.
+  private func schedulePathCheck() {
+    pathSettle?.cancel()
+    pathSettle = Task { [weak self] in
+      do { try await Task.sleep(for: Self.pathSettleTime) } catch { return }
+      self?.restartIfPathMoved()
+    }
+  }
+
+  private func restartIfPathMoved() {
+    let plan: TunnelPlan? = backendLock.withLock {
+      guard !sleeping, pathMoved, latestPath?.satisfied == true else { return nil }
+      return activeConfiguration?.0
+    }
+    guard let plan, let generation = lifecycle.beginSwitch() else { return }
+    DiagnosticLog.record("path_restart", ["generation": Int64(generation.rawValue)])
+    let launched = runtime.launchStartup(generation: generation) { [weak self] in
+      guard let self else { return }
+      let deadline = Task { [weak self] in
+        do { try await Task.sleep(for: .seconds(15)) } catch { return }
+        self?.runtime.cancelStartup(generation)
+      }
+      defer { deadline.cancel() }
+      let code = await self.runSwitch(plan: plan, generation: generation)
+      if Task.isCancelled {
+        self.lifecycle.finishSwitch(generation, restored: false)
+        self.lifecycle.protectFailure(generation)
+      }
+      if ["protectedFailure", "quarantinedFailClosed"].contains(self.lifecycle.state.label) { IOSConnectionAlerts.failed() }
+      DiagnosticLog.record("path_restart_done", ["switched": code == "switched" ? 1 : 0])
+      self.runtime.startupFinished(generation)
+    }
+    if !launched { lifecycle.finishSwitch(generation, restored: true) }
+  }
+#endif
 
 #if os(iOS)
   /// Stops the user did not ask for. Settings, another VPN, sleep and removal stay quiet.
@@ -315,15 +399,23 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
   }
 #endif
 
+  /// Bytes the malloc zones hold for Rust, Swift and the system frameworks; Go maps its own memory.
+  private static func mallocInUse() -> Int {
+    var stats = malloc_statistics_t()
+    malloc_zone_statistics(nil, &stats)
+    return stats.size_in_use
+  }
+
+  /// The footprint iOS holds against the extension's 50 MB limit; resident size counts shared pages too.
   private static func memoryFootprint() -> UInt64 {
-    var info = mach_task_basic_info()
+    var info = task_vm_info_data_t()
     var count = mach_msg_type_number_t(MemoryLayout.size(ofValue: info) / MemoryLayout<natural_t>.size)
     let status = withUnsafeMutablePointer(to: &info) { pointer in
       pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-        task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+        task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
       }
     }
-    return status == KERN_SUCCESS ? UInt64(info.resident_size) : 0
+    return status == KERN_SUCCESS ? info.phys_footprint : 0
   }
 
   private func runStartup(
@@ -411,6 +503,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       }
 #endif
       try await xray.start(prepared, attempt: attempt)
+      noteCorePath()
       guard lifecycle.isActive(generation), !Task.isCancelled else {
         try? await xray.stop()
         throw ProviderError.startCancelled
@@ -572,6 +665,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       }
 #endif
       try await xray.start(candidate, attempt: attempt)
+      noteCorePath()
       try requireActive(generation)
       backendLock.withLock { activeConfiguration = (plan, candidate) }
       guard lifecycle.finishSwitch(generation, restored: true, started: true) else { return "cancelled" }
@@ -599,6 +693,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
           }
 #endif
           try await xray.start(oldCore, attempt: attempt)
+          noteCorePath()
           try requireActive(generation)
         } catch {
           guard lifecycle.isActive(generation), !Task.isCancelled else { return "cancelled" }
@@ -649,7 +744,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       }
       if DiagnosticLog.isCollecting {
         let counters = currentBackend == .xrayTun ? await xray.metrics() : bridge.counters
-        var diagnostic: [String: Int64] = ["generation": Int64(generation.rawValue), "memory_bytes": Int64(Self.memoryFootprint()), "sleeping": backendLock.withLock { sleeping ? 1 : 0 }]
+        var diagnostic: [String: Int64] = ["generation": Int64(generation.rawValue), "memory_bytes": Int64(Self.memoryFootprint()), "malloc_bytes": Int64(Self.mallocInUse()), "sleeping": backendLock.withLock { sleeping ? 1 : 0 }]
         let allowed = ["packetsIn": "packets_in", "packetsOut": "packets_out", "bytesIn": "bytes_in", "bytesOut": "bytes_out", "malformed": "malformed", "overflows": "overflows", "uplinkBytes": "uplink_bytes", "downlinkBytes": "downlink_bytes", "activeTcpSessions": "tcp_sessions", "activeUdpSessions": "udp_sessions", "droppedTcpSessions": "dropped_tcp_sessions", "droppedUdpSessions": "dropped_udp_sessions"]
         for (key, value) in counters {
           if let name = allowed[key] { diagnostic[name] = Int64(clamping: value) }
@@ -803,6 +898,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         self.setActiveBackend(nil)
         self.backendLock.withLock {
           self.activeConfiguration = nil
+#if os(iOS)
+          self.corePath = nil
+          self.pathMoved = false
+#endif
           self.sessionCredentials?.clear()
           self.sessionCredentials = nil
         }
@@ -814,6 +913,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         startupCompletion?(startupError)
       }
     )
+  }
+
+  /// The core just opened its connections on the latest path.
+  private func noteCorePath() {
+#if os(iOS)
+    backendLock.withLock {
+      corePath = latestPath?.signature
+      pathMoved = false
+    }
+#endif
   }
 
   private func requireActive(_ generation: ProviderLifecycleGeneration) throws {
