@@ -170,7 +170,7 @@ func (r *recorder) run() {
 		case <-ticker.C:
 			var m runtime.MemStats
 			runtime.ReadMemStats(&m)
-			r.write(Event{Name: "go_runtime", Values: map[string]int64{"heap": int64(m.Alloc), "heap_sys": int64(m.HeapSys), "goroutines": int64(runtime.NumGoroutine()), "gc_count": int64(m.NumGC), "gc_pause_ns": int64(m.PauseTotalNs)}}, time.Now())
+			r.write(Event{Name: "go_runtime", Values: map[string]int64{"heap": int64(m.Alloc), "heap_sys": int64(m.HeapSys), "sys": int64(m.Sys), "heap_released": int64(m.HeapReleased), "stack_sys": int64(m.StackSys), "goroutines": int64(runtime.NumGoroutine()), "gc_count": int64(m.NumGC), "gc_pause_ns": int64(m.PauseTotalNs)}}, time.Now())
 			sampleConnections(ticks%10 == 0)
 			ticks++
 		}
@@ -414,7 +414,7 @@ func command(request Request) (any, error) {
 	switch request.Action {
 	case "event":
 		switch request.Kind {
-		case "app_state", "network_path", "provider_boundary", "provider_start", "provider_stop", "sleep", "wake", "runtime_metrics", "settings", "subscription_refresh":
+		case "app_state", "network_path", "path_restart", "path_restart_done", "provider_boundary", "provider_start", "provider_stop", "sleep", "wake", "runtime_metrics", "settings", "subscription_refresh":
 		default:
 			return nil, errInvalid
 		}
