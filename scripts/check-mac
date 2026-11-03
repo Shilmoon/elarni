@@ -38,7 +38,8 @@ echo "$RUN" > lock/run
 cat > "runs/$RUN/run.sh" <<'RUNSCRIPT'
 set -e
 W=$HOME/$1 RUN=$2 COMMIT=$3; shift 4
-T=$HOME/proxy-client/.toolchains
+# Flutter, Go and cbindgen at the repo's pins, kept beside the workspace's checkout.
+T=$W/toolchains
 export ANDROID_HOME=$HOME/Library/Android/sdk JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer GOCACHE=$W/gocache GOFLAGS=-count=1 GOMOBILE=$HOME/go/bin/gomobile
 export PATH="$JAVA_HOME/bin:$HOME/go/bin:$T/go/bin:$HOME/.cargo/bin:$T/flutter/bin:$T/cbindgen/bin:/opt/homebrew/bin:$ANDROID_HOME/platform-tools:/usr/bin:/bin:/usr/sbin:/sbin"

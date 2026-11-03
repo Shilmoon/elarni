@@ -17,6 +17,7 @@ func TestRecordingFollowsTheSwitchAndExportsMarks(t *testing.T) {
 	cache := t.TempDir()
 	t.Setenv("LocalAppData", cache)
 	t.Setenv("XDG_CACHE_HOME", cache)
+	t.Setenv("HOME", cache) // macOS caches live under $HOME/Library/Caches
 	call := func(payload string) string {
 		return dispatch(`{"apiVersion":1,"method":"diagnostics","payload":` + payload + `}`).text
 	}

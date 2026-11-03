@@ -17,6 +17,7 @@ func TestCoreWithoutTheOptionNeverRecords(t *testing.T) {
 	cache := t.TempDir()
 	t.Setenv("LocalAppData", cache)
 	t.Setenv("XDG_CACHE_HOME", cache)
+	t.Setenv("HOME", cache) // macOS caches live under $HOME/Library/Caches
 	diagnosticsRequest("runXrayFromJson", json.RawMessage(`{"recordDiagnostics":true}`))
 	if flightrecorder.Enabled() {
 		t.Fatal("recording started without the build option")
