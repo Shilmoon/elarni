@@ -12,7 +12,7 @@ import time
 
 
 TREES = {'rust': ('native', 'Vendor/tun2proxy'),
-         'go': ('Vendor/libXray', 'Vendor/Xray-core', 'Vendor/quic-go', 'Vendor/wireguard-go')}
+         'go': ('Vendor/libXray', 'Vendor/Xray-core', 'Vendor/quic-go', 'Vendor/sagernet-quic-go', 'Vendor/wireguard-go')}
 FILES = {'rust': ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'scripts/build-rust-macos.sh'),
          'go': ('go.work', 'go.work.sum', 'scripts/build-libxray-macos.sh')}
 EXCLUDED = {'.git', '.build', 'build', 'target', 'artifacts', 'Evidence', '.toolchains',

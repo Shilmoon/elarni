@@ -4,5 +4,6 @@ use (
 	./Vendor/Xray-core
 	./Vendor/libXray
 	./Vendor/quic-go
+	./Vendor/sagernet-quic-go
 	./Vendor/wireguard-go
 )

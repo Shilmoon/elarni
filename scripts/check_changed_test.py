@@ -52,9 +52,10 @@ class CheckChangedSelection(unittest.TestCase):
         self.write('Vendor/wireguard-go/device/send.go')
         self.assertEqual(self.selection()[0], ['go', 'windows'] if DESKTOP else ['go', 'swift'])
 
-    def test_the_quic_go_fork_runs_the_go_checks(self):
-        self.write('Vendor/quic-go/flow_controller_connection.go')
-        self.assertEqual(self.selection()[0], ['go', 'windows'] if DESKTOP else ['go', 'swift'])
+    def test_the_quic_go_forks_run_the_go_checks(self):
+        for fork in ('quic-go', 'sagernet-quic-go'):
+            self.write(f'Vendor/{fork}/flow_controller_connection.go')
+            self.assertEqual(self.selection()[0], ['go', 'windows'] if DESKTOP else ['go', 'swift'])
 
     def test_documentation_only_runs_nothing(self):
         self.write('README.md', 'changed\n')

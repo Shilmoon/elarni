@@ -92,9 +92,7 @@ func (c *Client) initialize(ctx context.Context, dialer internet.Dialer) (*quic.
 		ServerAddress: M.ParseSocksaddr(destination.NetAddr()), TLSConfig: &tlsAdapter{config: tlsConfig, timeout: 10 * time.Second},
 		UUID: id, Password: c.config.Password, CongestionControl: c.config.CongestionControl,
 		UDPStream: c.config.UdpStream, Heartbeat: time.Duration(c.config.Heartbeat), ZeroRTTHandshake: c.config.ZeroRttHandshake,
-		// quic-go starts the connection window at 3 MB, which two stalled downloads filled,
-		// so every new stream on the connection waited until they were read.
-		QUICOptions: qtls.QUICOptions{ConnectionReceiveWindow: 16 << 20}})
+		QUICOptions: clientQUICOptions})
 	if err != nil {
 		cancel()
 		return nil, errors.New("invalid TUIC options")
@@ -283,6 +281,10 @@ func (c *ownedSocket) Close() error {
 	c.once.Do(func() { err = c.Conn.Close(); c.done() })
 	return err
 }
+
+// quic-go starts the connection window at 3 MB, which two stalled downloads filled,
+// so every new stream on the connection waited until they were read.
+var clientQUICOptions = qtls.QUICOptions{ConnectionReceiveWindow: 16 << 20}
 
 type tlsAdapter struct {
 	config  *tls.Config

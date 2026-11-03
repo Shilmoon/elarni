@@ -35,6 +35,22 @@ func batchConn(c net.PacketConn) (*ipv4.PacketConn, *PacketCounterConnection) {
 	return nil, nil
 }
 
+// socketBuffer is what wireguard-go's own bind asks for. Elarni: the default UDP buffers (64 KiB on
+// Windows, 208 KiB on Linux, 768 KiB on macOS) overflowed when several streams arrived at once:
+// 8 downloads at 40 ms RTT lost thousands of datagrams and together ran slower than one.
+const socketBuffer = 7 << 20
+
+func enlargeBuffers(c net.PacketConn) {
+	if counter, ok := c.(*PacketCounterConnection); ok {
+		c = counter.PacketConn
+	}
+	if udp, ok := c.(*net.UDPConn); ok {
+		_ = udp.SetReadBuffer(socketBuffer)
+		_ = udp.SetWriteBuffer(socketBuffer)
+		forceBuffers(udp)
+	}
+}
+
 func newBatchMessages() []ipv4.Message {
 	messages := make([]ipv4.Message, conn.IdealBatchSize)
 	for i := range messages {
@@ -71,6 +87,7 @@ func (b *bind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort uint16, err
 	if err != nil {
 		return nil, 0, err
 	}
+	enlargeBuffers(c)
 	b.PacketConn = c
 	ch := make(chan struct{})
 	b.closeCh = ch

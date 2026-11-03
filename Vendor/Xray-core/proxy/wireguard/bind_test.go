@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"runtime"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -118,4 +119,40 @@ func TestAmneziaEngineKeepsSingleDatagramBatches(t *testing.T) {
 	if got := (&amneziaTUN{}).BatchSize(); got != 1 {
 		t.Fatalf("AmneziaWG TUN batch size %d", got)
 	}
+}
+
+// The default UDP buffers overflowed when several streams arrived at once.
+func TestBindEnlargesTheSocketBuffers(t *testing.T) {
+	fresh, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultSize := receiveBuffer(t, fresh)
+	fresh.Close()
+	socket, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &bind{listenFunc: func() (net.PacketConn, error) { return &PacketCounterConnection{PacketConn: socket}, nil }}
+	if _, _, err := b.Open(0); err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if size := receiveBuffer(t, socket); size <= defaultSize {
+		t.Fatalf("receive buffer %d, default %d", size, defaultSize)
+	}
+}
+
+func receiveBuffer(t *testing.T, conn syscall.Conn) int {
+	t.Helper()
+	raw, err := conn.SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := 0
+	raw.Control(func(fd uintptr) { size, err = getReceiveBuffer(fd) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return size
 }

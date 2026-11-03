@@ -2,6 +2,7 @@ package wireguard
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/netip"
 	"runtime"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+	xnet "github.com/xtls/xray-core/common/net"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
 	"gvisor.dev/gvisor/pkg/tcpip"
@@ -218,5 +220,44 @@ func TestTunnelReadsQueuedPacketsInOneBatch(t *testing.T) {
 		if packet := header.IPv4(bufs[i][:sizes[i]]); !packet.IsValid(sizes[i]) || packet.TotalLength() != uint16(sizes[i]) {
 			t.Fatalf("packet %d malformed: %x", i, bufs[i][:sizes[i]])
 		}
+	}
+}
+
+// A server's gVisor stack (Xray's or sing-box's WireGuard inbound) holds each connection it closed
+// in TIME_WAIT for 60 s and, having no listener to pass a new SYN to, drops SYNs for that address
+// pair meanwhile. gVisor picked a random source port for each connection, so a busy tunnel soon
+// reused one and that connection hung until TIME_WAIT ended.
+func TestTunnelConnectionsDoNotReuseAPortTheServerHoldsInTimeWait(t *testing.T) {
+	clientTun, clientNet, clientStack, err := CreateNetTUN([]netip.Addr{netip.MustParseAddr("10.29.0.2")}, nil, 1280, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientTun.Close()
+	serverTun, _, serverStack, err := CreateNetTUN([]netip.Addr{netip.MustParseAddr("10.29.0.1")}, nil, 1280, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverTun.Close()
+	go pipeTUN(clientTun, serverTun)
+	go pipeTUN(serverTun, clientTun)
+	createForwarder(serverStack, func(conn net.Conn, _ xnet.Destination) {
+		conn.Write([]byte{1})
+		conn.Close() // the server closes first, so its side ends in TIME_WAIT
+	})
+	if err := clientStack.SetPortRange(40000, 40199); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 100 {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		conn, err := clientNet.DialContextTCPAddrPort(ctx, netip.MustParseAddrPort("192.0.2.1:80"))
+		cancel()
+		if err != nil {
+			t.Fatalf("connection %d: %v", i, err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		if _, err := io.ReadAll(conn); err != nil {
+			t.Fatalf("connection %d: %v", i, err)
+		}
+		conn.Close()
 	}
 }

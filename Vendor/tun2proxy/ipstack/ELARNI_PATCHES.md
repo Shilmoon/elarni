@@ -51,4 +51,7 @@ Local TCP repairs (`src/stream/tcp.rs`, `src/stream/tcb.rs`, tests in
 Local device repair (`src/lib.rs`, test in `src/stream/tcp_tests.rs`): packets go
 to the device from their own task over `tokio::io::split`, so a device write
 waiting for room (the packet bridge's full output queue) no longer stops the
-stack reading its input, which the bridge then dropped.
+stack reading its input, which the bridge then dropped. While that write waits, UDP and
+ICMP packets beyond 1024 queued are dropped like a full TUN queue drops them,
+since their senders never wait and a tunnel that stopped reading grew the queue
+without bound; TCP packets stay queued, bounded by each connection's window.

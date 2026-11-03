@@ -42,7 +42,7 @@ def select(paths):
     selected, unmapped = set(), []
     for path in paths:
         hits = set()
-        if path.startswith(('Vendor/Xray-core/', 'Vendor/libXray/', 'Vendor/quic-go/', 'Vendor/wireguard-go/')) or path in ('go.work', 'go.work.sum'):
+        if path.startswith(('Vendor/Xray-core/', 'Vendor/libXray/', 'Vendor/quic-go/', 'Vendor/sagernet-quic-go/', 'Vendor/wireguard-go/')) or path in ('go.work', 'go.work.sum'):
             hits |= {'go', 'windows', 'swift'}
         if path.startswith(('native/', 'Vendor/tun2proxy/')) or path in ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml'):
             hits |= {'rust', 'swift'}

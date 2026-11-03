@@ -2,7 +2,7 @@
 
 use ahash::AHashMap;
 use packet::{FragmentReassembler, NetworkPacket, NetworkTuple, TransportHeader};
-use std::{sync::Arc, time::Duration};
+use std::{collections::VecDeque, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     select,
@@ -323,16 +323,29 @@ fn run<Device: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     // Elarni: writes run in their own task, so a device waiting for room does not stop reads.
     let (mut reader, mut writer) = tokio::io::split(device);
     let upstream = tokio::spawn(async move {
-        while let Some(packet) = up_pkt_receiver.recv().await {
-            process_upstream_recv(
+        let mut queue = VecDeque::new();
+        loop {
+            let packet = match queue.pop_front() {
+                Some(packet) => packet,
+                None => match up_pkt_receiver.recv().await {
+                    Some(packet) => packet,
+                    None => return Ok::<(), IpStackError>(()),
+                },
+            };
+            let write = process_upstream_recv(
                 packet,
                 &mut writer,
                 #[cfg(unix)]
                 pi,
-            )
-            .await?;
+            );
+            tokio::pin!(write);
+            loop {
+                select! {
+                    result = &mut write => break result?,
+                    Some(packet) = up_pkt_receiver.recv() => enqueue_upstream(&mut queue, packet),
+                }
+            }
         }
-        Ok::<(), IpStackError>(())
     });
 
     tokio::spawn(async move {
@@ -360,6 +373,17 @@ fn run<Device: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
             }
         }
     })
+}
+
+/// Packets queued while the device waits for room. Elarni: UDP and ICMP senders never wait, so a
+/// tunnel that stopped reading grew the queue without bound; past this many packets they are dropped
+/// like a full TUN queue drops them. TCP packets stay, bounded by each connection's window.
+const UPSTREAM_BACKLOG: usize = 1024;
+
+fn enqueue_upstream(queue: &mut VecDeque<NetworkPacket>, packet: NetworkPacket) {
+    if queue.len() < UPSTREAM_BACKLOG || matches!(packet.transport, TransportHeader::Tcp(_)) {
+        queue.push_back(packet);
+    }
 }
 
 /// Aborts the device writer when the stack's task ends or is aborted.

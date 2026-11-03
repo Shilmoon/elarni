@@ -692,3 +692,25 @@ async fn a_waiting_device_write_does_not_stop_reads() {
         tokio::time::sleep(Duration::from_millis(100)).await; // the SYN-ACK write is now waiting
     }
 }
+
+// With the device waiting, datagrams queued without bound while a tunnel stopped reading.
+#[test]
+fn a_waiting_device_queue_drops_datagrams_past_its_bound_but_keeps_tcp() {
+    let packet = |tcp: bool| {
+        let mut bytes = Vec::new();
+        let builder = PacketBuilder::ipv4(SERVER, CLIENT, 64);
+        if tcp {
+            builder.tcp(443, 41000, ISN, 65535).ack(1).write(&mut bytes, &[1]).unwrap();
+        } else {
+            builder.udp(443, 41000).write(&mut bytes, &[1]).unwrap();
+        }
+        NetworkPacket::parse(&bytes).unwrap()
+    };
+    let mut queue = std::collections::VecDeque::new();
+    for _ in 0..crate::UPSTREAM_BACKLOG + 10 {
+        crate::enqueue_upstream(&mut queue, packet(false));
+    }
+    assert_eq!(queue.len(), crate::UPSTREAM_BACKLOG);
+    crate::enqueue_upstream(&mut queue, packet(true));
+    assert!(matches!(queue.back().unwrap().transport, TransportHeader::Tcp(_)));
+}

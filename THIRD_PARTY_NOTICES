@@ -341,7 +341,8 @@ object-code distribution under the existing GPLv3 release workflow.
 
 The resolved graph uses `github.com/sagernet/sing v0.9.0-beta.4` and
 `github.com/sagernet/quic-go v0.61.0-sing-box-mod.6` (MIT; retains the upstream
-quic-go contributors' license), alongside the existing Apernet QUIC dependency.
+quic-go contributors' license; source snapshot with Elarni changes in
+`Vendor/sagernet-quic-go`), alongside the existing Apernet QUIC dependency.
 The Xray adapter is Elarni-modified source recorded in
 `third_party/modifications.json`. Test-only sing-box/mihomo peers are not bundled.
 

@@ -12,12 +12,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	mathrand "math/rand/v2"
 	"net"
 	"net/netip"
 	"os"
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -37,6 +39,7 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/transport/icmp"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
+	"gvisor.dev/gvisor/pkg/waiter"
 )
 
 // receiveBufferMax caps each tunnel TCP receive buffer. Elarni: gVisor grows one up to 4 MiB and a
@@ -57,6 +60,7 @@ type netTun struct {
 	notifyHandle   *channel.NotificationHandle
 	incomingPacket chan *buffer.View
 	closed         chan struct{}
+	nextPort       atomic.Uint32
 	mtu            int
 	dnsServers     []netip.Addr
 	hasV4, hasV6   bool
@@ -78,6 +82,7 @@ func CreateNetTUN(localAddresses, dnsServers []netip.Addr, mtu int, handleLocal 
 		dnsServers:     dnsServers,
 		mtu:            mtu,
 	}
+	dev.nextPort.Store(mathrand.Uint32())
 	sackEnabledOpt := tcpip.TCPSACKEnabled(true) // TCP SACK is disabled by default
 	tcpipErr := dev.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &sackEnabledOpt)
 	if tcpipErr != nil {
@@ -234,9 +239,47 @@ func (tun *netTun) BatchSize() int {
 	return conn.IdealBatchSize
 }
 
+// DialContextTCPAddrPort is gonet.DialContextTCP with the source ports taken in turn. Elarni: gVisor
+// picked a random one, so a busy tunnel soon reused a port that a server's gVisor stack (Xray's or
+// sing-box's WireGuard inbound) still held in TIME_WAIT; with no listener to pass the SYN to, it drops
+// it until TIME_WAIT ends, and the connection hung for up to 60 s.
 func (tun *netTun) DialContextTCPAddrPort(ctx context.Context, addr netip.AddrPort) (net.Conn, error) {
 	fa, pn := convertToFullAddr(addr)
-	return gonet.DialContextTCP(ctx, tun.stack, fa, pn)
+	var wq waiter.Queue
+	ep, tcpipErr := tun.stack.NewEndpoint(tcp.ProtocolNumber, pn, &wq)
+	if tcpipErr != nil {
+		return nil, errors.New(tcpipErr.String())
+	}
+	first, last := tun.stack.PortRange()
+	count := uint32(last-first) + 1
+	for tried := uint32(1); ; tried++ {
+		port := uint16(uint32(first) + tun.nextPort.Add(1)%count)
+		if tcpipErr = ep.Bind(tcpip.FullAddress{Port: port}); tcpipErr == nil {
+			break
+		}
+		if _, inUse := tcpipErr.(*tcpip.ErrPortInUse); !inUse || tried == count {
+			ep.Close()
+			return nil, errors.New(tcpipErr.String())
+		}
+	}
+	waitEntry, notifyCh := waiter.NewChannelEntry(waiter.WritableEvents)
+	wq.EventRegister(&waitEntry)
+	defer wq.EventUnregister(&waitEntry)
+	tcpipErr = ep.Connect(fa)
+	if _, ok := tcpipErr.(*tcpip.ErrConnectStarted); ok {
+		select {
+		case <-ctx.Done():
+			ep.Close()
+			return nil, ctx.Err()
+		case <-notifyCh:
+		}
+		tcpipErr = ep.LastError()
+	}
+	if tcpipErr != nil {
+		ep.Close()
+		return nil, &net.OpError{Op: "connect", Net: "tcp", Addr: net.TCPAddrFromAddrPort(addr), Err: errors.New(tcpipErr.String())}
+	}
+	return gonet.NewTCPConn(&wq, ep), nil
 }
 
 func (tun *netTun) DialUDPAddrPort(laddr, raddr netip.AddrPort) (net.Conn, error) {
