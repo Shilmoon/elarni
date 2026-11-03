@@ -76,7 +76,8 @@ final class PacketFlowPump: @unchecked Sendable {
     // second instead of polling. A stopped pump's thread ends at its next wake, a stopped bridge's at once.
     let output = Thread { [weak self] in
       while let self, self.isCurrent(started), let ready = self.bridge.awaitOutput(timeout: .seconds(1)) {
-        if ready { self.drainOutput(generation: started) }
+        // A thread's own pool drains only when the thread ends; without one per wake every written NEPacket stays alive.
+        if ready { autoreleasepool { self.drainOutput(generation: started) } }
       }
     }
     output.name = "com.elarni.packet-output"
