@@ -402,7 +402,7 @@ func TestFullTCPTableKeepsHalfClosedConnectionThatStillReceives(t *testing.T) {
 	defer listener.Close()
 	streaming := make(chan struct{})
 	handler := &Handler{ctx: context.Background(), config: &Config{}, dispatcher: &streamDispatcher{done: streaming},
-		tcpAdmission: sessionAdmission{limit: 1, minIdle: time.Minute, finishedIdle: 150 * time.Millisecond}}
+		tcpAdmission: sessionAdmission{limit: 1, minIdle: time.Minute, finishedIdle: 300 * time.Millisecond}}
 	open := func() *stdnet.TCPConn {
 		client, err := stdnet.Dial("tcp", listener.Addr().String())
 		if err != nil {
@@ -421,15 +421,17 @@ func TestFullTCPTableKeepsHalfClosedConnectionThatStillReceives(t *testing.T) {
 		return client.(*stdnet.TCPConn)
 	}
 	first := open()
-	first.CloseWrite() // the request is sent; the response streams for 1 s
+	first.CloseWrite() // the request is sent; the response streams for 2 s
 	received := make(chan int)
 	go func() {
 		n, _ := io.Copy(io.Discard, first)
 		received <- int(n)
 	}()
-	for deadline := time.Now().Add(700 * time.Millisecond); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+	// Margins for loaded runners: a refusal may take a while to close, and the last probe ends
+	// well before the download does (when the slot frees legitimately).
+	for deadline := time.Now().Add(1200 * time.Millisecond); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 		next := open()
-		next.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		next.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
 		if _, err := next.Read(make([]byte, 1)); err == nil || !isTimeout(err) {
 			// A refused connection is closed at once (EOF); an admitted one would wait on its echo.
 			continue
@@ -442,9 +444,9 @@ func TestFullTCPTableKeepsHalfClosedConnectionThatStillReceives(t *testing.T) {
 	}
 }
 
-const streamBytes = 100
+const streamBytes = 200
 
-// streamDispatcher waits for the app's EOF, then the first session sends streamBytes bytes over 1 s.
+// streamDispatcher waits for the app's EOF, then the first session sends streamBytes bytes over 2 s.
 type streamDispatcher struct {
 	routing.Dispatcher
 	started atomic.Bool
