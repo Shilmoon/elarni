@@ -35,7 +35,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
   private var pathSettle: Task<Void, Never>?
   // A handoff often flaps for a few seconds; restart once it has held.
   private static let pathSettleTime = Duration.seconds(6)
+  // Checks after a restart that could not run or failed before the core stopped; reset when the core moves.
+  private var pathRetries = 0
+  // The path restart in flight, and the one a user switch made give way.
+  private var pathRestart: ProviderLifecycleGeneration?
+  private var pathRestartYielded: ProviderLifecycleGeneration?
 #endif
+  // The switch past its point of no return: the old core's monitor is paused and the core stops next.
+  private var switchCommitted: ProviderLifecycleGeneration?
 #if DEBUG
   private let debugFaults = ProviderDebugFaults(save: ProviderDebugFaults.save)
   private var debugSaveStop: (ProviderDebugFaults.StopReceipt) throws -> Void = ProviderDebugFaults.saveStop
@@ -217,6 +224,21 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         if let debugGeneration { debugFaults.finish("cancelled", generation: debugGeneration, requestID: id) }
 #endif
         switchCancellation.finish(id)
+#if os(iOS)
+        // A path restart in flight gives way: this switch restarts the core on the new path too.
+        if debugGeneration == nil, let restart = backendLock.withLock({ () -> ProviderLifecycleGeneration? in
+          guard let restart = pathRestart, restart != pathRestartYielded, switchCommitted != restart else { return nil }
+          pathRestartYielded = restart
+          return restart
+        }) {
+          runtime.cancelStartup(restart)
+          Task { [weak self] in
+            for _ in 0..<30 where self?.lifecycle.state == .switching(restart) { try? await Task.sleep(for: .milliseconds(100)) }
+            self?.handleAppMessage(messageData, completionHandler: completionHandler)
+          }
+          return
+        }
+#endif
         completionHandler?(Self.switchResponse(lifecycle.state.label == "quarantinedFailClosed" ? "quarantined" : "rejected"))
         return
       }
@@ -225,22 +247,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
           completionHandler?(Self.switchResponse("rejected"))
           return
         }
-        let deadline = Task { [weak self] in
-          do { try await Task.sleep(for: .seconds(15)) }
-          catch { return }
-          guard let self, self.switchCancellation.cancel(id) else { return }
-          self.runtime.cancelStartup(generation)
-        }
-        defer { deadline.cancel() }
         let refreshOnly = request.operation == "refreshPath" &&
           self.backendLock.withLock { self.activePlanDigest == request.envelope.digest }
-        var code = self.switchCancellation.isCancelled(id) ? "cancelled" :
-          await self.runSwitch(plan: plan, generation: generation, refreshOnly: refreshOnly, operationID: id)
-        if self.switchCancellation.isCancelled(id) || Task.isCancelled {
-          self.lifecycle.finishSwitch(generation, restored: false)
-          self.lifecycle.protectFailure(generation)
-          code = "cancelled"
-        }
+        let code = await self.boundedSwitch(plan: plan, generation: generation, refreshOnly: refreshOnly, operationID: id,
+          onDeadline: { self.switchCancellation.cancel(id) }, cancelled: { self.switchCancellation.isCancelled(id) })
         if code == "switched" { self.backendLock.withLock { self.activePlanDigest = request.envelope.digest } }
 #if os(iOS)
         if ["protectedFailure", "quarantinedFailClosed"].contains(self.lifecycle.state.label) { IOSConnectionAlerts.failed() }
@@ -337,8 +347,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     // alone; any departure of the primary path, even one that returns, may not.
     let interfaces = path.availableInterfaces.filter { $0.type != .other && $0.type != .loopback }
     let satisfied = path.status == .satisfied
-    let signature = satisfied ? ((interfaces.first.map { ["\($0.type):\($0.index)"] } ?? []) +
-      path.gateways.map { "\($0)" }).joined(separator: ",") : ""
+    // IPv4 gateways tell apart two Wi-Fi networks on one interface; IPv6 router
+    // advertisements and the list order change without a handoff.
+    let gateways = path.gateways.compactMap { endpoint -> String? in
+      if case .hostPort(.ipv4(let address), _) = endpoint { return "\(address)" }
+      return nil
+    }.sorted()
+    let signature = satisfied ? ((interfaces.first.map { ["\($0.type):\($0.index)"] } ?? []) + gateways)
+      .joined(separator: ",") : ""
     DiagnosticLog.record("network_path", ["available": satisfied ? 1 : 0, "interfaces": Int64(interfaces.count),
       "ipv4": path.supportsIPv4 ? 1 : 0, "ipv6": path.supportsIPv6 ? 1 : 0, "expensive": path.isExpensive ? 1 : 0])
     backendLock.withLock {
@@ -350,12 +366,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
   }
 
   /// Call with backendLock held.
-  private func schedulePathCheck() {
+  private func schedulePathCheck(after delay: Duration = pathSettleTime) {
     pathSettle?.cancel()
     pathSettle = Task { [weak self] in
-      do { try await Task.sleep(for: Self.pathSettleTime) } catch { return }
+      do { try await Task.sleep(for: delay) } catch { return }
       self?.restartIfPathMoved()
     }
+  }
+
+  /// Call with backendLock held. Waits 12, 24, 48, then 60 s.
+  private func retryPathCheck() {
+    pathRetries = min(pathRetries + 1, 4)
+    schedulePathCheck(after: .seconds(min(6 << pathRetries, 60)))
   }
 
   private func restartIfPathMoved() {
@@ -363,25 +385,38 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       guard !sleeping, pathMoved, latestPath?.satisfied == true else { return nil }
       return activeConfiguration?.0
     }
-    guard let plan, let generation = lifecycle.beginSwitch() else { return }
+    // runSwitch restarts only the native tun2proxy backend in place.
+    guard let plan, plan.effectiveBackend == .nativeTun2Proxy else { return }
+    guard let generation = lifecycle.beginSwitch() else {
+      // A switch or refresh is running; its core may have started on the old path.
+      backendLock.withLock { retryPathCheck() }
+      return
+    }
+    backendLock.withLock { pathRestart = generation }
     DiagnosticLog.record("path_restart", ["generation": Int64(generation.rawValue)])
     let launched = runtime.launchStartup(generation: generation) { [weak self] in
       guard let self else { return }
-      let deadline = Task { [weak self] in
-        do { try await Task.sleep(for: .seconds(15)) } catch { return }
-        self?.runtime.cancelStartup(generation)
-      }
-      defer { deadline.cancel() }
-      let code = await self.runSwitch(plan: plan, generation: generation)
-      if Task.isCancelled {
-        self.lifecycle.finishSwitch(generation, restored: false)
-        self.lifecycle.protectFailure(generation)
-      }
-      if ["protectedFailure", "quarantinedFailClosed"].contains(self.lifecycle.state.label) { IOSConnectionAlerts.failed() }
-      DiagnosticLog.record("path_restart_done", ["switched": code == "switched" ? 1 : 0])
-      self.runtime.startupFinished(generation)
+      self.finishPathRestart(generation, code: await self.boundedSwitch(plan: plan, generation: generation))
     }
-    if !launched { lifecycle.finishSwitch(generation, restored: true) }
+    if !launched {
+      lifecycle.finishSwitch(generation, restored: true)
+      backendLock.withLock {
+        pathRestart = nil
+        retryPathCheck()
+      }
+    }
+  }
+
+  private func finishPathRestart(_ generation: ProviderLifecycleGeneration, code: String) {
+    if ["protectedFailure", "quarantinedFailClosed"].contains(lifecycle.state.label) { IOSConnectionAlerts.failed() }
+    else if code == "switched" { IOSConnectionAlerts.connected() }
+    DiagnosticLog.record("path_restart_done", ["switched": code == "switched" ? 1 : 0])
+    runtime.startupFinished(generation)
+    backendLock.withLock {
+      pathRestart = nil
+      // Failed before the core stopped (DNS or the Keychain not ready on the new path), or gave way.
+      if pathMoved, code != "cancelled" || pathRestartYielded != generation { retryPathCheck() }
+    }
   }
 #endif
 
@@ -589,6 +624,31 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     return try? JSONSerialization.data(withJSONObject: response)
   }
 
+  /// runSwitch within 15 s. Cancelled (by the bound or `cancelled`) before it committed, the old
+  /// core keeps running; after, the switch ends in a protected failure.
+  private func boundedSwitch(plan: TunnelPlan, generation: ProviderLifecycleGeneration, refreshOnly: Bool = false,
+                             operationID: UUID? = nil, onDeadline: @escaping () -> Bool = { true },
+                             cancelled: () -> Bool = { false }) async -> String {
+    let deadline = Task { [weak self] in
+      do { try await Task.sleep(for: .seconds(15)) } catch { return }
+      guard let self, onDeadline() else { return }
+      self.runtime.cancelStartup(generation)
+    }
+    defer { deadline.cancel() }
+    var code = cancelled() ? "cancelled" :
+      await runSwitch(plan: plan, generation: generation, refreshOnly: refreshOnly, operationID: operationID)
+    let committed = backendLock.withLock {
+      defer { if switchCommitted == generation { switchCommitted = nil } }
+      return switchCommitted == generation
+    }
+    if cancelled() || Task.isCancelled {
+      lifecycle.finishSwitch(generation, restored: !committed)
+      if committed { lifecycle.protectFailure(generation) }
+      code = "cancelled"
+    }
+    return code
+  }
+
   private func runSwitch(plan: TunnelPlan, generation: ProviderLifecycleGeneration, refreshOnly: Bool = false, operationID: UUID? = nil) async -> String {
     guard backendLock.withLock({ bridgeFailure != generation }) else {
       lifecycle.finishSwitch(generation, restored: false)
@@ -644,6 +704,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         guard lifecycle.finishSwitch(generation, restored: true) else { return "cancelled" }
         return "unchanged"
       }
+      backendLock.withLock { switchCommitted = generation }
       await runtime.pauseMonitor(generation)
       try requireActive(generation)
       reasserting = true
@@ -921,6 +982,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     backendLock.withLock {
       corePath = latestPath?.signature
       pathMoved = false
+      pathRetries = 0
     }
 #endif
   }
