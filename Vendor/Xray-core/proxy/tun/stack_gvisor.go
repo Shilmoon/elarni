@@ -321,6 +321,14 @@ func newStack() (*stack.Stack, error) {
 	rOpt := tcpip.TCPRecovery(0)
 	gStack.SetTransportProtocolOption(tcp.ProtocolNumber, &rOpt)
 
+	// The stack closes first for blocked sites and servers that close; the app's kernel then frees the port at once
+	// and may reuse it. A SYN meeting a TIME_WAIT endpoint is handed only to a listener, never to the forwarder, so
+	// that connect would hang for the whole TIME_WAIT (60 s). The TUN link has no stale duplicates for it to absorb.
+	twOpt := tcpip.TCPTimeWaitTimeoutOption(0)
+	if err := gStack.SetTransportProtocolOption(tcp.ProtocolNumber, &twOpt); err != nil {
+		return nil, errors.New(err.String())
+	}
+
 	tcpRXBufOpt := tcpip.TCPReceiveBufferSizeRangeOption{
 		Min:     tcpRXBufMinSize,
 		Default: tcpRXBufDefSize,

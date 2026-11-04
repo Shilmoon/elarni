@@ -711,3 +711,36 @@ func TestFetchFailuresNameTheirCause(t *testing.T) {
 		}
 	}
 }
+
+// A runetfreedom geosite.dat is 85 MB against the 64 MiB geofile limit (Elarni): a declared oversize body must fail
+// at once with input_too_large, not after downloading the limit over mobile data, and an undeclared one the same way.
+func TestFetchResourceRefusesBodiesOverTheLimit(t *testing.T) {
+	const limit = 1024
+	release := make(chan struct{})
+	defer close(release)
+	for _, declared := range []bool{true, false} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if declared {
+				w.Header().Set("Content-Length", "1073741824")
+				_, _ = w.Write([]byte{1})
+				w.(http.Flusher).Flush()
+				select { // the rest of a large body is still on its way
+				case <-release:
+				case <-r.Context().Done():
+				}
+				return
+			}
+			_, _ = w.Write([]byte{1}) // flushed first, so the body is chunked with no Content-Length
+			w.(http.Flusher).Flush()
+			_, _ = w.Write(make([]byte, limit))
+		}))
+		request := SubscriptionFetchRequest{URL: server.URL,
+			ApprovedChain: []string{approvalFingerprint(server.URL, []string{"cleartext_http", "loopback_target"})}}
+		started := time.Now()
+		_, err := FetchResource(context.Background(), request, limit, 5*time.Second, true)
+		server.Close()
+		if err == nil || err.Error() != "input_too_large" || time.Since(started) > 2*time.Second {
+			t.Fatalf("declared=%v: %v after %v", declared, err, time.Since(started))
+		}
+	}
+}

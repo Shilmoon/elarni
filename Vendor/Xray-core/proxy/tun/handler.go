@@ -69,6 +69,7 @@ func (t *Handler) Init(ctx context.Context, pm policy.Manager, dispatcher routin
 	t.dispatcher = dispatcher
 	t.tcpAdmission.limit, t.udpAdmission.limit = tcpLimit.Load(), udpLimit.Load()
 	t.tcpAdmission.minIdle, t.udpAdmission.minIdle, t.dnsIdle = sessionEvictIdle, sessionEvictIdle, dnsSessionIdle
+	t.tcpAdmission.finishedIdle, t.udpAdmission.finishedIdle = tcpFinishedIdle, dnsFinishedIdle
 
 	if len(t.tag) > 0 && pm.ForSystem().Stats.InboundUplink {
 		statsManager := core.MustFromContext(ctx).GetFeature(stats.ManagerType()).(stats.Manager)
@@ -187,7 +188,7 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 	if udp, ok := conn.(*udpConn); ok {
 		clock = &udp.activity
 	} else {
-		tracked := &activeConn{Conn: conn}
+		tracked := newActiveConn(conn)
 		conn, clock = tracked, &tracked.activity
 	}
 	clock.touch()

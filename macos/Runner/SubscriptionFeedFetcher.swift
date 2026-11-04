@@ -158,7 +158,7 @@ enum SubscriptionFeedFetcher {
       case "hwid_limit": throw SubscriptionError.hwidLimit
       case "hwid_required": throw SubscriptionError.hwidRequired
       case "invalid_target", "invalid_fetch_options": throw SubscriptionError.invalidURL
-      case "invalid_feed": throw SubscriptionError.invalidFeed
+      case "invalid_feed", "input_too_large": throw SubscriptionError.invalidFeed
       case "fetch_cancelled": throw CancellationError()
       case let code? where ["dns_failed", "provider_unreachable", "provider_error", "rate_limited",
                             "subscription_denied", "subscription_unavailable"].contains(code):

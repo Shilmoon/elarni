@@ -52,7 +52,8 @@ object Native {
 
     // A download failure keeps its class, so the app can say whose fault it is.
     private val passedThrough = setOf("hwid_required", "hwid_limit", "invalid_target", "fetch_cancelled", "invalid_backup", "invalid_backup_password", "probe_cancelled", "probe_busy",
-        "fetch_failed", "dns_failed", "provider_unreachable", "provider_error", "rate_limited", "subscription_denied", "subscription_unavailable", "recording_empty")
+        "fetch_failed", "dns_failed", "provider_unreachable", "provider_error", "rate_limited", "subscription_denied", "subscription_unavailable", "recording_empty",
+        "input_too_large")
 
     fun call(method: String, payload: JSONObject = JSONObject()): JSONObject {
         val raw = LibXray.invoke(obj("apiVersion" to 1, "method" to method, "payload" to payload).toString())

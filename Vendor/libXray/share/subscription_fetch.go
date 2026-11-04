@@ -399,13 +399,22 @@ func fetchResourceAttempt(ctx context.Context, request SubscriptionFetchRequest,
 			}
 			return nil, errors.New("fetch_failed")
 		}
+		if response.ContentLength > limit {
+			// Elarni: refuse before downloading the limit only to discard it.
+			response.Body.Close()
+			transport.CloseIdleConnections()
+			return nil, errors.New("input_too_large")
+		}
 		body, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 		response.Body.Close()
 		transport.CloseIdleConnections()
 		if err != nil {
 			return nil, errors.New("fetch_failed")
 		}
-		if int64(len(body)) > limit || !binaryBody && !utf8.Valid(body) {
+		if int64(len(body)) > limit {
+			return nil, errors.New("input_too_large")
+		}
+		if !binaryBody && !utf8.Valid(body) {
 			return nil, errors.New("invalid_feed")
 		}
 		headers := map[string]string{}

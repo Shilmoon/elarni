@@ -2,6 +2,7 @@ package tun
 
 import (
 	"context"
+	"errors"
 	"io"
 	stdnet "net"
 	"sync"
@@ -9,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/transport"
 )
 
@@ -205,4 +208,271 @@ func TestDNSFlowsReleaseSoonAfterTheyGoQuiet(t *testing.T) {
 	if len(handler.udpAdmission.sessions) != 1 {
 		t.Fatal("quiet DNS flow kept its slot, or another flow lost its slot")
 	}
+}
+
+// lingerDispatcher echoes until the app closes its side, then holds the session open like an outbound
+// waiting out policy downlinkOnly, until the session is evicted or 2 s pass.
+type lingerDispatcher struct{ routing.Dispatcher }
+
+func (lingerDispatcher) DispatchLink(ctx context.Context, _ net.Destination, link *transport.Link) error {
+	err := echoLink(link)
+	select {
+	case <-ctx.Done():
+	case <-time.After(2 * time.Second):
+	}
+	return err
+}
+
+// Churning apps fill the table with connections they already closed (Elarni): a full table must replace
+// one of those at once instead of refusing new connections while they linger.
+func TestFullTCPTableReplacesConnectionTheAppClosed(t *testing.T) {
+	listener, err := stdnet.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	handler := &Handler{ctx: context.Background(), config: &Config{}, dispatcher: lingerDispatcher{},
+		tcpAdmission: sessionAdmission{limit: 1, minIdle: time.Minute, finishedIdle: 50 * time.Millisecond}}
+	open := func() (*stdnet.TCPConn, chan struct{}) {
+		client, err := stdnet.Dial("tcp", listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		server, err := listener.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			handler.HandleConnection(server, net.TCPDestination(net.LocalHostIP, 443))
+		}()
+		t.Cleanup(func() { client.Close(); <-done })
+		return client.(*stdnet.TCPConn), done
+	}
+	echo := func(client stdnet.Conn) error {
+		client.SetDeadline(time.Now().Add(300 * time.Millisecond))
+		if _, err := client.Write([]byte("x")); err != nil {
+			return err
+		}
+		_, err := io.ReadFull(client, make([]byte, 1))
+		return err
+	}
+	first, firstDone := open()
+	if err := echo(first); err != nil {
+		t.Fatal(err)
+	}
+	busy, _ := open() // refused: the table holds the first, still open connection
+	if echo(busy) == nil {
+		t.Fatal("full table admitted a connection while its only session was open")
+	}
+	first.CloseWrite()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		next, _ := open()
+		if echo(next) == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("full table refused new connections while it held one the app had closed")
+		}
+	}
+	select {
+	case <-firstDone:
+	case <-time.After(time.Second):
+		t.Fatal("replaced connection kept running")
+	}
+}
+
+// Android sends each lookup from a fresh port, and an answered query lingers for dnsSessionIdle: a full
+// table must replace an answered DNS flow at once (Elarni), but keep unanswered and non-DNS flows.
+func TestFullUDPTableReplacesAnsweredDNSFlow(t *testing.T) {
+	send := func(f *udpFlowFixture, client, server net.Port) {
+		f.udp.HandlePacket(net.UDPDestination(net.ParseAddress("198.18.0.2"), client),
+			net.UDPDestination(net.ParseAddress("198.18.0.3"), server), []byte("x"))
+	}
+	admitted := func(t *testing.T, h *Handler, n int) {
+		t.Helper()
+		for deadline := time.Now().Add(time.Second); ; time.Sleep(time.Millisecond) {
+			h.udpAdmission.mu.Lock()
+			got := len(h.udpAdmission.sessions)
+			h.udpAdmission.mu.Unlock()
+			if got == n {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%d sessions admitted, want %d", got, n)
+			}
+		}
+	}
+	t.Run("answered", func(t *testing.T) {
+		handler := &Handler{udpAdmission: sessionAdmission{limit: 1, minIdle: time.Minute, finishedIdle: dnsFinishedIdle}}
+		f := newUDPFlowFixture(t, handler)
+		f.exchange(t, 40000, 53)
+		f.exchange(t, 40001, 53) // at once: a lookup burst turns a full table over in milliseconds
+		f.finished(t, 40000, time.Second)
+		f.exchange(t, 40000, 53) // the replaced flow's port starts a new flow
+		f.finished(t, 40001, time.Second)
+	})
+	t.Run("extra replies", func(t *testing.T) {
+		handler := &Handler{udpAdmission: sessionAdmission{limit: 1, minIdle: time.Minute}}
+		f := newUDPFlowFixture(t, handler)
+		handler.dispatcher = &udpRoundTripDispatcher{dispatch: func(link *transport.Link) error {
+			for first := true; ; first = false {
+				mb, err := link.Reader.ReadMultiBuffer()
+				if err != nil {
+					return err
+				}
+				if !first { // only the first query is answered, twice (a duplicate or forged reply)
+					buf.ReleaseMulti(mb)
+					continue
+				}
+				if err := link.Writer.WriteMultiBuffer(buf.MultiBuffer{mb[0], buf.FromBytes([]byte("y"))}); err != nil {
+					return err
+				}
+			}
+		}}
+		f.exchange(t, 40000, 53)
+		<-f.replies
+		send(f, 40000, 53) // still unanswered: the extra reply must not count for it
+		time.Sleep(50 * time.Millisecond)
+		send(f, 40001, 53)
+		f.finished(t, 40001, time.Second)
+	})
+	t.Run("unanswered", func(t *testing.T) {
+		handler := &Handler{udpAdmission: sessionAdmission{limit: 1, minIdle: time.Minute}}
+		f := newUDPFlowFixture(t, handler)
+		handler.dispatcher = &udpRoundTripDispatcher{dispatch: func(link *transport.Link) error {
+			for {
+				mb, err := link.Reader.ReadMultiBuffer()
+				buf.ReleaseMulti(mb)
+				if err != nil {
+					return err
+				}
+			}
+		}}
+		send(f, 40000, 53)
+		admitted(t, handler, 1)
+		send(f, 40001, 53)
+		f.finished(t, 40001, time.Second) // the new query is refused; the one awaiting its answer stays
+	})
+	t.Run("not DNS", func(t *testing.T) {
+		handler := &Handler{udpAdmission: sessionAdmission{limit: 1, minIdle: time.Minute}}
+		f := newUDPFlowFixture(t, handler)
+		f.exchange(t, 40000, 50000)
+		send(f, 40001, 50000)
+		f.finished(t, 40001, time.Second)
+	})
+}
+
+// Admission retires an answered DNS flow while its session is still ending (Elarni): a query from the same
+// port in that window must start a new flow instead of being queued to the old one and lost.
+func TestRetiredDNSFlowPassesLaterQueriesToANewFlow(t *testing.T) {
+	c := &udpConn{egress: make(chan *packet, 1)}
+	if queued, _ := c.enqueue(&packet{}); !queued || c.retireAnswered() {
+		t.Fatal("retired a flow with an unanswered query")
+	}
+	c.answer(1)
+	if !c.retireAnswered() {
+		t.Fatal("answered flow not retired")
+	}
+	if queued, retired := c.enqueue(&packet{}); queued || !retired {
+		t.Fatal("retired flow took another datagram")
+	}
+
+	f := newUDPFlowFixture(t, &Handler{})
+	f.exchange(t, 40000, 53)
+	f.udp.RLock()
+	old := f.udp.udpConns[net.UDPDestination(net.ParseAddress("198.18.0.2"), 40000)]
+	f.udp.RUnlock()
+	if old == nil || !old.retireAnswered() {
+		t.Fatal("answered flow not retired")
+	}
+	f.exchange(t, 40000, 53)
+	f.finished(t, 40000, time.Second) // the retired flow's session ends on its own
+}
+
+// An app that half-closes and keeps downloading is not finished while data still flows (Elarni):
+// a full table refuses new connections rather than cut that download.
+func TestFullTCPTableKeepsHalfClosedConnectionThatStillReceives(t *testing.T) {
+	listener, err := stdnet.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	streaming := make(chan struct{})
+	handler := &Handler{ctx: context.Background(), config: &Config{}, dispatcher: &streamDispatcher{done: streaming},
+		tcpAdmission: sessionAdmission{limit: 1, minIdle: time.Minute, finishedIdle: 150 * time.Millisecond}}
+	open := func() *stdnet.TCPConn {
+		client, err := stdnet.Dial("tcp", listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		server, err := listener.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			handler.HandleConnection(server, net.TCPDestination(net.LocalHostIP, 443))
+		}()
+		t.Cleanup(func() { client.Close(); <-done })
+		return client.(*stdnet.TCPConn)
+	}
+	first := open()
+	first.CloseWrite() // the request is sent; the response streams for 1 s
+	received := make(chan int)
+	go func() {
+		n, _ := io.Copy(io.Discard, first)
+		received <- int(n)
+	}()
+	for deadline := time.Now().Add(700 * time.Millisecond); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		next := open()
+		next.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		if _, err := next.Read(make([]byte, 1)); err == nil || !isTimeout(err) {
+			// A refused connection is closed at once (EOF); an admitted one would wait on its echo.
+			continue
+		}
+		t.Fatal("full table admitted a connection by cutting a download in progress")
+	}
+	<-streaming
+	if n := <-received; n != streamBytes {
+		t.Fatalf("download cut short: %d of %d bytes", n, streamBytes)
+	}
+}
+
+const streamBytes = 100
+
+// streamDispatcher waits for the app's EOF, then the first session sends streamBytes bytes over 1 s.
+type streamDispatcher struct {
+	routing.Dispatcher
+	started atomic.Bool
+	done    chan struct{}
+}
+
+func (d *streamDispatcher) DispatchLink(ctx context.Context, _ net.Destination, link *transport.Link) error {
+	for {
+		mb, err := link.Reader.ReadMultiBuffer()
+		buf.ReleaseMulti(mb)
+		if err != nil {
+			break
+		}
+	}
+	if !d.started.CompareAndSwap(false, true) {
+		return nil
+	}
+	defer close(d.done)
+	for i := 0; i < streamBytes; i++ {
+		if link.Writer.WriteMultiBuffer(buf.MultiBuffer{buf.FromBytes([]byte{1})}) != nil {
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return nil
+}
+
+func isTimeout(err error) bool {
+	var ne stdnet.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
