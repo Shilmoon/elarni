@@ -57,7 +57,8 @@
          ElarniVPN service (Settings > Connection turns it off). An upgrade does so only for an account
          no installer offered it to, when no service exists: installs upgraded from builds before the
          service never had it. Other upgrades keep each account's choice; InstallHelper points an
-         existing service at the new build. -->
+         existing service at the new build. An install run as SYSTEM (Intune, SCCM, winget machine
+         scope) adds no account: the user who connects is not known then. -->
     <CustomAction Id="AllowVPNService" Directory="INSTALLFOLDER"
                   ExeCommand="&quot;[INSTALLFOLDER]elarni-core.exe&quot; --vpn-service add [UserSID]"
                   Execute="deferred" Impersonate="no" Return="ignore" />
@@ -68,7 +69,7 @@
               Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="InstallHelper" After="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot;" />
       <Custom Action="AllowVPNService" After="InstallHelper"
-              Condition="NOT Installed AND (NOT WIX_UPGRADE_DETECTED OR (NOT VPNSERVICEOFFERED AND NOT VPNSERVICEEXISTS))" />
+              Condition="NOT Installed AND UserSID &lt;&gt; &quot;S-1-5-18&quot; AND (NOT WIX_UPGRADE_DETECTED OR (NOT VPNSERVICEOFFERED AND NOT VPNSERVICEEXISTS))" />
     </InstallExecuteSequence>
   </Package>
 </Wix>

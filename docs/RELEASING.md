@@ -89,7 +89,8 @@ service for the installing account, so connecting needs no UAC prompt. An upgrad
 sets it up too when no service exists and no installer offered it to that account
 before (installs upgraded from 0.3.6 or earlier); otherwise upgrades keep each
 account's setting (Settings › Connection › Connect without administrator approval).
-Uninstalling removes the service.
+An install run as SYSTEM (Intune, SCCM) sets up no account. Uninstalling removes the
+service.
 
 The portable ZIP asks for administrator approval to install the helper on the
 first connection. To remove it: quit Elarni, run `elarni.exe --unregister`, then
