@@ -4,6 +4,15 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Fixed
+
+- iOS: the VPN recovers after a switch between Wi-Fi and cellular, or between two Wi-Fi
+  networks. The tunnel restarts its core in place once the new network has held for
+  6 s, and retries if the new network isn't ready yet.
+- iOS and macOS: the packet tunnel no longer keeps every packet it wrote until it stops;
+  download-heavy apps made iOS end the VPN at its 50 MB memory limit.
+- iOS: diagnostics report the memory footprint iOS counts against that limit.
+
 ### Changed
 
 - Release files are built on GitHub-hosted runners and come with build provenance
