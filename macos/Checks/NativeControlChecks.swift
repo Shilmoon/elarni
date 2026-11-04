@@ -717,7 +717,10 @@ struct NativeControlChecks {
     func site(_ code: String, _ domain: String) -> Data {
       field(1, field(1, Data(code.utf8)) + field(2, Data([8, 3]) + field(2, Data(domain.utf8))))
     }
-    store.routing.fetchGeofile = { _, _ in (site("TEST", "example.com") + site("UNUSED", "unused.example"), nil) }
+    store.routing.fetchGeofile = { _, _, file in
+      try (site("TEST", "example.com") + site("UNUSED", "unused.example")).write(to: file)
+      return (true, nil)
+    }
     try store.routing.importProvider(#"{"Name":"Asset fixture","RemoteDNSType":"DoU","RemoteDNSIP":"1.1.1.1","DomesticDNSType":"DoU","DomesticDNSIP":"8.8.8.8","DirectSites":["geosite:TEST"],"Geositeurl":"https://fixture.invalid/geosite.dat","UseChunkFiles":"true"}"#,
       subscriptionID: other.subscription)
     try TunnelCommandCoordinator(defaults: defaults).persist(.disconnected)

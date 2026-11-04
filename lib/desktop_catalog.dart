@@ -81,6 +81,8 @@ PlatformException desktopError(
     _ when subscriptionFailures.containsKey(code) =>
       subscriptionFailures[code]!.$2,
     'import_too_large' => 'The import is too large.',
+    'input_too_large' =>
+      'The input exceeds the supported size. Use a smaller file or profile.',
     'no_selected_subscription' =>
       'Select a server first. This routing link turns its profile on for the selected server’s subscription.',
     _ => 'The operation failed. Endpoint details were redacted.',

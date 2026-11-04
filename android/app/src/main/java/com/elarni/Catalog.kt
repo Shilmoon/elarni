@@ -342,12 +342,13 @@ class Catalog(val data: JSONObject) {
         route.put("managedError", error ?: JSONObject.NULL).put("managedFailures", failures)
             .put("nextManagedRefreshAt", now() + if (error == null) 86400 else retryDelay(failures))
     }
-    /** With a stored copy's [validators] (etag, lastModified) the reply may be notModified, with no body. */
-    fun resource(routeID: String, url: String, kind: String, validators: JSONObject = JSONObject()): JSONObject {
+    /** With a stored copy's [validators] (etag, lastModified) the reply may be notModified, with no body.
+     *  A geofile goes to [destination] as it arrives, and the reply has its size instead of a body. */
+    fun resource(routeID: String, url: String, kind: String, validators: JSONObject = JSONObject(), destination: java.io.File? = null): JSONObject {
         val feed = Native.cancellable("fetchResource", obj("url" to url, "resourceKind" to kind,
             "approvedChain" to (route(routeID).mapObject("approvedResources").optJSONArray(url) ?: JSONArray()),
             "etag" to validators.string("etag"), "lastModified" to validators.string("lastModified"))
-            .put("proxy", Engine.fetchProxy ?: JSONObject.NULL))
+            .put("proxy", Engine.fetchProxy ?: JSONObject.NULL).put("destination", destination?.absolutePath))
         feed.optJSONObject("warning")?.let { throw ResourceReview(this, routeID, url, it) }
         return feed
     }

@@ -1,6 +1,7 @@
 package share
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -20,6 +21,8 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -474,7 +477,7 @@ func TestFetchPinsDNSAndVerifiesOriginalTLSHostname(t *testing.T) {
 
 // The test seam: a controlled resolver and trust roots instead of the system ones.
 func fetchFeedUsing(request SubscriptionFetchRequest, resolve func(context.Context, string, string) ([]netip.Addr, error), newTransport func() *http.Transport) (any, error) {
-	return fetchResourceUsing(context.Background(), request, resolve, newTransport, 4*1024*1024, 30*time.Second, false)
+	return fetchResourceUsing(context.Background(), request, resolve, newTransport, 4*1024*1024, 30*time.Second, false, "")
 }
 
 // A geofile downloads again only when the server says it changed.
@@ -498,7 +501,7 @@ func TestFetchSendsStoredValidatorsAndReportsAnUnchangedFile(t *testing.T) {
 			t.Fatal(err)
 		}
 		request.URL, request.ApprovedChain = server.URL, loopbackApprovals(server.URL)
-		result, err := fetchResourceUsing(context.Background(), request, net.DefaultResolver.LookupNetIP, func() *http.Transport { return &http.Transport{} }, 1024, 5*time.Second, true)
+		result, err := fetchResourceUsing(context.Background(), request, net.DefaultResolver.LookupNetIP, func() *http.Transport { return &http.Transport{} }, 1024, 5*time.Second, true, "")
 		value, _ := result.(map[string]any)
 		return value, err
 	}
@@ -639,7 +642,7 @@ func TestSubscriptionFallbackLastHostGetsTheRemainingTime(t *testing.T) {
 	primary := strings.Replace(server.URL, "127.0.0.1", "127.0.0.2", 1) + "/feed"
 	request := SubscriptionFetchRequest{URL: primary, FallbackHosts: []string{"127.0.0.1"},
 		ApprovedChain: loopbackApprovals(primary, server.URL+"/feed")}
-	result, err := fetchResourceUsing(context.Background(), request, net.DefaultResolver.LookupNetIP, func() *http.Transport { return &http.Transport{} }, 4*1024*1024, 5*time.Second, false)
+	result, err := fetchResourceUsing(context.Background(), request, net.DefaultResolver.LookupNetIP, func() *http.Transport { return &http.Transport{} }, 4*1024*1024, 5*time.Second, false, "")
 	if err != nil || result.(map[string]any)["body"] != "slow fixture" {
 		t.Fatal("the last host was cut short", err)
 	}
@@ -658,7 +661,7 @@ func TestCancelledDownloadReportsCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { <-started; cancel() }()
 	request := SubscriptionFetchRequest{URL: server.URL + "/feed", ApprovedChain: loopbackApprovals(server.URL + "/feed")}
-	_, err := fetchResourceUsing(ctx, request, net.DefaultResolver.LookupNetIP, func() *http.Transport { return &http.Transport{} }, 4*1024*1024, 5*time.Second, false)
+	_, err := fetchResourceUsing(ctx, request, net.DefaultResolver.LookupNetIP, func() *http.Transport { return &http.Transport{} }, 4*1024*1024, 5*time.Second, false, "")
 	if err == nil || err.Error() != "fetch_cancelled" {
 		t.Fatalf("cancelled download reported %v", err)
 	}
@@ -742,5 +745,58 @@ func TestFetchResourceRefusesBodiesOverTheLimit(t *testing.T) {
 		if err == nil || err.Error() != "input_too_large" || time.Since(started) > 2*time.Second {
 			t.Fatalf("declared=%v: %v after %v", declared, err, time.Since(started))
 		}
+	}
+}
+
+// Geofiles go straight to disk (Elarni): an 85 MB body must not sit in memory, nor reach the app as base64.
+func TestFetchResourceToFileStreamsTheBody(t *testing.T) {
+	const limit = 1024
+	body := bytes.Repeat([]byte{0, 255, 7}, 300)
+	var mode atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"v1"`)
+		switch mode.Load() {
+		case 0:
+			_, _ = w.Write(body)
+		case 1:
+			w.Header().Set("Content-Length", "2048")
+			_, _ = w.Write(make([]byte, 2048))
+		case 2:
+			_, _ = w.Write([]byte{1}) // flushed first, so the body is chunked with no Content-Length
+			w.(http.Flusher).Flush()
+			_, _ = w.Write(make([]byte, limit))
+		case 3:
+			w.WriteHeader(http.StatusNotModified)
+		}
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	request := SubscriptionFetchRequest{URL: server.URL, ApprovedChain: loopbackApprovals(server.URL)}
+	target := filepath.Join(dir, "geosite.dat")
+	result, err := FetchResourceToFile(context.Background(), request, limit, 5*time.Second, target)
+	value, _ := result.(map[string]any)
+	saved, _ := os.ReadFile(target)
+	if err != nil || value["bytes"] != int64(len(body)) || value["body"] != nil || value["etag"] != `"v1"` || !bytes.Equal(saved, body) {
+		t.Fatalf("download: %v %v, saved %d bytes", value, err, len(saved))
+	}
+	for _, over := range []int32{1, 2} {
+		mode.Store(over)
+		target := filepath.Join(dir, "over.dat")
+		if _, err := FetchResourceToFile(context.Background(), request, limit, 5*time.Second, target); err == nil || err.Error() != "input_too_large" {
+			t.Fatalf("mode %d: %v, want input_too_large", over, err)
+		}
+		if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("mode %d: an over-limit body was left on disk", over)
+		}
+	}
+	mode.Store(3)
+	request.ETag = `"v1"`
+	target = filepath.Join(dir, "unchanged.dat")
+	result, err = FetchResourceToFile(context.Background(), request, limit, 5*time.Second, target)
+	if value, _ := result.(map[string]any); err != nil || value["notModified"] != true {
+		t.Fatalf("unchanged: %v %v", result, err)
+	}
+	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("an unchanged resource wrote a file")
 	}
 }

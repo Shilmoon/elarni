@@ -323,6 +323,16 @@
     "1.1.1.1" : {
       "shouldTranslate" : false
     },
+    "A geofile is over 64 MB, which the core cannot load whole. Turn on Reduce routing-data size for this profile or use a smaller geofile." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Геофайл больше 64 МБ, а ядро загружает его целиком. Включите «Уменьшать размер данных маршрутизации» в этом профиле или используйте геофайл поменьше."
+          }
+        }
+      }
+    },
     "A link asks Elarni to disconnect." : {
       "localizations" : {
         "ru" : {

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/xtls/libxray/geo"
 	"github.com/xtls/libxray/share"
 )
 
@@ -21,6 +23,8 @@ func invokeFetch(method LibXrayMethod, payload json.RawMessage) string {
 		share.SubscriptionFetchRequest
 		OperationID  string `json:"operationId"`
 		ResourceKind string `json:"resourceKind"`
+		// A geofile's body goes to this file as it arrives (Elarni).
+		Destination string `json:"destination"`
 	}
 	if json.Unmarshal(payload, &request) != nil || len(request.OperationID) != 36 {
 		return encodeInvokeResponse(nil, errors.New("invalid_fetch_operation"))
@@ -32,10 +36,14 @@ func invokeFetch(method LibXrayMethod, payload json.RawMessage) string {
 	}
 	limit, timeout := int64(4*1024*1024), 30*time.Second
 	if request.ResourceKind == "geofile" {
-		limit, timeout = 64*1024*1024, 180*time.Second
+		limit, timeout = geo.MaxSourceBytes, 180*time.Second
 	}
 	if method == LibXrayMethodFetchResource && request.ResourceKind != "geofile" && request.ResourceKind != "domains" {
 		return encodeInvokeResponse(nil, errors.New("invalid_resource_kind"))
+	}
+	if method == LibXrayMethodFetchResource && ((request.ResourceKind == "geofile") != (request.Destination != "") ||
+		request.Destination != "" && !filepath.IsAbs(request.Destination)) {
+		return encodeInvokeResponse(nil, errors.New("invalid_fetch_options"))
 	}
 	fetching := method == LibXrayMethodFetchSubscription || method == LibXrayMethodFetchResource
 	fetchOperations.Lock()
@@ -77,18 +85,11 @@ func invokeFetch(method LibXrayMethod, payload json.RawMessage) string {
 		op.cancel()
 		delete(fetchOperations.items, request.OperationID)
 	}()
+	if method == LibXrayMethodFetchResource && request.Destination != "" {
+		return encodeInvokeResponse(share.FetchResourceToFile(op.ctx, request.SubscriptionFetchRequest, limit, timeout, request.Destination))
+	}
 	if method == LibXrayMethodFetchResource {
-		result, err := share.FetchResource(op.ctx, request.SubscriptionFetchRequest, limit, timeout, true)
-		if err != nil {
-			return encodeInvokeResponse(nil, err)
-		}
-		// Geofiles are capped at 64 MiB before base64 encoding. Only this binary
-		// operation has the larger response budget; ordinary FFI stays at 16 MiB.
-		raw, err := json.Marshal(invokeResponse{Success: true, Data: result})
-		if err != nil || len(raw) > 96*1024*1024 {
-			return encodeInvokeResponse(nil, errors.New("resource_response_too_large"))
-		}
-		return string(raw)
+		return encodeInvokeResponse(share.FetchResource(op.ctx, request.SubscriptionFetchRequest, limit, timeout, true))
 	}
 	result, err := share.FetchSubscription(op.ctx, request.SubscriptionFetchRequest)
 	return encodeInvokeResponse(result, err)

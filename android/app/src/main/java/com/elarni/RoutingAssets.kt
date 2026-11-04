@@ -1,7 +1,6 @@
 package com.elarni
 
 import android.content.Context
-import android.util.Base64
 import libXray.LibXray
 import org.json.JSONArray
 import org.json.JSONObject
@@ -50,34 +49,33 @@ class RoutingAssets(context: Context) {
             var status = if (profile.string("UseChunkFiles") == "true") "ready" else "disabled"
             sources.forEach { (name, url) ->
                 val old = if (previous.isEmpty()) null else File(directory(previous), "$name.original.dat")
-                fun stored() = old!!.inputStream().use { it.readBounded(64 * 1024 * 1024) }
+                // Originals stay on disk: a runetfreedom geosite.dat is 85 MB, against a 256 MB app heap.
+                val original = File(stage, "$name.original.dat"); val reduced = File(stage, "$name.dat")
+                fun stored() = old?.takeIf { it.isFile }?.inputStream()?.use { input -> FileOutputStream(original).use { input.copyTo(it); it.fd.sync() } }
+                    ?: throw AppFailure("assets_unavailable")
                 // The stored original's ETag and Last-Modified hold only for the link it came from.
                 var source = old?.takeIf { it.isFile }?.let { File(it.parentFile, "$name.source.json") }?.takeIf { it.isFile && it.length() <= 16384 }
                     ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }?.takeIf { it.string("url") == url } ?: JSONObject()
-                val original = if (old?.isFile == true && (!refresh || only.isNotEmpty() && only != name)) stored() else {
-                    val response = catalog.resource(id, url, "geofile", source)
-                    if (response.optBoolean("notModified")) stored() else {
-                        source = obj("url" to url, "etag" to response.string("etag"), "lastModified" to response.string("lastModified"))
-                        Base64.decode(response.getString("body"), Base64.DEFAULT)
-                    }
+                if (old?.isFile == true && (!refresh || only.isNotEmpty() && only != name)) stored() else {
+                    val response = catalog.resource(id, url, "geofile", source, original)
+                    if (response.optBoolean("notModified")) stored()
+                    else source = obj("url" to url, "etag" to response.string("etag"), "lastModified" to response.string("lastModified"))
                 }
-                val result = try { JSONObject(LibXray.reduceAndroidGeoData(name, original, JSONArray(selectors.toList()).toString(), JSONArray(optional.toList()).toString(), profile.string("UseChunkFiles") == "true")) }
-                    catch (_: Exception) { throw AppFailure("invalid_geodata") }
+                val result = try { JSONObject(LibXray.reduceAndroidGeoFile(name, original.absolutePath, reduced.absolutePath, JSONArray(selectors.toList()).toString(), JSONArray(optional.toList()).toString(), profile.string("UseChunkFiles") == "true")) }
+                    catch (error: Exception) { throw AppFailure(error.message?.takeIf { it in setOf("input_too_large", "assets_unavailable") } ?: "invalid_geodata") }
                 // Collect the codes both files lack, then name them together.
                 if (result.has("missing")) { missing += result.strings("missing"); return@forEach }
                 skipped += result.strings("skipped")
-                val reduced = Base64.decode(result.getString("data"), Base64.DEFAULT)
                 if (result.string("status") == "fullFileFallback") status = "fullFileFallback"
-                fun write(name: String, bytes: ByteArray) = FileOutputStream(File(stage, name)).use { it.write(bytes); it.fd.sync() }
-                write("$name.original.dat", original); write("$name.dat", reduced)
-                if (source.string("etag").isNotEmpty() || source.string("lastModified").isNotEmpty()) write("$name.source.json", source.toString().toByteArray())
+                if (source.string("etag").isNotEmpty() || source.string("lastModified").isNotEmpty())
+                    FileOutputStream(File(stage, "$name.source.json")).use { it.write(source.toString().toByteArray()); it.fd.sync() }
                 Native.call("countGeoData", obj("name" to name, "geoType" to if (name == "geoip") "ip" else "domain", "datDir" to stage.absolutePath))
-                files.put(obj("name" to name, "source" to url, "bytes" to reduced.size, "originalBytes" to original.size, "updatedAt" to now()))
+                files.put(obj("name" to name, "source" to url, "bytes" to reduced.length(), "originalBytes" to original.length(), "updatedAt" to now()))
             }
             if (missing.isNotEmpty()) throw AppFailure("missing_geodata:" + missing.joinToString(","))
             val same = previous.isNotEmpty() && listOf("geoip.dat", "geoip.original.dat", "geosite.dat", "geosite.original.dat").all { name ->
                 val a = File(stage, name); val b = File(directory(previous), name)
-                (!a.exists() && !b.exists()) || a.isFile && b.isFile && a.length() == b.length() && a.readBytes().contentEquals(b.readBytes())
+                (!a.exists() && !b.exists()) || a.isFile && b.isFile && sameContent(a, b)
             }
             // Only the validators may have changed; the core never reads them.
             if (same) listOf("geoip.source.json", "geosite.source.json").forEach { name ->
@@ -90,9 +88,27 @@ class RoutingAssets(context: Context) {
             route.remove("originalAssetRevision")
             committed = !same
         } catch (_: OutOfMemoryError) {
-            // OutOfMemoryError is no Exception; a 64 MiB geofile passes through base64 and JSON several times.
+            // OutOfMemoryError is no Exception.
             throw AppFailure("input_too_large")
         } finally { if (!committed) stage.deleteRecursively() }
+    }
+    /** Compares two files a chunk at a time; an original may be far larger than the app heap allows reading whole. */
+    private fun sameContent(a: File, b: File): Boolean {
+        if (a.length() != b.length()) return false
+        fun java.io.InputStream.fill(buffer: ByteArray): Int {
+            var n = 0
+            while (n < buffer.size) { val count = read(buffer, n, buffer.size - n); if (count < 0) break; n += count }
+            return n
+        }
+        a.inputStream().use { x -> b.inputStream().use { y ->
+            val p = ByteArray(65536); val q = ByteArray(65536)
+            while (true) {
+                val n = x.fill(p)
+                // Past n both buffers still hold the previous, equal chunk.
+                if (n != y.fill(q) || !p.contentEquals(q)) return false
+                if (n < p.size) return true
+            }
+        } }
     }
     fun retire(keep: Set<String>) {
         root.listFiles()?.filter { it.isDirectory && Regex("^[a-f0-9]{64}$").matches(it.name) && it.name !in keep }?.forEach { it.deleteRecursively() }

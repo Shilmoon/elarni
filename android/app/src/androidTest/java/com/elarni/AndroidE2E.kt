@@ -1072,13 +1072,19 @@ class AndroidE2E {
             assertEquals("the new ETag was not stored", 2, feed.notModified.get())
         }
     }
-    @Test fun e_geofileTooLargeForMemorySaysSo() {
+    @Test fun e_geofileOverTheCoreLimitIsReducedOrRefused() {
         HTTPFixture().use { feed ->
-            // The largest geofile the core downloads passes through base64 and JSON several times.
-            feed.binary = ByteArray(64 * 1024 * 1024)
-            val id = geodataRoute("Large geofile", feed)
-            val code = try { refreshGeofiles(id); "ready" } catch (error: AppFailure) { error.code }
-            assertTrue(code, code in setOf("input_too_large", "invalid_geodata"))
+            // A runetfreedom geosite.dat is 85 MB, most of it categories few profiles name; the app streams it to disk.
+            feed.binary = largeSite("TEST", "example.test", 70 * 1024 * 1024)
+            val reduced = geodataRoute("Reduced large geofile", feed, chunked = true).also(::refreshGeofiles)
+            val route = snapshot().route(reduced)
+            val file = route.getJSONArray("geofiles").getJSONObject(0)
+            assertEquals("ready", route.getString("geofileStatus"))
+            assertTrue(file.toString(), file.getLong("originalBytes") > 70L * 1024 * 1024 && file.getLong("bytes") < 1024)
+            // The core would load a complete file whole.
+            val complete = geodataRoute("Complete large geofile", feed)
+            val code = try { refreshGeofiles(complete); "ready" } catch (error: AppFailure) { error.code }
+            assertEquals("input_too_large", code)
         }
     }
     @Test fun e_routeFailureAfterAnotherRouteAppliesIsRecorded() {
@@ -1301,9 +1307,9 @@ class AndroidE2E {
             call("refresh", obj("id" to id))
         }
     }
-    private fun geodataRoute(name: String, feed: HTTPFixture): String {
+    private fun geodataRoute(name: String, feed: HTTPFixture, chunked: Boolean = false): String {
         call("saveRouting", obj("text" to obj("Name" to name, "RemoteDNSType" to "DoU", "RemoteDNSIP" to "1.1.1.1", "DomesticDNSType" to "DoU", "DomesticDNSIP" to "8.8.8.8",
-            "Geositeurl" to feed.url, "BlockSites" to JSONArray(listOf("geosite:test"))).toString()))
+            "Geositeurl" to feed.url, "BlockSites" to JSONArray(listOf("geosite:test")), "UseChunkFiles" to chunked.toString()).toString()))
         return snapshot().routes.single { it.string("name") == name }.getString("id")
     }
     private fun refreshGeofiles(id: String) {
@@ -1374,6 +1380,17 @@ private fun field(tag: Int, bytes: ByteArray) = byteArrayOf(tag.toByte(), bytes.
 internal fun site(code: String, domain: String): ByteArray {
     val value = byteArrayOf(8, 3) + field(18, domain.toByteArray())
     return field(10, field(10, code.toByteArray()) + field(18, value))
+}
+private fun varint(value: Int): ByteArray {
+    val out = java.io.ByteArrayOutputStream(); var rest = value
+    while (rest >= 0x80) { out.write(rest and 0x7f or 0x80); rest = rest ushr 7 }
+    out.write(rest); return out.toByteArray()
+}
+/** [code]'s record, then an unused record of [filler] zero bytes, built in one array. */
+internal fun largeSite(code: String, domain: String, filler: Int): ByteArray {
+    val head = field(10, "BIG".toByteArray()) + byteArrayOf(122) + varint(filler) // 122: field 15, length-delimited
+    val prefix = site(code, domain) + byteArrayOf(10) + varint(head.size + filler) + head
+    return prefix.copyOf(prefix.size + filler)
 }
 internal fun ip(code: String, first: Int) =
     field(10, field(10, code.toByteArray()) + field(18, field(10, byteArrayOf(first.toByte(), 0, 2, 0)) + byteArrayOf(0x10, 24)))

@@ -2,10 +2,11 @@ package libXray
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,7 +28,20 @@ func TestRoutingResourceFFIPinsPolicyAndPreservesLargeBinaryBody(t *testing.T) {
 		}
 		return result
 	}
-	request := map[string]any{"operationId": "00000000-0000-4000-8000-000000000004", "url": server.URL, "resourceKind": "geofile"}
+	// A geofile streams to the file the app names (Elarni), never through this JSON.
+	for _, destination := range []any{nil, "", "geosite.dat"} {
+		request := map[string]any{"operationId": "00000000-0000-4000-8000-000000000003", "url": server.URL, "resourceKind": "geofile"}
+		if destination != nil {
+			request["destination"] = destination
+		}
+		invoke("prepareFetch", request)
+		if result := invoke("fetchResource", request); result["success"] != false || result["error"] != "invalid_fetch_options" {
+			t.Fatalf("destination %v: %v", destination, result)
+		}
+		invoke("releaseFetch", request)
+	}
+	destination := filepath.Join(t.TempDir(), "geosite.dat")
+	request := map[string]any{"operationId": "00000000-0000-4000-8000-000000000004", "url": server.URL, "resourceKind": "geofile", "destination": destination}
 	invoke("prepareFetch", request)
 	result := invoke("fetchResource", request)
 	if result["success"] != true {
@@ -44,11 +58,13 @@ func TestRoutingResourceFFIPinsPolicyAndPreservesLargeBinaryBody(t *testing.T) {
 	if result["success"] != true {
 		t.Fatalf("binary resource failed: %v", result["error"])
 	}
-	decoded, err := base64.StdEncoding.DecodeString(result["data"].(map[string]any)["body"].(string))
-	if err != nil || !bytes.Equal(decoded, body) || calls.Load() != 1 {
+	data := result["data"].(map[string]any)
+	saved, err := os.ReadFile(destination)
+	if err != nil || !bytes.Equal(saved, body) || data["bytes"] != float64(len(body)) || data["body"] != nil || calls.Load() != 1 {
 		t.Fatal("resource FFI lost binary bytes or fetched more than once")
 	}
 	request["resourceKind"] = "domains"
+	delete(request, "destination")
 	request["operationId"] = "00000000-0000-4000-8000-000000000006"
 	invoke("prepareFetch", request)
 	if invoke("fetchResource", request)["success"] != false {

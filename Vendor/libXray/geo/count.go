@@ -1,15 +1,15 @@
 package geo
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"sort"
 
 	"github.com/xtls/libxray/nodep"
-	"github.com/xtls/xray-core/common/geodata"
-	"google.golang.org/protobuf/proto"
 )
 
 type geoList struct {
@@ -48,103 +48,64 @@ func CountGeoData(datDir string, name string, geoType string) error {
 }
 
 func countGeoSite(datDir string, name string) error {
-	datName := name + ".dat"
-	jsonName := name + ".json"
-	datPath := path.Join(datDir, datName)
-	jsonPath := path.Join(datDir, jsonName)
-	geositeBytes, err := os.ReadFile(datPath)
-	if err != nil {
-		return err
-	}
-	var geositeList geodata.GeoSiteList
-	if err := proto.Unmarshal(geositeBytes, &geositeList); err != nil {
-		return err
-	}
-
-	var list geoList
-	list.CategoryCount = len(geositeList.Entry)
-	var codes []*geoCountryCode
-	for _, site := range geositeList.Entry {
-		var siteCode geoCountryCode
-		siteCode.Code = site.Code
-		siteCode.RuleCount = len(site.Domain)
-		codes = append(codes, &siteCode)
-		list.RuleCount += siteCode.RuleCount
-		for _, domain := range site.Domain {
-			for _, attribute := range domain.Attribute {
-				attr := fmt.Sprintf("%s@%s", site.Code, attribute.Key)
-				attrCode := findAttrCode(codes, attr)
-				if attrCode == nil {
-					var newCode geoCountryCode
-					newCode.Code = attr
-					newCode.RuleCount = 1
-					codes = append(codes, &newCode)
-				} else {
-					attrCode.RuleCount += 1
-				}
-			}
-		}
-	}
-
-	sortCodes(codes)
-	list.Codes = codes
-	jsonBytes, err := json.Marshal(&list)
-	if err != nil {
-		return err
-	}
-	if err := nodep.WriteBytes(jsonBytes, jsonPath); err != nil {
-		return err
-	}
-
-	return nil
+	return countGeoFile(datDir, name, "geosite")
 }
 
 func countGeoIP(datDir string, name string) error {
-	datName := name + ".dat"
-	jsonName := name + ".json"
-	datPath := path.Join(datDir, datName)
-	jsonPath := path.Join(datDir, jsonName)
-	geoipBytes, err := os.ReadFile(datPath)
+	return countGeoFile(datDir, name, "geoip")
+}
+
+// countGeoFile reads the file one record at a time (Elarni): decoding a whole list held
+// about eight times the file size, and a downloaded original may be far larger than the core's limit.
+func countGeoFile(datDir, name, kind string) error {
+	file, err := os.Open(path.Join(datDir, name+".dat"))
 	if err != nil {
 		return err
 	}
-	var geoipList geodata.GeoIPList
-	if err := proto.Unmarshal(geoipBytes, &geoipList); err != nil {
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
 		return err
 	}
-
+	records := recordReader{in: bufio.NewReaderSize(file, 64<<10), left: info.Size()}
 	var list geoList
-	list.CategoryCount = len(geoipList.Entry)
-	var codes []*geoCountryCode
-	for _, geoip := range geoipList.Entry {
-		var code geoCountryCode
-		code.Code = geoip.Code
-		code.RuleCount = len(geoip.Cidr)
-		codes = append(codes, &code)
-		list.RuleCount += code.RuleCount
+	codes := []*geoCountryCode{}
+	attributes := map[string]*geoCountryCode{}
+	for {
+		err := records.next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		record, err := records.read()
+		if err != nil {
+			return err
+		}
+		code, _ := recordCode(record)
+		rules, ok := validRecord(kind, record, false, func(key string) {
+			attr := fmt.Sprintf("%s@%s", code, key)
+			if attributes[attr] == nil {
+				attributes[attr] = &geoCountryCode{Code: attr}
+				codes = append(codes, attributes[attr])
+			}
+			attributes[attr].RuleCount++
+		})
+		if !ok {
+			return errInvalid
+		}
+		codes = append(codes, &geoCountryCode{Code: code, RuleCount: rules})
+		list.CategoryCount++
+		list.RuleCount += rules
 	}
-
 	sortCodes(codes)
-
 	list.Codes = codes
 	jsonBytes, err := json.Marshal(&list)
 	if err != nil {
 		return err
 	}
-	if err := nodep.WriteBytes(jsonBytes, jsonPath); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func findAttrCode(codes []*geoCountryCode, attrCode string) *geoCountryCode {
-	for _, code := range codes {
-		if code.Code == attrCode {
-			return code
-		}
-	}
-	return nil
+	return nodep.WriteBytes(jsonBytes, path.Join(datDir, name+".json"))
 }
 
 func sortCodes(codes []*geoCountryCode) {

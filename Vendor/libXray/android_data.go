@@ -49,23 +49,25 @@ func DecodeAndroidQRImage(data []byte) (string, error) {
 	return result.GetText(), nil
 }
 
-// The result names missing required codes instead of failing, so the caller can show them.
-func ReduceAndroidGeoData(name string, data []byte, selectorsJSON, optionalJSON string, reduce bool) (string, error) {
+// ReduceAndroidGeoFile writes the reduced copy of the downloaded geofile at source to the new
+// file target, one record at a time (see geo.ReduceFile). The result names missing required
+// codes instead of failing, so the caller can show them; other failures are their error codes.
+func ReduceAndroidGeoFile(name, source, target, selectorsJSON, optionalJSON string, reduce bool) (string, error) {
 	var selectors, optional []string
 	if len(selectorsJSON)+len(optionalJSON) > 4*1024*1024 || json.Unmarshal([]byte(selectorsJSON), &selectors) != nil ||
 		json.Unmarshal([]byte(optionalJSON), &optional) != nil || len(selectors)+len(optional) > 65536 {
 		return "", errors.New("invalid_assets")
 	}
-	result, status, skipped, err := geo.Reduce(name, data, selectors, optional, reduce)
+	status, skipped, err := geo.ReduceFile(name, source, target, selectors, optional, reduce)
 	var missing geo.MissingError
 	if errors.As(err, &missing) {
 		encoded, err := json.Marshal(map[string]any{"missing": missing})
 		return string(encoded), err
 	}
 	if err != nil {
-		return "", errors.New("invalid_geodata")
+		return "", err
 	}
-	encoded, err := json.Marshal(map[string]any{"data": result, "status": status, "skipped": skipped})
+	encoded, err := json.Marshal(map[string]any{"status": status, "skipped": skipped})
 	return string(encoded), err
 }
 

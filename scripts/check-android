@@ -290,8 +290,9 @@ if args.case != 'native':
     run(*device, 'install', '-r', 'android/app/build/outputs/apk/debug/app-debug.apk')
     run(*device, 'install', '-r', 'android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk')
     if args.case in ('all', 'catalog'):
-        # The 64 MiB geofile drives the app process near 1.1 GB; sharing that process ran API 30 (2 GB) out of memory later on.
-        large = 'com.elarni.AndroidE2E#e_geofileTooLargeForMemorySaysSo'
+        # Its fixture serves a 70 MiB geofile from the app process's heap. It runs alone, as its 64 MiB predecessor did:
+        # that one drove the process near 1.1 GB, and sharing the process ran API 30 (2 GB) out of memory later on.
+        large = 'com.elarni.AndroidE2E#e_geofileOverTheCoreLimitIsReducedOrRefused'
         # The restart sequence reads what this test leaves, so with shards it runs last on the first one.
         leave = 'com.elarni.AndroidE2E#f_leaveEncryptedCatalogForProcessRestart'
         excluded = ','.join([large, leave] if shard_count > 1 else [large])

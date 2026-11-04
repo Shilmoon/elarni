@@ -11,6 +11,8 @@ enum RoutingStoreError: Error {
   // Selectors whose codes the geofiles lack although a Proxy rule or another reference needs them.
   case missingGeodata([String])
   case routeModelTooLarge
+  // A geofile the core would load whole is over maxGeofileBytes.
+  case geofileTooLarge
 }
 struct RuntimeRoutingRevision: Equatable {
   let name: String
@@ -26,6 +28,11 @@ final class RoutingStore {
 #else
   static let maxRouteModelBytes = 8 * 1024 * 1024
 #endif
+  // The core reads each geofile whole; a downloaded original may be up to libXray's geo.MaxSourceBytes.
+  static let maxGeofileBytes = 64 * 1024 * 1024
+  static let maxOriginalGeofileBytes = 256 * 1024 * 1024
+  nonisolated static let geofileTooLargeMessage = "A geofile is over 64 MB, which the core cannot load whole. " +
+    "Turn on Reduce routing-data size for this profile or use a smaller geofile."
   private var staging = false
 
   func beginStaging() throws -> Data {
@@ -69,9 +76,9 @@ final class RoutingStore {
   var publishManaged: ((ManagedCandidate) async throws -> Void)?
   var now: () -> Date = Date.init
   var jitter: () -> Double = { Double.random(in: -1...1) }
-  // Given the stored file's validators, nil data means that file is current.
-  var fetchGeofile: (URL, GeofileValidators?) async throws -> (data: Data?, validators: GeofileValidators?) = { url, stored in
-    try await RoutingResourceFetcher.fetch(url, maxBytes: 64 * 1024 * 1024, stored: stored)
+  // Saves the download to the given file. Given the stored file's validators, false means that file is current.
+  var fetchGeofile: (URL, GeofileValidators?, URL) async throws -> (downloaded: Bool, validators: GeofileValidators?) = { url, stored, file in
+    try await RoutingResourceFetcher.fetchGeofile(url, stored: stored, to: file)
   }
   // The server configs of these subscriptions; their own rules may name geodata codes.
   var serverConfigs: ([String]) throws -> [Any] = { _ in [] }
@@ -604,13 +611,13 @@ final class RoutingStore {
           // The stored file's validators hold only for the link it came from.
           let current = source == downloadedSource ? oldFile.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil } : nil
           let stored = current == nil ? nil : (name == "geoip" ? previous.geoipValidators : previous.geositeValidators)
-          let download = try await fetchGeofile(url, stored)
+          let download = try await fetchGeofile(url, stored, staging.appendingPathComponent(filename))
           try Task.checkCancellation()
           guard catalog.profiles.first(where: { $0.id == id })?.publicationGeneration == previous.publicationGeneration else {
             throw CancellationError()
           }
-          if let data = download.data {
-            try data.write(to: staging.appendingPathComponent(filename), options: [.atomic])
+          if download.downloaded {
+            guard FileManager.default.fileExists(atPath: staging.appendingPathComponent(filename).path) else { throw RoutingStoreError.invalidImport }
           } else if let current, stored != nil {
             try FileManager.default.copyItem(at: current, to: staging.appendingPathComponent(filename))
           } else {
@@ -673,9 +680,16 @@ final class RoutingStore {
         if chunked { updated.reductionStatus = "reduced" }
       } catch RoutingStoreError.missingGeodata(let missing) {
         throw RoutingStoreError.missingGeodata(missing)
+      } catch RoutingStoreError.geofileTooLarge {
+        throw RoutingStoreError.geofileTooLarge
       } catch {
         if chunked { updated.reductionStatus = "Using complete files: reduction could not preserve every reference." }
       }
+      // Complete files serve when reduction is off or fails.
+      let loaded = assetsURL.appendingPathComponent(updated.assetRevision ?? revision)
+      guard ["geoip.dat", "geosite.dat"].allSatisfy({
+        ((try? loaded.appendingPathComponent($0).resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) <= Self.maxGeofileBytes
+      }) else { throw RoutingStoreError.geofileTooLarge }
       updated.lastGeoRefresh = now()
       updated.geofileStatus = "ready"
       updated.geofileError = nil
@@ -694,6 +708,7 @@ final class RoutingStore {
           catalog.profiles[currentIndex].geofileError = "Proxy rules and servers need codes the geofiles lack: " +
             "\(missing.joined(separator: ", ")). Fix the profile or its geofile links."
         }
+        if case RoutingStoreError.geofileTooLarge = error { catalog.profiles[currentIndex].geofileError = Self.geofileTooLargeMessage }
         try? save()
       }
       throw error
@@ -893,7 +908,9 @@ final class RoutingStore {
         guard wanted.isEmpty else { throw RoutingStoreError.invalidImport }
         continue
       }
-      let retained = try Self.retainGeodataRecords(Data(contentsOf: file), codes: wanted, keepAll: !reduce)
+      // Mapped, the original's pages stay file-backed and evictable instead of filling the heap.
+      let retained = try Self.retainGeodataRecords(Data(contentsOf: file, options: .alwaysMapped), codes: wanted, keepAll: !reduce)
+      guard retained.data.count <= Self.maxGeofileBytes else { throw RoutingStoreError.geofileTooLarge }
       let missing = retained.missing.intersection(references[name, default: []])
       guard missing.isEmpty else {
         throw RoutingStoreError.missingGeodata(missing.sorted().map { "\(name):\($0.lowercased())" })
@@ -928,7 +945,7 @@ final class RoutingStore {
   // Keep complete protobuf records for `codes`, or every record with `keepAll`, including
   // attributes and unknown nested fields. Also returns the requested codes the data lacks.
   static func retainGeodataRecords(_ data: Data, codes: Set<String>, keepAll: Bool = false) throws -> (data: Data, missing: Set<String>) {
-    guard data.count <= 64 * 1024 * 1024 else { throw RoutingStoreError.invalidImport }
+    guard data.count <= maxOriginalGeofileBytes else { throw RoutingStoreError.invalidImport }
     var offset = 0
     func varint(end: Int) throws -> Int {
       var value: UInt64 = 0
