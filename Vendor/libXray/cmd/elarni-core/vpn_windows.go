@@ -21,6 +21,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/xtls/libxray/geo"
 	"github.com/xtls/libxray/share"
 	"github.com/xtls/libxray/xray"
 	"github.com/xtls/xray-core/common/flightrecorder"
@@ -517,7 +518,7 @@ func readVPNCommand(pipe io.Reader) (vpnCommand, error) {
 		return request, errors.New("invalid_vpn_request")
 	}
 	for name, size := range request.Assets {
-		if name != "geoip.dat" && name != "geosite.dat" || size <= 0 || size > 64*1024*1024 {
+		if name != "geoip.dat" && name != "geosite.dat" || size <= 0 || size > geo.MaxFileBytes {
 			return request, errors.New("invalid_vpn_request")
 		}
 	}

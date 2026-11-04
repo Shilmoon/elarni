@@ -133,6 +133,7 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 		newCtx, newCancel = context.WithCancel(context.Background())
 	}
 
+	skipFirstPayloadWait := session.SkipFirstPayloadWait(ctx, target) // Elarni: its client waits for the server's greeting
 	session := encoding.NewClientSession(ctx, int64(behaviorSeed))
 	sessionPolicy := h.policyManager.ForLevel(request.User.Level)
 
@@ -167,7 +168,7 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 			bodyWriter = xudp.NewPacketWriter(bodyWriter, target, xudp.GetGlobalID(ctx))
 		}
 		// A client that half-closed without data still waits for the server to speak.
-		if !protocol.ServerFirst(target) { // Elarni: its client waits for the server's greeting
+		if !skipFirstPayloadWait {
 			if err := buf.CopyOnceTimeout(input, bodyWriter, time.Millisecond*100); err != nil && err != io.EOF && err != buf.ErrNotTimeoutReader && err != buf.ErrReadTimeout {
 				return errors.New("failed to write first payload").Base(err)
 			}

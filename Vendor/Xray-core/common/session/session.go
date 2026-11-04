@@ -97,6 +97,9 @@ type Content struct {
 
 	// SkipDNSResolve is set from DNS module. the DOH remote server maybe a domain name, this prevents cycle resolving dead loop
 	SkipDNSResolve bool
+
+	// Elarni: ClientSilent is set when sniffing waited its whole window and the client sent nothing.
+	ClientSilent bool
 }
 
 // Sockopt is the settings for socket connection.

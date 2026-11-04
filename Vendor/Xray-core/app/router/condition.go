@@ -344,6 +344,9 @@ func NewProcessNameMatcher(names []string) *ProcessNameMatcher {
 	}
 }
 
+// lookupProcess finds the owner of a local socket; tests replace it.
+var lookupProcess = net.FindProcess
+
 func (m *ProcessNameMatcher) Apply(ctx routing.Context) (matched bool) {
 	code := "no_source"
 	if flightrecorder.Enabled() {
@@ -390,7 +393,17 @@ func (m *ProcessNameMatcher) Apply(ctx routing.Context) (matched bool) {
 		dstPort = uint16(lookupContext.GetTargetPort())
 	}
 
-	pid, name, absPath, err := net.FindProcess(network, srcIP, uint16(srcPort), dstIP, uint16(dstPort))
+	find := func() (int, string, string, error) {
+		return lookupProcess(network, srcIP, srcPort, dstIP, dstPort)
+	}
+	var pid int
+	var name, absPath string
+	var err error
+	if original, ok := lookupContext.(*routingsession.Context); ok {
+		pid, name, absPath, err = original.LookupProcess(find)
+	} else {
+		pid, name, absPath, err = find()
+	}
 	if err != nil {
 		code = "lookup_failed"
 		if err == net.ErrNotLocal {

@@ -315,3 +315,23 @@ func TestPreparedAssetsTrimAGeofileOverTheCoreLimit(t *testing.T) {
 		t.Fatalf("complete file: %v, want input_too_large", err)
 	}
 }
+
+// Elarni: runetfreedom's RU geosite.dat, the usual source of imported RU routing, passed 64 MiB in October 2026
+// (70.3 MiB, 81.6 on 2026-11-04) and every download and stored copy of it was refused as invalid_feed/invalid_geodata.
+func TestGeofilesLargerThan64MiBArePrepared(t *testing.T) {
+	root := t.TempDir()
+	original, _ := proto.Marshal(&geodata.GeoSiteList{Entry: []*geodata.GeoSite{
+		{Code: "TEST", Domain: []*geodata.Domain{{Value: "example.com", Type: geodata.Domain_Full}}},
+		{Code: "BIG", Domain: []*geodata.Domain{{Value: string(bytes.Repeat([]byte("a"), 82<<20)), Type: geodata.Domain_Substr}}},
+	}})
+	request := assetRequest{Files: map[string]string{"geosite": "https://example.invalid/geosite.dat"}, Selectors: []string{"geosite:test"}, Reduce: true}
+	value, err := prepareAssets(root, request, bodies(func(string) ([]byte, error) { return original, nil }))
+	if err != nil {
+		t.Fatalf("download of a %d MiB geosite: %v", len(original)>>20, err)
+	}
+	// The stored original serves the next preparation without a download.
+	request.Previous = value.(map[string]any)["assetRevision"].(string)
+	if _, err := prepareAssets(root, request, bodies(func(string) ([]byte, error) { return nil, errors.New("fetch_failed") })); err != nil {
+		t.Fatalf("stored %d MiB geosite: %v", len(original)>>20, err)
+	}
+}

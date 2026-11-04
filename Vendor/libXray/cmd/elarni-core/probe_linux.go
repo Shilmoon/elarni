@@ -20,6 +20,7 @@ import (
 	"time"
 
 	libxray "github.com/xtls/libxray"
+	"github.com/xtls/libxray/geo"
 	"github.com/xtls/libxray/share"
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/platform/filesystem"
@@ -64,7 +65,7 @@ func readLinuxProbeAdmitted(reader io.Reader, admit func(int64) error) (linuxPro
 	}
 	total := int64(0)
 	for name, size := range request.Sizes {
-		if (name != "geoip.dat" && name != "geosite.dat") || size <= 0 || size > 64*1024*1024 {
+		if (name != "geoip.dat" && name != "geosite.dat") || size <= 0 || size > geo.MaxFileBytes {
 			return request, errors.New("invalid_assets")
 		}
 		total += int64(size)

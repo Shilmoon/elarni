@@ -327,7 +327,7 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 		if ok {
 			var multiBuffer buf.MultiBuffer
 			var err1 error = buf.ErrReadTimeout
-			if !protocol.ServerFirst(request.Destination()) { // Elarni: its client waits for the server's greeting
+			if !session.SkipFirstPayloadWait(ctx, request.Destination()) { // Elarni: its client waits for the server's greeting
 				multiBuffer, err1 = timeoutReader.ReadMultiBufferTimeout(time.Millisecond * 500)
 			}
 			if err1 == nil {

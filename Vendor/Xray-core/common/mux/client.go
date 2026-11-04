@@ -243,8 +243,8 @@ func (m *ClientWorker) monitor() {
 	}
 }
 
-func writeFirstPayload(reader buf.Reader, writer *Writer, dest net.Destination) error {
-	if protocol.ServerFirst(dest) { // Elarni: its client waits for the server's greeting
+func writeFirstPayload(ctx context.Context, reader buf.Reader, writer *Writer, dest net.Destination) error {
+	if session.SkipFirstPayloadWait(ctx, dest) { // Elarni: its client waits for the server's greeting
 		return writer.WriteMultiBuffer(buf.MultiBuffer{})
 	}
 	err := buf.CopyOnceTimeout(reader, writer, time.Millisecond*100)
@@ -276,7 +276,7 @@ func fetchInput(ctx context.Context, s *Session, output buf.Writer) {
 	defer writer.Close()
 
 	errors.LogInfo(ctx, "dispatching request to ", ob.Target)
-	if err := writeFirstPayload(s.input, writer, ob.Target); err != nil {
+	if err := writeFirstPayload(ctx, s.input, writer, ob.Target); err != nil {
 		errors.LogInfoInner(ctx, err, "failed to write first payload")
 		writer.hasError = true
 		return

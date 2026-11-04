@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"sync"
 
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/session"
@@ -13,6 +14,24 @@ type Context struct {
 	Inbound  *session.Inbound
 	Outbound *session.Outbound
 	Content  *session.Content
+
+	process processLookup
+}
+
+// processLookup memoizes the owner of the connection's socket for one routing decision.
+type processLookup struct {
+	once       sync.Once
+	pid        int
+	name, path string
+	err        error
+}
+
+// LookupProcess returns find's result, calling it once per routing decision (Elarni): every process
+// rule asked again, and on Windows each lookup scans every TCP row of the host.
+func (ctx *Context) LookupProcess(find func() (int, string, string, error)) (int, string, string, error) {
+	p := &ctx.process
+	p.once.Do(func() { p.pid, p.name, p.path, p.err = find() })
+	return p.pid, p.name, p.path, p.err
 }
 
 // GetInboundTag implements routing.Context.

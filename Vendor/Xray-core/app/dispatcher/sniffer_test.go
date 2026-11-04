@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/xtls/xray-core/common"
+	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/transport/pipe"
 )
@@ -62,6 +64,37 @@ func TestServerFirstPortsSkipTheSniffWait(t *testing.T) {
 		writer.Close()
 		if err == nil || waited != c.wait {
 			t.Errorf("%v: waited %v (want %v), err %v", c.dest, waited, c.wait, err)
+		}
+	}
+}
+
+// Elarni: a client that stays silent through the whole sniff window (a server-first protocol on a port
+// outside the list) is marked, so its outbound sends the request at once instead of waiting another
+// 100-500 ms for bytes that only come after the server's greeting.
+func TestSilentClientsAreMarkedAfterTheSniffWait(t *testing.T) {
+	instance, err := core.New(&core.Config{})
+	common.Must(err)
+	for _, c := range []struct {
+		name    string
+		dest    net.Destination
+		payload string
+		silent  bool
+	}{
+		{"silent TCP client", net.TCPDestination(net.LocalHostIP, 2525), "", true},
+		{"client that sent bytes", net.TCPDestination(net.LocalHostIP, 2525), "PING\r\n", false},
+		{"client that sent a partial request", net.TCPDestination(net.LocalHostIP, 80), "GE", false},
+		{"silent UDP client", net.UDPDestination(net.LocalHostIP, 2525), "", false},
+	} {
+		content := &session.Content{}
+		ctx := session.ContextWithContent(context.WithValue(context.Background(), core.XrayKey(1), instance), content)
+		reader, writer := pipe.New(pipe.WithoutSizeLimit())
+		if c.payload != "" {
+			common.Must(writer.WriteMultiBuffer(buf.MergeBytes(nil, []byte(c.payload))))
+		}
+		sniffer(ctx, &cachedReader{reader: reader}, false, c.dest)
+		writer.Close()
+		if content.ClientSilent != c.silent {
+			t.Errorf("%s: ClientSilent %v, want %v", c.name, content.ClientSilent, c.silent)
 		}
 	}
 }

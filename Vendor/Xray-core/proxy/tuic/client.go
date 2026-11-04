@@ -19,7 +19,6 @@ import (
 	"github.com/xtls/xray-core/common/errors"
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/probe"
-	"github.com/xtls/xray-core/common/protocol"
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/common/signal"
 	"github.com/xtls/xray-core/common/task"
@@ -184,7 +183,7 @@ func (c *Client) Process(ctx context.Context, link *transport.Link, dialer inter
 		defer timer.SetTimeout(p.Timeouts.DownlinkOnly)
 		if handshake != nil {
 			// A client that half-closed without data still waits for the server to speak.
-			if !protocol.ServerFirst(target) { // Elarni: its client waits for the server's greeting
+			if !session.SkipFirstPayloadWait(ctx, target) { // Elarni: its client waits for the server's greeting
 				if err := buf.CopyOnceTimeout(link.Reader, writer, 100*time.Millisecond); err != nil && err != io.EOF && err != buf.ErrNotTimeoutReader && err != buf.ErrReadTimeout {
 					return err
 				}

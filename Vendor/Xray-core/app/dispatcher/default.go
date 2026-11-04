@@ -422,6 +422,12 @@ func sniffer(ctx context.Context, cReader *cachedReader, metadataOnly bool, dest
 			}
 		}
 	}()
+	if (contentErr == buf.ErrReadTimeout || contentErr == errSniffingTimeout) && payload.IsEmpty() && destination.Network == net.Network_TCP {
+		// Elarni: the client sent nothing for the whole window (a server-first protocol), so its outbound need not wait for it again.
+		if content := session.ContentFromContext(ctx); content != nil {
+			content.ClientSilent = true
+		}
+	}
 	if contentErr != nil && metadataErr == nil {
 		return metaresult, nil
 	}

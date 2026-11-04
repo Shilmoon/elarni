@@ -6,6 +6,7 @@ import (
 
 	"github.com/xtls/xray-core/common/ctx"
 	"github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/common/protocol"
 	"github.com/xtls/xray-core/features/outbound"
 	"github.com/xtls/xray-core/features/routing"
 )
@@ -75,6 +76,17 @@ func ContentFromContext(ctx context.Context) *Content {
 		return content
 	}
 	return nil
+}
+
+// SkipFirstPayloadWait reports whether an outbound should send its request without waiting for the
+// client's first bytes (Elarni): the server speaks first on that port, or sniffing already waited
+// for the client and it sent nothing, so a second wait only delays the server's greeting.
+func SkipFirstPayloadWait(ctx context.Context, dest net.Destination) bool {
+	if protocol.ServerFirst(dest) {
+		return true
+	}
+	content := ContentFromContext(ctx)
+	return content != nil && content.ClientSilent
 }
 
 func ContextWithIsReverseMux(ctx context.Context, isReverseMux bool) context.Context {
