@@ -2,7 +2,7 @@
 
 Elarni fetches subscriptions with the User-Agent `Elarni/<version> (Xray; <OS>)`,
 where the OS is `Windows`, `macOS`, `Linux`, `Android` or `iOS`, for example
-`Elarni/0.4.0 (Xray; Android)`. It also sends `X-Device-OS`. Panel rules that
+`Elarni/0.4.1 (Xray; Android)`. It also sends `X-Device-OS`. Panel rules that
 pick a response by client, such as Remnawave response rules, can match the
 `Elarni/` prefix. A subscription's User agent setting replaces the header.
 

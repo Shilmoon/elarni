@@ -4,6 +4,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+## 0.4.1 - 2026-11-04
+
 ### Changed
 
 - Release files are built on GitHub-hosted runners and come with build provenance
