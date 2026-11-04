@@ -67,7 +67,7 @@ func WindowsTunnelConfig(raw []byte, adapter string, policies ...*WindowsRoutePo
 		return nil, invalid
 	}
 	var config map[string]any
-	if json.Unmarshal(raw, &config) != nil || validateProfileFiles(config) != nil {
+	if json.Unmarshal(raw, &config) != nil || validateProfileFiles(config, "") != nil {
 		return nil, invalid
 	}
 	allowed := map[string]bool{"log": true, "inbounds": true, "outbounds": true, "dns": true, "routing": true,

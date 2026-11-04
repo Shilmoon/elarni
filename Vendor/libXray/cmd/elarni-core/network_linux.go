@@ -382,8 +382,16 @@ func (network linuxNetwork) install(policy *share.WindowsRoutePolicy) error {
 	if err != nil {
 		return err
 	}
-	script := network.firewall(protected)
-	if err := nft(script); err != nil {
+	// An unprivileged linuxGuardLeft sees only rules, so a marker rule goes first: it names an
+	// interface that doesn't exist and matches no packet. The guard and DNS redirect then go in
+	// before any rule routes traffic into the tunnel, so a start that fails or is killed between
+	// them leaves no traffic routed past a missing guard, and is still reported.
+	for _, family := range network.families() {
+		if addRule(network.markerRule(family)) != nil {
+			return errors.New("vpn_routes_failed")
+		}
+	}
+	if err := nft(network.firewall(protected)); err != nil {
 		return err
 	}
 	for _, family := range network.families() {
@@ -394,6 +402,14 @@ func (network linuxNetwork) install(policy *share.WindowsRoutePolicy) error {
 		}
 	}
 	return nil
+}
+
+// markerRule carries this network's mark, so cleanup removes it, and matches only packets
+// that arrive on a device name no link has.
+func (network linuxNetwork) markerRule(family int) *netlink.Rule {
+	rule := network.rule(family)
+	rule.Invert, rule.IifName = false, network.Name+"m"
+	return rule
 }
 
 // linuxGuardedRoutes lists destinations the guard rejects outside the tunnel.

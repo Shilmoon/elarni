@@ -1,0 +1,2 @@
+go test fuzz v1
+string("proxies:\n - {name: f1x_\"re,type: ss, server: 1C 000000, port: 001, cipher: ChAChA20-ietf-polY1305, password: 0000000, &00:00000, servername: 00000000} ")

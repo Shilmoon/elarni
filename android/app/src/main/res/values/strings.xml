@@ -326,7 +326,7 @@
     <string name="import_this_link">Import this link?</string>
     <string name="a_link_wants_to_add_profiles">A link wants to add profiles to Elarni.</string>
     <string name="connecting_needs_a_chosen_server_and">Connecting needs a chosen server and, for System VPN, the VPN permission granted in Elarni. In local proxy mode, Android may refuse a connect sent while Elarni is in the background.</string>
-    <string name="receiver_com_elarni_remotecontrol_with_the">"receiver com.elarni.RemoteControl, with the action com.elarni.action.CONNECT, com.elarni.action.DISCONNECT or com.elarni.action.TOGGLE. "</string>
+    <string name="receiver_com_elarni_remotecontrol_with_the">"receiver com.elarni.RemoteControl, with the action com.elarni.action.CONNECT, com.elarni.action.DISCONNECT or com.elarni.action.TOGGLE and the string extra key set to the control key shown below that setting. Broadcasts without the current key are ignored. "</string>
     <string name="with_let_other_apps_control_the">"With Let other apps control the connection on in Settings &gt; General, apps such as Tasker can send an explicit broadcast to package %1$s, "</string>
     <string name="automation_apps">Automation apps</string>
     <string name="copy_link">Copy %1$s link</string>
@@ -552,7 +552,9 @@
     <string name="dns_override">DNS override</string>
     <string name="use_profile_dns">Use profile DNS</string>
     <string name="let_other_apps_control_the_connection">Let other apps control the connection</string>
-    <string name="automation_apps_such_as_tasker_can">Automation apps such as Tasker can connect and disconnect. Shortcuts lists what they send.</string>
+    <string name="automation_apps_such_as_tasker_can">Automation apps such as Tasker can connect and disconnect with the control key. Shortcuts lists what they send.</string>
+    <string name="control_key">Control key</string>
+    <string name="new_key">New key</string>
     <string name="update_feed">Update feed</string>
     <string name="leave_empty_to_turn_the_check">Leave empty to turn the check off.</string>
     <string name="refresh_interval">Refresh interval</string>
@@ -595,7 +597,6 @@
     <string name="vpn_connection">VPN connection</string>
     <string name="share_qr_code">Share QR code</string>
     <string name="the_clipboard_is_empty_copy_a">The clipboard is empty. Copy a link or configuration first.</string>
-    <string name="disconnect_before_testing_other_servers_direct">Disconnect before testing other servers, direct TCP, or ICMP. While connected, test the selected server to check the current VPN path.</string>
     <string name="destination_approved_tap_connect">Destination approved. Tap Connect.</string>
     <string name="file_saved">File saved.</string>
     <string name="section_general">General</string>

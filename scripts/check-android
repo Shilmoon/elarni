@@ -71,7 +71,7 @@ def run(*command, capture=False, timeout=240):
 
 def build():
     run(sys.executable, 'scripts/build-android-native', '--abi', abi, timeout=600)
-    run('android/gradlew', '-p', 'android', ':app:assembleDebug', ':app:assembleDebugAndroidTest',
+    run('android/gradlew', '-p', 'android', ':app:testDebugUnitTest', ':app:assembleDebug', ':app:assembleDebugAndroidTest',
         ':traffic-fixture:assembleADebug', ':traffic-fixture:assembleBDebug', f'-Pelarni.abi={abi}', '--no-daemon', '--console=plain', timeout=600)
     if args.case in ('all', 'native'):
         out.mkdir(parents=True, exist_ok=True)

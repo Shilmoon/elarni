@@ -1257,6 +1257,13 @@ class AndroidUIE2E {
         click("Let other apps control the connection")
         ui.waitUntil(5000) { snapshot().settings.getBoolean("allowExternalControl") }
         assertFalse("The running core does not read it", Settings.runtime(snapshot().settings).has("allowExternalControl"))
+        // Their broadcasts carry the key shown under the switch; New key replaces it.
+        val key = snapshot().data.string("externalControlKey")
+        assertTrue(key.isNotEmpty())
+        ui.onNodeWithText(key).assertExists()
+        click("New key")
+        ui.waitUntil(5000) { snapshot().data.string("externalControlKey").let { it.isNotEmpty() && it != key } }
+        ui.onNodeWithText(snapshot().data.string("externalControlKey")).assertExists()
         // Shortcuts names what an automation app sends.
         click("Shortcuts")
         ui.onNode(hasText("com.elarni.action.CONNECT", substring = true) and hasText(ui.activity.packageName, substring = true)).assertExists()

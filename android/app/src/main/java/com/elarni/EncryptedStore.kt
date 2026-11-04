@@ -34,11 +34,7 @@ class EncryptedStore(private val context: Context, name: String = "catalog") {
             val bytes = file.openRead().use { input ->
                 input.readBounded(16 * 1024 * 1024)
             }
-            if (bytes.size < 33 || String(bytes.copyOfRange(0, 5), Charsets.US_ASCII) != "RVAD1") throw AppFailure("storage_corrupt")
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, key(false), GCMParameterSpec(128, bytes.copyOfRange(5, 17)))
-            cipher.updateAAD(aad)
-            return JSONObject(String(cipher.doFinal(bytes.copyOfRange(17, bytes.size)), Charsets.UTF_8))
+            return JSONObject(String(unseal(bytes, aad) { key(false) }, Charsets.UTF_8))
         } catch (error: AppFailure) { throw error }
         catch (_: Exception) { throw AppFailure("storage_corrupt") }
     }
@@ -46,17 +42,30 @@ class EncryptedStore(private val context: Context, name: String = "catalog") {
         val plain = value.toString().toByteArray(Charsets.UTF_8)
         if (plain.size > 12 * 1024 * 1024) throw AppFailure("input_too_large")
         try {
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.ENCRYPT_MODE, key(!exists()))
-            cipher.updateAAD(aad)
-            val encrypted = cipher.doFinal(plain)
+            val sealed = seal(plain, aad, key(!exists()))
             val output = file.startWrite()
             try {
-                output.write("RVAD1".toByteArray(Charsets.US_ASCII))
-                output.write(cipher.iv)
-                output.write(encrypted)
+                output.write(sealed)
                 file.finishWrite(output)
             } catch (error: Exception) { file.failWrite(output); throw error }
         } catch (_: Exception) { throw AppFailure("storage_unavailable") }
+    }
+    companion object {
+        /** "RVAD1", the cipher's 12-byte IV, then the AES-GCM ciphertext and tag; [aad] binds it to one store. */
+        fun seal(plain: ByteArray, aad: ByteArray, key: SecretKey): ByteArray {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, key)
+            cipher.updateAAD(aad)
+            val encrypted = cipher.doFinal(plain)
+            return "RVAD1".toByteArray(Charsets.US_ASCII) + cipher.iv + encrypted
+        }
+        /** Checks the header before asking for [key], so a damaged file reads as corrupt, not locked. */
+        fun unseal(bytes: ByteArray, aad: ByteArray, key: () -> SecretKey): ByteArray {
+            if (bytes.size < 33 || String(bytes.copyOfRange(0, 5), Charsets.US_ASCII) != "RVAD1") throw AppFailure("storage_corrupt")
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(5, 17)))
+            cipher.updateAAD(aad)
+            return cipher.doFinal(bytes.copyOfRange(17, bytes.size))
+        }
     }
 }

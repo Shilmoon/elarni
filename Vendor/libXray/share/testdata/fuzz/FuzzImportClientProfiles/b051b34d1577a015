@@ -1,0 +1,2 @@
+go test fuzz v1
+string("[{\"outBounds\":[{\"protoCol\":\"vless\",\"settings\":{\"Address\":\"127.0.0.0\",\"id\":\"0\",\"enCrYption\":\"none\"}}]}]")

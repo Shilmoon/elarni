@@ -145,6 +145,43 @@ echo "/org/freedesktop/login1: org.freedesktop.login1.Manager.PrepareForSleep (f
     );
   }, skip: Platform.isWindows);
 
+  test(
+    'the Linux endpoint needs no HOME for root or a runtime directory',
+    () {
+      String path(Map<String, String> env, {bool root = false}) =>
+          headlessSocketPathFor(env, linuxRoot: root);
+      // A system unit without User= has no HOME; the boot service listens here.
+      expect(path({}, root: true), '/run/elarni/control.sock');
+      expect(
+        path({'XDG_RUNTIME_DIR': '/run/user/1000'}),
+        '/run/user/1000/elarni/control.sock',
+      );
+      expect(
+        path({'HOME': '/home/u', 'XDG_RUNTIME_DIR': '/run/user/1000'}),
+        '/run/user/1000/elarni/control.sock',
+      );
+      expect(
+        path({'HOME': '/home/u'}),
+        '/home/u/.local/state/Elarni/control/control.sock',
+      );
+      expect(
+        path({'ELARNI_CONTROL_SOCKET': '/x/control.sock'}, root: true),
+        '/x/control.sock',
+      );
+      expect(
+        () => path({}),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'home_unavailable',
+          ),
+        ),
+      );
+    },
+    skip: !Platform.isLinux,
+  );
+
   test('profiles redact secrets and retain source approvals', () async {
     final control = HeadlessControl(
       (method, args) async => switch (method) {

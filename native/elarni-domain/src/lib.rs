@@ -17,3 +17,6 @@ mod profile_tests;
 
 #[cfg(test)]
 mod router_fixtures;
+
+#[cfg(test)]
+mod fuzz_tests;

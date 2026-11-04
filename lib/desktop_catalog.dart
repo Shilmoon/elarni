@@ -755,7 +755,7 @@ final class DesktopCatalog {
         );
         if (index >= 0) old = available.removeAt(index);
       }
-      final config = catalogMap(item['config']);
+      var config = catalogMap(item['config']);
       final groups = catalogList(config['elarniGroups']);
       for (final group in groups) {
         final choice = catalogMap(old?['groupOverrides'] ?? {})[group['name']];
@@ -763,13 +763,27 @@ final class DesktopCatalog {
           group['selected'] = choice;
       }
       if (config.containsKey('elarniGroups')) config['elarniGroups'] = groups;
+      final oldIdentity = old == null ? null : identity(old['config']);
+      var unchanged = oldIdentity == identity(config);
+      // 3x-ui sends one of a server's REALITY shortIds and serverNames at
+      // random per fetch; that alone must not restart the running core.
+      if (old != null && !unchanged && old['lastSuccessAt'] != null) {
+        config = catalogMap(
+          domain('keepShortIds', {
+            'previous': old['config'],
+            'config': config,
+            'lastSuccessAt': old['lastSuccessAt'],
+            'now': now,
+          })['config'],
+        );
+        unchanged = oldIdentity == identity(config);
+      }
       result.add({
         ...item,
         'id': old?['id'] ?? desktopID(),
         'config': config,
         'favorite': old?['favorite'] == true,
-        'configurationRevision':
-            old != null && identity(old['config']) == identity(config)
+        'configurationRevision': old != null && unchanged
             ? old['configurationRevision'] ?? old['id']
             : desktopID(),
         if (old?['lastSuccessAt'] != null)

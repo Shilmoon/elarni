@@ -112,7 +112,7 @@ jobs:
             set -e
             python scripts/prepare-android-linux
             python scripts/check_report.py -- python scripts/build-android-native
-            python scripts/check_report.py -- android/gradlew -p android :app:assembleRelease --no-daemon --console=plain
+            python scripts/check_report.py -- android/gradlew -p android :app:testDebugUnitTest :app:assembleRelease --no-daemon --console=plain
             mkdir -p /out/android-release && cp android/app/build/outputs/apk/release/*.apk /out/android-release/'
       - name: Android acceptance on emulators
         # Hosted runners have 16 GB, too little for the three emulators.
