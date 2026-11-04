@@ -226,15 +226,27 @@ func ValidateClientFileAccess(raw []byte) error {
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return err
 	}
-	return validateProfileFiles(value)
+	return validateProfileFiles(value, "")
 }
 
-func validateProfileFiles(value any) error {
+// envFields are the JSON fields (lowercase) whose Xray types (Address, PortList, PortRange) read
+// a value written as env:NAME from the core's environment; DNS "servers" strings and "hosts"
+// values are addresses too.
+var envFields = map[string]bool{"address": true, "port": true, "listen": true, "rewriteaddress": true,
+	"clientip": true, "ip": true, "sourceport": true, "localport": true, "vlessroute": true,
+	"remoteports": true, "qtype": true, "servers": true, "hosts": true}
+
+// field is the JSON field value sits under; array elements and "hosts" entries keep their parent's.
+func validateProfileFiles(value any, field string) error {
 	switch value := value.(type) {
 	case map[string]any:
 		for key, child := range value {
 			if key == "remarks" { // display text, never an address
 				continue
+			}
+			childField := strings.ToLower(key)
+			if field == "hosts" {
+				childField = field
 			}
 			// Xray decodes JSON field names case-insensitively, including nested
 			// transports. Both TLS and REALITY support session-key log files.
@@ -246,13 +258,13 @@ func validateProfileFiles(value any) error {
 					return fmt.Errorf("client certificates must be embedded in the profile")
 				}
 			}
-			if err := validateProfileFiles(child); err != nil {
+			if err := validateProfileFiles(child, childField); err != nil {
 				return err
 			}
 		}
 	case []any:
 		for _, child := range value {
-			if err := validateProfileFiles(child); err != nil {
+			if err := validateProfileFiles(child, field); err != nil {
 				return err
 			}
 		}
@@ -260,6 +272,9 @@ func validateProfileFiles(value any) error {
 		// Xray reads an address or port written as env:NAME (or a port list entry)
 		// from the core's environment, so a provider could pull local values into
 		// server hosts and DNS lookups.
+		if !envFields[field] {
+			return nil
+		}
 		for _, part := range strings.Split(value, ",") {
 			if strings.HasPrefix(strings.TrimSpace(part), "env:") {
 				return fmt.Errorf("client profiles cannot read environment variables")

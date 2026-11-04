@@ -833,6 +833,7 @@ func TestImportedProfilesCannotReadEnvironmentVariables(t *testing.T) {
 		"port":       profile(`{"address":"127.0.0.1","port":"env:PORT","password":"fixture"}`, ""),
 		"port list":  profile(`{"servers":[{"address":"127.0.0.1","port":443,"password":"fixture"}]}`, `"routing":{"rules":[{"port":"80, env:PORT","outboundTag":"direct"}]},`),
 		"dns server": profile(safe, `"dns":{"servers":["env:SECRET"]},`),
+		"dns host":   profile(safe, `"dns":{"hosts":{"example.com":["192.0.2.1","env:SECRET"]}},`),
 	} {
 		if !json.Valid([]byte(value)) {
 			t.Fatalf("%s: invalid fixture", name)
@@ -846,6 +847,14 @@ func TestImportedProfilesCannotReadEnvironmentVariables(t *testing.T) {
 	}
 	if _, err := ImportClientProfiles(profile(safe, "")); err != nil {
 		t.Fatalf("remarks starting with env: rejected: %v", err)
+	}
+	// Text Xray never resolves may say env: (names, tags, passwords).
+	text := profile(`{"address":"127.0.0.1","port":443,"password":"env:abc"}`, `"name":"EU, env: prod",`)
+	if _, err := ImportClientProfiles(text); err != nil {
+		t.Fatalf("password and name starting with env: rejected: %v", err)
+	}
+	if err := ValidateClientFileAccess([]byte(text)); err != nil {
+		t.Fatalf("runtime check rejected a password starting with env: %v", err)
 	}
 }
 
