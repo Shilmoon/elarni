@@ -1237,69 +1237,264 @@ fn unreadable_geodata(target: &str) -> bool {
 }
 
 // Xray compiles a `regexp:` rule with Go's regexp package and refuses the whole config on an error.
-// shortcut: catches unbalanced groups and classes, a trailing backslash and a repetition with
-// nothing to repeat (a `*.example.com` glob) only; exact RE2 checks need a regex parser dependency.
-fn invalid_regexp(target: &str) -> bool {
+// This follows Go's regexp/syntax parser (Perl flags).
+// shortcut: `\p{Name}` accepts any name; a Unicode table list would catch unknown names.
+pub(crate) fn invalid_regexp(target: &str) -> bool {
     let Some(pattern) = target.strip_prefix("regexp:") else {
         return false;
     };
-    let bytes = pattern.as_bytes();
-    let (mut depth, mut operand, mut i) = (0usize, false, 0);
-    while i < bytes.len() {
-        match bytes[i] {
-            // \Q...\E, or \Q to the end, is literal text.
-            b'\\' if bytes.get(i + 1) == Some(&b'Q') => {
-                i = pattern[i + 2..]
-                    .find("\\E")
-                    .map_or(bytes.len(), |end| i + end + 4);
-                operand = true;
+    go_regexp_valid(&pattern.chars().collect::<Vec<_>>()).is_none()
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Last {
+    Nothing,
+    Operand,
+    Repeat,
+    Lazy,
+}
+
+// Some(()) when Go compiles the pattern.
+fn go_regexp_valid(chars: &[char]) -> Option<()> {
+    let (mut depth, mut last, mut i) = (0usize, Last::Nothing, 0usize);
+    while i < chars.len() {
+        match chars[i] {
+            '\\' if chars.get(i + 1) == Some(&'Q') => {
+                // \Q...\E, or \Q to the end, is literal text.
+                let rest = &chars[i + 2..];
+                let end = (0..rest.len())
+                    .find(|&k| rest[k] == '\\' && rest.get(k + 1) == Some(&'E'))
+                    .unwrap_or(rest.len());
+                if end > 0 {
+                    last = Last::Operand;
+                }
+                i += 2 + end + if end < rest.len() { 2 } else { 0 };
                 continue;
             }
-            b'\\' if i + 1 == bytes.len() => return true,
-            b'\\' => {
-                i += 1;
-                operand = true;
+            '\\' => {
+                i = escape(chars, i + 1, false)?.0;
+                last = Last::Operand;
+                continue;
             }
-            b'[' => {
-                i += 1;
-                if bytes.get(i) == Some(&b'^') {
-                    i += 1;
-                }
-                // A leading ']' is a literal.
-                if bytes.get(i) == Some(&b']') {
-                    i += 1;
-                }
-                loop {
-                    match bytes.get(i) {
-                        None => return true,
-                        Some(b']') => break,
-                        Some(b'\\') => i += 2,
-                        // [:alpha:] ends at the next ":]"; without one the '[' is a literal.
-                        Some(b'[') if bytes.get(i + 1) == Some(&b':') => {
-                            i = pattern[i + 2..].find(":]").map_or(i + 1, |end| i + end + 4);
-                        }
-                        Some(_) => i += 1,
-                    }
-                }
-                operand = true;
+            '[' => {
+                i = class(chars, i + 1)?;
+                last = Last::Operand;
+                continue;
             }
-            // "(?" opens flags or a named group, not a repetition.
-            b'(' => {
+            '(' if chars.get(i + 1) == Some(&'?') => {
+                let (next, group) = group_flags(chars, i + 2)?;
+                depth += usize::from(group);
+                last = Last::Nothing;
+                i = next;
+                continue;
+            }
+            '(' => {
                 depth += 1;
-                operand = bytes.get(i + 1) == Some(&b'?');
+                last = Last::Nothing;
             }
-            b')' if depth == 0 => return true,
-            b')' => {
-                depth -= 1;
-                operand = true;
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                last = Last::Operand;
             }
-            b'|' => operand = false,
-            b'*' | b'+' | b'?' if !operand => return true,
-            _ => operand = true,
+            '|' => last = Last::Nothing,
+            '*' | '+' | '?' => last = repeat(last, chars[i] == '?')?,
+            '{' => match counted(chars, i + 1).ok()? {
+                Some(next) => {
+                    last = repeat(last, false)?;
+                    i = next;
+                    continue;
+                }
+                None => last = Last::Operand,
+            },
+            _ => last = Last::Operand,
         }
         i += 1;
     }
-    depth != 0
+    (depth == 0).then_some(())
+}
+
+fn repeat(last: Last, question: bool) -> Option<Last> {
+    match last {
+        Last::Operand => Some(Last::Repeat),
+        Last::Repeat if question => Some(Last::Lazy),
+        _ => None,
+    }
+}
+
+// After "{": the index past {n}, {n,} or {n,m}; None when it isn't a repeat (a literal '{'
+// then); an error for counts Go refuses (over 1000, or max below min).
+fn counted(chars: &[char], mut i: usize) -> Result<Option<usize>, ()> {
+    let number = |i: &mut usize| {
+        let start = *i;
+        while chars.get(*i).is_some_and(char::is_ascii_digit) {
+            *i += 1;
+        }
+        (*i > start).then(|| {
+            chars[start..*i]
+                .iter()
+                .collect::<String>()
+                .parse::<u32>()
+                .unwrap_or(u32::MAX)
+        })
+    };
+    let Some(min) = number(&mut i) else {
+        return Ok(None);
+    };
+    let max = if chars.get(i) == Some(&',') {
+        i += 1;
+        if chars.get(i) == Some(&'}') {
+            None
+        } else {
+            let Some(max) = number(&mut i) else {
+                return Ok(None);
+            };
+            Some(max)
+        }
+    } else {
+        Some(min)
+    };
+    if chars.get(i) != Some(&'}') {
+        return Ok(None);
+    }
+    if min > 1000 || max.is_some_and(|max| max > 1000 || max < min) {
+        return Err(());
+    }
+    Ok(Some(i + 1))
+}
+
+// After "(?": flags, "P<name>" or "<name>". The index past the header and whether it opens a group.
+fn group_flags(chars: &[char], mut i: usize) -> Option<(usize, bool)> {
+    let named = match chars.get(i) {
+        Some('P') if chars.get(i + 1) == Some(&'<') => Some(i + 2),
+        Some('<') => Some(i + 1),
+        _ => None,
+    };
+    if let Some(start) = named {
+        let end = start + chars[start..].iter().position(|&c| c == '>')?;
+        let name = &chars[start..end];
+        return (!name.is_empty() && name.iter().all(|&c| c == '_' || c.is_ascii_alphanumeric()))
+            .then_some((end + 1, true));
+    }
+    let (mut negated, mut flag_since_sign) = (false, false);
+    loop {
+        match *chars.get(i)? {
+            'i' | 'm' | 's' | 'U' => flag_since_sign = true,
+            '-' if !negated => (negated, flag_since_sign) = (true, false),
+            c @ (':' | ')') if !negated || flag_since_sign => return Some((i + 1, c == ':')),
+            _ => return None,
+        }
+        i += 1;
+    }
+}
+
+// After "[": the index past the closing ']'.
+fn class(chars: &[char], mut i: usize) -> Option<usize> {
+    if chars.get(i) == Some(&'^') {
+        i += 1;
+    }
+    let mut first = true;
+    loop {
+        let c = *chars.get(i)?;
+        if c == ']' && !first {
+            return Some(i + 1);
+        }
+        first = false;
+        // [:alpha:] ends at the next ":]"; without one the '[' is a literal.
+        if c == '['
+            && chars.get(i + 1) == Some(&':')
+            && let Some(end) = (i + 2..chars.len().saturating_sub(1))
+                .find(|&k| chars[k] == ':' && chars[k + 1] == ']')
+        {
+            let name: String = chars[i + 2..end].iter().collect();
+            const POSIX: [&str; 14] = [
+                "alnum", "alpha", "ascii", "blank", "cntrl", "digit", "graph", "lower", "print",
+                "punct", "space", "upper", "word", "xdigit",
+            ];
+            if !POSIX.contains(&name.strip_prefix('^').unwrap_or(&name)) {
+                return None;
+            }
+            i = end + 2;
+            continue;
+        }
+        if c == '\\' && chars.get(i + 1).is_some_and(|c| "dDsSwWpP".contains(*c)) {
+            i = escape(chars, i + 1, true)?.0;
+            continue;
+        }
+        let (next, low) = class_char(chars, i)?;
+        i = next;
+        if chars.get(i) == Some(&'-') && chars.get(i + 1).is_some_and(|&c| c != ']') {
+            let (next, high) = class_char(chars, i + 1)?;
+            if high < low {
+                return None;
+            }
+            i = next;
+        }
+    }
+}
+
+fn class_char(chars: &[char], i: usize) -> Option<(usize, u32)> {
+    match *chars.get(i)? {
+        '\\' => {
+            let (next, value) = escape(chars, i + 1, true)?;
+            Some((next, value?))
+        }
+        c => Some((i + 1, c as u32)),
+    }
+}
+
+// After "\": the index past the escape and the character it stands for (None for a class or an
+// assertion). Inside a class only character escapes and \d \s \w \p are allowed.
+fn escape(chars: &[char], i: usize, in_class: bool) -> Option<(usize, Option<u32>)> {
+    let c = *chars.get(i)?;
+    let hex = |s: &[char]| u32::from_str_radix(&s.iter().collect::<String>(), 16).ok();
+    match c {
+        'A' | 'z' | 'b' | 'B' if !in_class => Some((i + 1, None)),
+        'd' | 'D' | 's' | 'S' | 'w' | 'W' => Some((i + 1, None)),
+        'p' | 'P' => match chars.get(i + 1)? {
+            '{' => {
+                let end = i + 2 + chars[i + 2..].iter().position(|&c| c == '}')?;
+                let name = &chars[i + 2..end];
+                let name = name.strip_prefix(&['^']).unwrap_or(name);
+                (!name.is_empty()).then_some((end + 1, None))
+            }
+            _ => Some((i + 2, None)),
+        },
+        '1'..='7' if !chars.get(i + 1).is_some_and(|c| ('0'..='7').contains(c)) => None,
+        '0'..='7' => {
+            let mut end = i + 1;
+            while end < i + 3 && chars.get(end).is_some_and(|c| ('0'..='7').contains(c)) {
+                end += 1;
+            }
+            Some((
+                end,
+                u32::from_str_radix(&chars[i..end].iter().collect::<String>(), 8).ok(),
+            ))
+        }
+        'x' if chars.get(i + 1) == Some(&'{') => {
+            let end = i + 2 + chars[i + 2..].iter().position(|&c| c == '}')?;
+            let digits = &chars[i + 2..end];
+            let value = (!digits.is_empty() && digits.iter().all(char::is_ascii_hexdigit))
+                .then(|| hex(digits))
+                .flatten()
+                .filter(|&v| v <= 0x10FFFF)?;
+            Some((end + 1, Some(value)))
+        }
+        'x' => {
+            let digits = chars.get(i + 1..i + 3)?;
+            digits
+                .iter()
+                .all(char::is_ascii_hexdigit)
+                .then(|| (i + 3, hex(digits)))
+        }
+        'a' => Some((i + 1, Some(7))),
+        'f' => Some((i + 1, Some(12))),
+        'n' => Some((i + 1, Some(10))),
+        'r' => Some((i + 1, Some(13))),
+        't' => Some((i + 1, Some(9))),
+        'v' => Some((i + 1, Some(11))),
+        c if c.is_ascii() && !c.is_ascii_alphanumeric() => Some((i + 1, Some(c as u32))),
+        _ => None,
+    }
 }
 
 pub(crate) fn valid_ip_target(target: &str) -> bool {
