@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"reflect"
-	"strings"
 
 	"github.com/xtls/xray-core/infra/conf"
 )
@@ -96,11 +95,14 @@ func invalidServer(outbound *conf.OutboundDetourConfig) bool {
 		if server == nil || server.Port == 0 || server.Address == nil {
 			return true
 		}
-		// The same host rule as a share link's authority (clientPort).
+		// The same host rule as a share link's authority.
 		if address := server.Address.Address; address.Family().IsDomain() {
 			host := address.Domain()
 			u, err := url.Parse("x://" + host + ":1")
-			if err != nil || u.Hostname() != host || host == "" || len(host) > 253 || strings.Contains(host, ":") {
+			if err != nil || u.Hostname() != host {
+				return true
+			}
+			if _, err := clientPort(u); err != nil {
 				return true
 			}
 		}
