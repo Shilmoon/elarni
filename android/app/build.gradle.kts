@@ -55,6 +55,9 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+    testImplementation("junit:junit:4.13.2")
+    // android.jar only stubs org.json; JVM tests need the real implementation.
+    testImplementation("org.json:json:20260814")
     androidTestImplementation(platform("androidx.compose:compose-bom:2026.09.00"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4-accessibility")

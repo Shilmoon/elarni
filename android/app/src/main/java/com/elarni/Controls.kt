@@ -25,6 +25,8 @@ import org.json.JSONObject
 const val ACTION_CONNECT = "com.elarni.action.CONNECT"
 const val ACTION_DISCONNECT = "com.elarni.action.DISCONNECT"
 const val ACTION_TOGGLE = "com.elarni.action.TOGGLE"
+/** The string extra on those broadcasts: the control key from Settings › General. */
+const val EXTRA_KEY = "key"
 private val active = listOf("connected", "connecting", "paused")
 private const val PENDING = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
 
@@ -84,18 +86,35 @@ class ShortcutActivity : Activity() {
     }
 }
 
-/** Explicit broadcasts from automation apps such as Tasker, honored only while the user allows them in Settings. */
+/** Explicit broadcasts from automation apps such as Tasker, honored only while the user allows them in Settings and they carry the key. */
 class RemoteControl : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action?.takeIf { it in listOf(ACTION_CONNECT, ACTION_DISCONNECT, ACTION_TOGGLE) } ?: return
+        // Any app may send this; extras of a class this app lacks throw while they unparcel.
+        val key = runCatching { intent.getStringExtra(EXTRA_KEY) }.getOrNull()
         val result = goAsync(); val app = context.applicationContext as ElarniApplication
         app.repository.scope.launch {
             try {
                 app.repository.awaitReady()
                 val catalog = Catalog(app.repository.state.value.catalog)
                 if (!catalog.settings.optBoolean("allowExternalControl")) return@launch
+                // Not the user's failure: another app guessed or kept an old key.
+                if (!authorized(catalog.data.string("externalControlKey"), key)) { refused(); return@launch }
                 if (!app.control(action)) app.repository.report(AppFailure(if (catalog.selected.isEmpty()) "no_selection" else "vpn_consent_required"))
             } finally { result.finish() }
+        }
+    }
+    companion object {
+        @Volatile private var refusedAt = -60_000L
+        /** 128 random bits, URL-safe so automation apps take it as plain text. */
+        fun newKey(): String = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(16).also(java.security.SecureRandom()::nextBytes))
+        /** Constant time; no key, stored or sent, ever matches. */
+        fun authorized(expected: String, given: String?) = expected.isNotEmpty() && !given.isNullOrEmpty() &&
+            java.security.MessageDigest.isEqual(expected.toByteArray(Charsets.UTF_8), given.toByteArray(Charsets.UTF_8))
+        // An app may send these in a loop; a line a minute shows that it does.
+        private fun refused() {
+            val now = SystemClock.elapsedRealtime()
+            if (now - refusedAt >= 60_000) { refusedAt = now; android.util.Log.i("Elarni", "Ignored a control broadcast without the current key") }
         }
     }
 }

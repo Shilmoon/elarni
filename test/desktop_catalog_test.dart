@@ -199,6 +199,7 @@ void main() {
       (method, payload) async => throw StateError(method),
       (operation, payload) => switch (operation) {
         'catalogIdentity' => {'identity': jsonEncode(payload)},
+        'keepShortIds' => {'config': payload['config']},
         _ => throw StateError(operation),
       },
     );

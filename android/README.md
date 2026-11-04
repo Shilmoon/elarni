@@ -28,6 +28,10 @@ across releases so updates install.
 
 ## Test
 
+`android/gradlew -p android :app:testDebugUnitTest` runs the JVM unit tests in
+`app/src/test` (recovery policy, subscription headers, the catalog file format,
+the control key); it needs the native build above, but no device.
+
 `scripts/check-android` runs the native, catalog, UI and VPN suites on disposable
 emulators named `Elarni_API_30` and `Elarni_API_36_16K` (16 KB pages). It refuses
 physical devices and only uses synthetic local servers.
@@ -49,6 +53,30 @@ a release build signed with a development key.
 
 Emulators don't cover the camera, OEM battery management, long Doze periods,
 Wi-Fi/cellular handoff or always-on VPN after reboot; check those on a device.
+
+## Automation
+
+With **Let other apps control the connection** on in Settings › General, apps
+such as Tasker can send an explicit broadcast to the receiver
+`com.elarni.RemoteControl` with the action `com.elarni.action.CONNECT`,
+`com.elarni.action.DISCONNECT` or `com.elarni.action.TOGGLE`. Each broadcast must
+carry the string extra `key` set to the control key shown under that setting;
+broadcasts without the current key are ignored. **New key** replaces it, and apps
+that hold the old one stop working until they get the new one.
+
+A Tasker **Send Intent** action:
+
+```text
+Action:  com.elarni.action.TOGGLE
+Extra:   key:<control key>
+Package: com.elarni
+Class:   com.elarni.RemoteControl
+Target:  Broadcast Receiver
+```
+
+From a computer: `adb shell am broadcast -a com.elarni.action.CONNECT -n com.elarni/.RemoteControl --es key <control key>`.
+Connecting this way needs a chosen server and, for System VPN, the VPN permission
+already granted in Elarni.
 
 ## Notes
 

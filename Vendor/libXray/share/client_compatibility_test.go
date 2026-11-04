@@ -344,7 +344,13 @@ func TestOutboundsWithMissingServersAreRejectedWithoutPanicking(t *testing.T) {
 	for _, outbound := range []string{`{"protocol":"socks","settings":{"servers":[{"port":1080}]}}`,
 		`{"protocol":"http","settings":{"servers":[null]}}`, `{"protocol":"http","settings":{"servers":[{"port":8080}]}}`,
 		`{"protocol":"hysteria","settings":{"version":2,"port":443}}`,
-		`{"protocol":"vless","settings":{"vnext":[null]}}`, `{"protocol":"dns","settings":{"rules":[null]}}`} {
+		`{"protocol":"vless","settings":{"vnext":[null]}}`, `{"protocol":"dns","settings":{"rules":[null]}}`,
+		// Xray builds these on port 0 or at a host no share link can name.
+		`{"protocol":"vless","settings":{"address":"127.0.0.1","id":"00000000-0000-4000-8000-000000000001","encryption":"none"}}`,
+		`{"protocol":"vmess","settings":{"vnext":[{"address":"127.0.0.1","users":[{"id":"00000000-0000-4000-8000-000000000001"}]}]}}`,
+		`{"protocol":"socks","settings":{"address":"127.0.0.1"}}`, `{"protocol":"hysteria","settings":{"version":2,"address":"127.0.0.1"}}`,
+		`{"protocol":"socks","settings":{"address":"edge.example/path","port":1080}}`, `{"protocol":"http","settings":{"address":"a:b","port":8080}}`,
+		"proxies:\n - {name: spaced, type: ss, server: edge example, port: 8388, cipher: chacha20-ietf-poly1305, password: fixture}"} {
 		if _, err := ImportClientProfiles(outbound); err == nil {
 			t.Fatalf("%s accepted", outbound)
 		}
@@ -814,6 +820,41 @@ func TestImportedProfilesCannotReadCertificateFilesOrLogTLSKeys(t *testing.T) {
 		if _, err := ImportClientProfiles(profile); err != nil {
 			t.Fatalf("safe %s control rejected: %v", security, err)
 		}
+	}
+}
+
+func TestImportedProfilesCannotReadEnvironmentVariables(t *testing.T) {
+	profile := func(settings, extra string) string {
+		return `{"remarks":"env: staging",` + extra + `"outbounds":[{"protocol":"trojan","settings":` + settings + `,"streamSettings":{"security":"tls","tlsSettings":{"serverName":"example.org"}}}]}`
+	}
+	safe := `{"address":"127.0.0.1","port":443,"password":"fixture"}`
+	for name, value := range map[string]string{
+		"address":    profile(`{"address":"env:HOME","port":443,"password":"fixture"}`, ""),
+		"port":       profile(`{"address":"127.0.0.1","port":"env:PORT","password":"fixture"}`, ""),
+		"port list":  profile(`{"servers":[{"address":"127.0.0.1","port":443,"password":"fixture"}]}`, `"routing":{"rules":[{"port":"80, env:PORT","outboundTag":"direct"}]},`),
+		"dns server": profile(safe, `"dns":{"servers":["env:SECRET"]},`),
+		"dns host":   profile(safe, `"dns":{"hosts":{"example.com":["192.0.2.1","env:SECRET"]}},`),
+	} {
+		if !json.Valid([]byte(value)) {
+			t.Fatalf("%s: invalid fixture", name)
+		}
+		if _, err := ImportClientProfiles(value); err == nil {
+			t.Errorf("%s: profile reading the environment accepted", name)
+		}
+		if ValidateClientFileAccess([]byte(value)) == nil {
+			t.Errorf("%s: runtime check accepted it", name)
+		}
+	}
+	if _, err := ImportClientProfiles(profile(safe, "")); err != nil {
+		t.Fatalf("remarks starting with env: rejected: %v", err)
+	}
+	// Text Xray never resolves may say env: (names, tags, passwords).
+	text := profile(`{"address":"127.0.0.1","port":443,"password":"env:abc"}`, `"name":"EU, env: prod",`)
+	if _, err := ImportClientProfiles(text); err != nil {
+		t.Fatalf("password and name starting with env: rejected: %v", err)
+	}
+	if err := ValidateClientFileAccess([]byte(text)); err != nil {
+		t.Fatalf("runtime check rejected a password starting with env: %v", err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"reflect"
 
 	"github.com/xtls/xray-core/infra/conf"
@@ -58,8 +59,55 @@ func buildOutbound(outbound *conf.OutboundDetourConfig) (err error) {
 	proxySettings := outbound.ProxySettings
 	outbound.ProxySettings = nil
 	defer func() { outbound.ProxySettings = proxySettings }()
-	_, err = outbound.Build()
-	return err
+	if _, err = outbound.Build(); err != nil {
+		return err
+	}
+	if invalidServer(outbound) {
+		return fmt.Errorf("invalid outbound server address or port")
+	}
+	return nil
+}
+
+// Xray builds a client whose server has port 0 or a host name with a space, slash or
+// colon; no share link can name it and the profile compiler refuses it.
+func invalidServer(outbound *conf.OutboundDetourConfig) bool {
+	switch outbound.Protocol {
+	case "vless", "vmess", "trojan", "shadowsocks", "socks", "http", "hysteria", "tuic":
+	default:
+		return false
+	}
+	type server struct {
+		Address *conf.Address
+		Port    uint16
+	}
+	var settings struct {
+		server
+		Vnext, Servers []*server
+	}
+	if outbound.Settings == nil || json.Unmarshal(*outbound.Settings, &settings) != nil {
+		return false
+	}
+	servers := append(settings.Vnext, settings.Servers...)
+	if settings.Address != nil { // the flat form replaces the server list
+		servers = []*server{&settings.server}
+	}
+	for _, server := range servers {
+		if server == nil || server.Port == 0 || server.Address == nil {
+			return true
+		}
+		// The same host rule as a share link's authority.
+		if address := server.Address.Address; address.Family().IsDomain() {
+			host := address.Domain()
+			u, err := url.Parse("x://" + host + ":1")
+			if err != nil || u.Hostname() != host {
+				return true
+			}
+			if _, err := clientPort(u); err != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 var rawMessageType = reflect.TypeOf(json.RawMessage{})

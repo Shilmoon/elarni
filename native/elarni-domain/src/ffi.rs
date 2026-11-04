@@ -241,6 +241,32 @@ fn execute(request: &[u8]) -> (ElarniStatus, Value) {
             ELARNI_STATUS_OK,
             json!({"identity": crate::catalog::node_identity(envelope.payload).to_string()}),
         ),
+        "keepShortIds" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Payload {
+                previous: Value,
+                config: Value,
+                #[serde(default, rename = "lastSuccessAt")]
+                last_success_at: Option<f64>,
+                now: f64,
+            }
+            let Ok(payload) = serde_json::from_value::<Payload>(envelope.payload) else {
+                return (
+                    ELARNI_STATUS_INVALID_ARGUMENT,
+                    json!({"error": "invalid short id payload"}),
+                );
+            };
+            (
+                ELARNI_STATUS_OK,
+                json!({"config": crate::catalog::keep_short_ids(
+                    &payload.previous,
+                    payload.config,
+                    payload.last_success_at,
+                    payload.now,
+                )}),
+            )
+        }
         "profileEndpoints" | "prepareConfig" => {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]

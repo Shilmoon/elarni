@@ -181,7 +181,7 @@ class MainActivity : ComponentActivity() {
         }
         repository.scope.launch {
             try {
-                val result = repository.execute(command, args)
+                val result = if (command == "ping") repository.ping(args) else repository.execute(command, args)
                 withContext(Dispatchers.Main) {
                     if (command == "reject") { interaction.reviewingEditor = false; interaction.importing = false }
                     if (interaction.importing && result.optBoolean("saved")) {
@@ -215,20 +215,11 @@ class MainActivity : ComponentActivity() {
         interaction.reviewingEditor = true
         run(command, args)
     }
-    fun testServers(ids: List<String>, sourceId: String = "") {
-        val state = repository.state.value
-        val catalog = Catalog(state.catalog)
-        if (state.connection in listOf("connected", "connecting", "paused", "disconnecting") &&
-            (catalog.settings.string("probeMode") in listOf("tcp", "icmp") || ids.any { it != catalog.selected })) {
-            interaction.notice = tr(R.string.disconnect_before_testing_other_servers_direct)
-        } else run("ping", Settings.probeArgs(catalog.settings, ids).put("sourceId", sourceId))
-    }
-    fun checkExit(id: String) {
-        val state = repository.state.value
-        if (state.connection in listOf("connected", "connecting", "paused", "disconnecting") && id != Catalog(state.catalog).selected)
-            interaction.notice = tr(R.string.disconnect_before_testing_other_servers_direct)
-        else run("ping", Settings.exitArgs(id))
-    }
+    // The VPN excludes this app (Platform.kt), so while connected, test cores, direct TCP and ICMP
+    // reach other servers outside the tunnel; only the selected server's proxy test uses the tunnel.
+    fun testServers(ids: List<String>, sourceId: String = "") =
+        run("ping", Settings.probeArgs(Catalog(repository.state.value.catalog).settings, ids).put("sourceId", sourceId))
+    fun checkExit(id: String) = run("ping", Settings.exitArgs(id))
     fun paste() {
         val text = getSystemService(ClipboardManager::class.java).primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()
         if (text.isNullOrBlank()) interaction.notice = tr(R.string.the_clipboard_is_empty_copy_a)
