@@ -36,11 +36,24 @@ pub fn node_identity(config: Value) -> Value {
     config
 }
 
-/// Panels such as 3x-ui send one of a REALITY server's valid shortIds at random
-/// on each fetch. A refreshed config that differs from the stored one only there
-/// (display metadata aside) keeps the stored shortIds, so the refresh leaves the
-/// running tunnel alone; any other change returns `config` as it came.
-pub fn keep_short_ids(previous: &Value, config: Value) -> Value {
+/// A stored REALITY shortId or serverName outlives a fetch that rotates it only this long after
+/// the node's last good connect: a value the panel retired then fails every connect, and the
+/// first refresh past the window takes the fetched one.
+pub const KEEP_ROTATED_SECONDS: f64 = 86400.0;
+
+/// Panels such as 3x-ui send one of a REALITY server's valid shortIds and serverNames at random
+/// on each fetch. A refreshed config that differs from the stored one only there (display
+/// metadata aside) keeps the stored values, so the refresh leaves the running tunnel alone,
+/// while the node connected within `KEEP_ROTATED_SECONDS`; otherwise `config` returns as it came.
+pub fn keep_short_ids(
+    previous: &Value,
+    config: Value,
+    last_success_at: Option<f64>,
+    now: f64,
+) -> Value {
+    if !last_success_at.is_some_and(|at| now - at < KEEP_ROTATED_SECONDS) {
+        return config;
+    }
     let mut kept = config.clone();
     adopt_short_ids(&mut kept, previous);
     if identity(kept.clone()) == identity(previous.clone()) {
@@ -62,10 +75,12 @@ fn adopt_short_ids(config: &mut Value, previous: &Value) {
                 config.get_mut("realitySettings"),
                 previous.get("realitySettings"),
             ) {
-                match old.get("shortId") {
-                    Some(id) => reality.insert("shortId".into(), id.clone()),
-                    None => reality.remove("shortId"),
-                };
+                for field in ["shortId", "serverName"] {
+                    match old.get(field) {
+                        Some(value) => reality.insert(field.into(), value.clone()),
+                        None => reality.remove(field),
+                    };
+                }
             }
         }
         (Value::Array(config), Value::Array(previous)) => {
@@ -83,6 +98,9 @@ mod tests {
 
     #[test]
     fn a_refresh_that_only_rotates_the_reality_short_id_keeps_the_stored_one() {
+        let keep = |previous: &Value, config: Value| {
+            keep_short_ids(previous, config, Some(1_000.0), 1_060.0)
+        };
         // As a 3x-ui JSON subscription sends it.
         let server = |short_id: &str| {
             json!({"remarks":"NL","outbounds":[
@@ -93,19 +111,36 @@ mod tests {
                 {"tag":"direct","protocol":"freedom"}]})
         };
         let stored = server("0a1b");
-        assert_eq!(keep_short_ids(&stored, server("c2d3")), stored);
+        assert_eq!(keep(&stored, server("c2d3")), stored);
         // Display metadata follows the provider; the shortId stays.
         let mut renamed = server("c2d3");
         renamed["remarks"] = json!("NL 2 GB left");
         let mut expected = stored.clone();
         expected["remarks"] = json!("NL 2 GB left");
-        assert_eq!(keep_short_ids(&stored, renamed), expected);
+        assert_eq!(keep(&stored, renamed), expected);
         let mut bare = server("");
         bare["outbounds"][0]["streamSettings"]["realitySettings"]
             .as_object_mut()
             .unwrap()
             .remove("shortId");
-        assert_eq!(keep_short_ids(&bare, server("c2d3")), bare);
+        assert_eq!(keep(&bare, server("c2d3")), bare);
+        // 3x-ui also picks one of the server's serverNames at random.
+        let mut sni = server("c2d3");
+        sni["outbounds"][0]["streamSettings"]["realitySettings"]["serverName"] =
+            json!("www.example.com");
+        assert_eq!(keep(&stored, sni.clone()), stored);
+        // A node that hasn't connected within the window takes the fetched values, so a
+        // shortId the panel retired doesn't stay forever.
+        assert_eq!(keep_short_ids(&stored, sni.clone(), None, 1_060.0), sni);
+        assert_eq!(
+            keep_short_ids(
+                &stored,
+                sni.clone(),
+                Some(1_000.0),
+                1_000.0 + KEEP_ROTATED_SECONDS
+            ),
+            sni
+        );
         // Any other change takes the new values, shortId included.
         for (pointer, value) in [
             (
@@ -122,17 +157,13 @@ mod tests {
                 json!("key-2"),
             ),
             (
-                "/outbounds/0/streamSettings/realitySettings/serverName",
-                json!("example.org"),
+                "/outbounds/0/streamSettings/realitySettings/fingerprint",
+                json!("firefox"),
             ),
         ] {
             let mut changed = server("c2d3");
             *changed.pointer_mut(pointer).unwrap() = value;
-            assert_eq!(
-                keep_short_ids(&stored, changed.clone()),
-                changed,
-                "{pointer}"
-            );
+            assert_eq!(keep(&stored, changed.clone()), changed, "{pointer}");
         }
     }
 

@@ -1212,9 +1212,10 @@ final class SubscriptionStore {
         let previous = old.allNodes.first(where: { $0.id == nodeID })
         let overrides = previous?.groupOverrides
         if !preservingNodeIDs, let overrides { parsedNode = try applyingGroups(parsedNode, selections: overrides) }
-        // 3x-ui sends one of a server's REALITY shortIds at random per fetch; that alone must not change the plan.
-        if let stored = oldConfigurations[nodeID], try stored != runtimeConfiguration(parsedNode.outbound) {
-          parsedNode.outbound = try keepingShortIds(parsedNode.outbound, stored: stored)
+        // 3x-ui sends one of a server's REALITY shortIds and serverNames at random per fetch; that alone must not change the plan.
+        if let stored = oldConfigurations[nodeID], let lastSuccessAt = previous?.lastSuccessAt,
+           try stored != runtimeConfiguration(parsedNode.outbound) {
+          parsedNode.outbound = try keepingShortIds(parsedNode.outbound, stored: stored, lastSuccessAt: lastSuccessAt)
         }
         let ref: String
         if let previous, (previous.format ?? "xrayOutbound") == parsedNode.format,
@@ -1518,10 +1519,13 @@ final class SubscriptionStore {
   }
 
   /// The outbound with the stored shortIds when they are its only difference, else the outbound as fetched.
-  private func keepingShortIds(_ outbound: Data, stored: Data) throws -> Data {
+  private func keepingShortIds(_ outbound: Data, stored: Data, lastSuccessAt: Date) throws -> Data {
     guard let config = try JSONSerialization.jsonObject(with: outbound) as? [String: Any],
           let previous = try JSONSerialization.jsonObject(with: stored) as? [String: Any],
-          let kept = try RoutingDomainDecoder.request("keepShortIds", payload: ["previous": previous, "config": config])["config"] as? [String: Any] else {
+          let kept = try RoutingDomainDecoder.request("keepShortIds", payload: [
+            "previous": previous, "config": config,
+            "lastSuccessAt": lastSuccessAt.timeIntervalSince1970, "now": now().timeIntervalSince1970,
+          ])["config"] as? [String: Any] else {
       throw SubscriptionError.invalidFeed
     }
     let data = try JSONSerialization.data(withJSONObject: kept)

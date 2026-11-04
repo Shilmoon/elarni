@@ -1041,11 +1041,11 @@ struct SubscriptionChecks {
     try await mode("reality_c2d3")
     _ = try await store.refresh(id: id)
     try expect(store.selectedNodeID() == nodeID && store.outboundRef(nodeID: nodeID) == realityRef,
-      "a refresh that changed only the REALITY shortId replaced the stored outbound")
-    try await mode("reality_sni")
+      "a refresh that changed only the REALITY shortId and SNI replaced the stored outbound")
+    try await mode("reality_fp")
     _ = try await store.refresh(id: id)
-    try expect(store.outboundRef(nodeID: nodeID) != realityRef, "a refresh that changed the SNI kept the stored outbound")
-    print("PASS a refresh that changes only the REALITY shortId keeps the stored outbound; an SNI change replaces it")
+    try expect(store.outboundRef(nodeID: nodeID) != realityRef, "a refresh that changed the fingerprint kept the stored outbound")
+    print("PASS a refresh that changes only the REALITY shortId and SNI keeps the stored outbound; a fingerprint change replaces it")
     func dnsNotice() -> String? {
       ((store.snapshot()["subscriptions"] as! [[String: Any]])[0]["metadata"] as? [String: Any])?["dnsNotice"] as? String
     }

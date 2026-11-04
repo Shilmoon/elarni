@@ -121,14 +121,17 @@ class Catalog(val data: JSONObject) {
                 val choice = old?.mapObject("groupOverrides")?.string(group.string("name"))
                 if (choice in group.strings("options")) group.put("selected", choice)
             }
-            // 3x-ui sends one of a server's REALITY shortIds at random per fetch; that alone must not restart the tunnel.
-            if (old != null && canonical(old.getJSONObject("config")) != canonical(config)) {
-                config = Native.domain("keepShortIds", obj("previous" to old.getJSONObject("config"), "config" to config)).getJSONObject("config")
+            val oldIdentity = old?.let { canonical(it.getJSONObject("config")) }
+            var unchanged = oldIdentity == canonical(config)
+            // 3x-ui sends one of a server's REALITY shortIds and serverNames at random per fetch; that alone must not restart the tunnel.
+            if (old != null && !unchanged && old.has("lastSuccessAt")) {
+                config = Native.domain("keepShortIds", obj("previous" to old.getJSONObject("config"), "config" to config, "lastSuccessAt" to old.getDouble("lastSuccessAt"), "now" to now())).getJSONObject("config")
                 value.put("config", config)
+                unchanged = oldIdentity == canonical(config)
             }
             value.put("id", old?.string("id") ?: newId())
                 .put("favorite", old?.optBoolean("favorite") ?: false)
-                .put("configurationRevision", if (old != null && canonical(old.getJSONObject("config")) == canonical(config)) old.string("configurationRevision", old.string("id")) else newId())
+                .put("configurationRevision", if (old != null && unchanged) old.string("configurationRevision", old.string("id")) else newId())
             listOf("lastSuccessAt", "lastSuccessRevision", "groupOverrides", "ipPreference").forEach { key -> if (old?.has(key) == true) value.put(key, old.get(key)) }
             if (old?.has("providerName") == true) value.put("providerName", value.string("name")).put("name", old.string("name"))
             value

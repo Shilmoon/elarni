@@ -4570,16 +4570,16 @@ for line in sys.stdin:
     },
   );
 
-  // 3x-ui sends one of a REALITY server's shortIds at random on each fetch.
+  // 3x-ui sends one of a REALITY server's shortIds and serverNames at random on each fetch.
   test(
-    'a refresh that only changes the REALITY shortId keeps the core running',
+    'a refresh that only changes the REALITY shortId or SNI keeps the core running',
     () async {
-      var shortID = '0a1b', sni = 'example.com';
+      var shortID = '0a1b', sni = 'example.com', fingerprint = 'chrome';
       final feed = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       feed.listen((request) async {
         // Connected means only that the local core answers; no server listens.
         request.response.write(
-          'vless://$userID@127.0.0.1:9?encryption=none&security=reality&type=tcp&fp=chrome'
+          'vless://$userID@127.0.0.1:9?encryption=none&security=reality&type=tcp&fp=$fingerprint'
           '&pbk=FCNsCTRerqst97Y-_Pc32LnnBu0g_hw-LhJYlaeiEVs&sni=$sni&sid=$shortID#Reality\n',
         );
         await request.response.close();
@@ -4608,10 +4608,11 @@ for line in sys.stdin:
         final started = await connectedSince();
         expect(started, isNotNull);
         shortID = 'c2d3';
+        sni = 'www.example.com';
         await backend.control.refreshSubscription(id);
         expect(await connectedSince(), started);
         // Any other change still restarts the core.
-        sni = 'example.org';
+        fingerprint = 'firefox';
         await backend.control.refreshSubscription(id);
         expect(await backend.control.state(), 'connected');
         expect(await connectedSince(), allOf(isNotNull, isNot(started)));

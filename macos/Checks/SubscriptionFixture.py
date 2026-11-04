@@ -75,10 +75,11 @@ class Handler(BaseHTTPRequestHandler):
                                f"?encryption=none&security=tls&sni=example.com&type=tcp#{name}\n"
                                for i, name in enumerate(["First", "Second", "Third"])).encode()
             elif version.startswith("reality_"):
-                # 3x-ui sends one of the server's shortIds per fetch; reality_sni changes the SNI too.
-                sid, sni = ("e4f5", "example.org") if version == "reality_sni" else (version[len("reality_"):], "example.com")
+                # 3x-ui sends one of the server's shortIds and serverNames per fetch; reality_fp changes the fingerprint.
+                sid, sni, fp = {"reality_c2d3": ("c2d3", "www.example.com", "chrome"),
+                                "reality_fp": ("e4f5", "example.org", "firefox")}.get(version, (version[len("reality_"):], "example.com", "chrome"))
                 body = ("vless://00000000-0000-4000-8000-000000000001@192.0.2.1:443?encryption=none&security=reality"
-                        f"&type=tcp&fp=chrome&pbk=FCNsCTRerqst97Y-_Pc32LnnBu0g_hw-LhJYlaeiEVs&sni={sni}&sid={sid}#Test\n").encode()
+                        f"&type=tcp&fp={fp}&pbk=FCNsCTRerqst97Y-_Pc32LnnBu0g_hw-LhJYlaeiEVs&sni={sni}&sid={sid}#Test\n").encode()
             elif version in ("full_profile", "system_dns"):
                 body = json.dumps({"remarks": "Test", **({"dns": {"servers": ["localhost"]}} if version == "system_dns" else {}), "outbounds": [{
                     "tag": "proxy", "protocol": "vless",
