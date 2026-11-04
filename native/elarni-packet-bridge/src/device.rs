@@ -60,13 +60,17 @@ impl AsyncRead for PacketDevice {
 impl AsyncWrite for PacketDevice {
     fn poll_write(
         self: Pin<&mut Self>,
-        _context: &mut Context<'_>,
+        context: &mut Context<'_>,
         bytes: &[u8],
     ) -> Poll<io::Result<usize>> {
         let mut output = self
             .output
             .lock()
             .map_err(|_| io::Error::other("packet output lock poisoned"))?;
+        // Wait for the reader like a full TUN queue: dropped packets cost the stack a retransmission timeout.
+        if output.full_or_park(context.waker()) {
+            return Poll::Pending;
+        }
         let was_empty = output.front().is_none();
         let result = output.ingest(bytes);
         // A waiter sleeps only on an empty queue, so only its first packet needs a wake.

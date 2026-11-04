@@ -29,6 +29,9 @@ var (
 
 	once    sync.Once
 	initErr error
+
+	// One per network and family: tcp4, tcp6, udp4, udp6.
+	transportTables [4]*processTable
 )
 
 func initWin32API() error {
@@ -48,6 +51,20 @@ func initWin32API() error {
 		return errors.New("GetProcAddress of ", udpTableFunc, " failed").Base(err)
 	}
 
+	for i := range transportTables {
+		fn, class, family := getExTCPTable, tcpTablePidConn, windows.AF_INET
+		network, familyType := Network_TCP, AddressFamilyIPv4
+		if i >= 2 {
+			fn, class, network = getExUDPTable, udpTablePid, Network_UDP
+		}
+		if i%2 == 1 {
+			family, familyType = windows.AF_INET6, AddressFamilyIPv6
+		}
+		rowSize := newSearcher(network, familyType).itemSize
+		transportTables[i] = &processTable{fetch: func(size uint32) ([]byte, error) {
+			return getTransportTable(fn, family, class, rowSize, size)
+		}}
+	}
 	return nil
 }
 
@@ -66,18 +83,6 @@ func FindProcess(network, srcIP string, srcPort uint16, destIP string, destPort 
 		return 0, "", "", ErrNotLocal
 	}
 	if network != "tcp" && network != "udp" {
-		panic("Unsupported network type for process lookup.")
-	}
-	var class int
-	var fn uintptr
-	switch network {
-	case "tcp":
-		fn = getExTCPTable
-		class = tcpTablePidConn
-	case "udp":
-		fn = getExUDPTable
-		class = udpTablePid
-	default:
 		panic("Unsupported network type for process lookup.")
 	}
 	ip := net.ParseIP(srcIP)
@@ -102,7 +107,14 @@ func FindProcess(network, srcIP string, srcPort uint16, destIP string, destPort 
 		family = windows.AF_INET6
 	}
 
-	buf, err := getTransportTable(fn, family, class)
+	table := 0
+	if network == "udp" {
+		table = 2
+	}
+	if family == windows.AF_INET6 {
+		table++
+	}
+	buf, err := transportTables[table].get()
 	if err != nil {
 		return 0, "", "", err
 	}
@@ -237,14 +249,21 @@ func newSearcher(network Network, family AddressFamily) *searcher {
 	}
 }
 
-func getTransportTable(fn uintptr, family int, class int) ([]byte, error) {
-	for size, buf := uint32(8), make([]byte, 8); ; {
+// getTransportTable reads a socket table. Windows builds the whole table on every call, also
+// for a call that only learns the size, so the last size plus room for new sockets comes first.
+func getTransportTable(fn uintptr, family int, class int, rowSize int, sizeHint uint32) ([]byte, error) {
+	size := max(sizeHint+sizeHint/4+4096, 8)
+	for buf := make([]byte, size); ; {
 		ptr := unsafe.Pointer(&buf[0])
 		err, _, _ := syscall.Syscall6(fn, 6, uintptr(ptr), uintptr(unsafe.Pointer(&size)), 0, uintptr(family), uintptr(class), 0)
 
 		switch err {
 		case 0:
-			return buf, nil
+			// The table's own length, not the buffer's, so the next size hint does not grow.
+			if n := 4 + int(readNativeUint32(buf[:4]))*rowSize; n <= len(buf) {
+				return buf[:n], nil
+			}
+			return nil, errors.New("socket table larger than its buffer")
 		case uintptr(syscall.ERROR_INSUFFICIENT_BUFFER):
 			buf = make([]byte, size)
 		default:
@@ -273,11 +292,17 @@ func getExecPathFromPID(pid uint32) (string, error) {
 	}
 	defer windows.CloseHandle(h)
 
-	buf := make([]uint16, syscall.MAX_LONG_PATH)
-	size := uint32(len(buf))
-	err = windows.QueryFullProcessImageName(h, 0, &buf[0], &size)
-	if err != nil {
-		return "", err
+	// Most paths fit 1 KiB; a 64 KiB buffer on every lookup was garbage at each new connection.
+	var short [512]uint16
+	for buf := short[:]; ; buf = make([]uint16, syscall.MAX_LONG_PATH) {
+		size := uint32(len(buf))
+		err = windows.QueryFullProcessImageName(h, 0, &buf[0], &size)
+		if err == windows.ERROR_INSUFFICIENT_BUFFER && len(buf) < syscall.MAX_LONG_PATH {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return syscall.UTF16ToString(buf[:size]), nil
 	}
-	return syscall.UTF16ToString(buf[:size]), nil
 }

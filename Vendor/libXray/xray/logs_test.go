@@ -108,3 +108,31 @@ func TestLogsKeepTheNewestLinesAndRenumberRelayedOnes(t *testing.T) {
 type noopHandler struct{}
 
 func (noopHandler) Handle(log.Message) {}
+
+type silentHandler struct{}
+
+func (silentHandler) Handle(log.Message)     {}
+func (silentHandler) Severity() log.Severity { return log.Severity_Unknown }
+
+// Every connection and UDP packet logs at debug and info; with the core's own log at none,
+// only the kept level may make Xray build those messages.
+func TestLogsBuildOnlyMessagesTheKeptLevelShows(t *testing.T) {
+	defer resetLogs()
+	resetLogs()
+	log.RegisterHandler(silentHandler{})
+	if got := log.GetSeverity(); got != log.Severity_Warning {
+		t.Fatalf("severity %v at the default level, want Warning", got)
+	}
+	if err := SetLogLevel("debug"); err != nil {
+		t.Fatal(err)
+	}
+	if got := log.GetSeverity(); got != log.Severity_Debug {
+		t.Fatalf("severity %v at debug, want Debug", got)
+	}
+	if err := SetLogLevel("none"); err != nil {
+		t.Fatal(err)
+	}
+	if got := log.GetSeverity(); got != log.Severity_Unknown {
+		t.Fatalf("severity %v at none, want Unknown", got)
+	}
+}

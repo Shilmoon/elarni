@@ -4,6 +4,8 @@
 /.build/
 /.dart_tool/
 __pycache__/
+# Headers that build-rust-macos.sh is still generating
+/include/.elarni_*
 
 # Local JavaScript tooling and browser test output
 /node_modules/

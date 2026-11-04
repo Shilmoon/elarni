@@ -88,10 +88,13 @@ func (c *Client) Process(ctx context.Context, link *transport.Link, dialer inter
 	var conn stat.Connection
 
 	var mbuf buf.MultiBuffer
-	if reader, ok := link.Reader.(buf.TimeoutReader); ok {
+	reader, timed := link.Reader.(buf.TimeoutReader)
+	switch {
+	case session.SkipFirstPayloadWait(ctx, target): // Elarni: its client sends nothing until the server greets it
+	case timed:
 		// Don't wait forever: server-first protocols (SMTP, FTP, MySQL...) send nothing until the server greets.
 		mbuf, _ = reader.ReadMultiBufferTimeout(time.Millisecond * 500)
-	} else {
+	default:
 		mbuf, _ = link.Reader.ReadMultiBuffer()
 	}
 	len := mbuf.Len()

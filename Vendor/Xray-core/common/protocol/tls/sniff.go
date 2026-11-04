@@ -129,15 +129,15 @@ func ReadClientHello(data []byte, h *SniffHeader) error {
 }
 
 func SniffTLS(b []byte) (*SniffHeader, error) {
+	// Elarni: reject from the first bytes rather than wait for a whole record header.
+	if len(b) > 0 && b[0] != 0x16 /* TLS Handshake */ {
+		return nil, errNotTLS
+	}
+	if len(b) > 2 && !IsValidTLSVersion(b[1], b[2]) {
+		return nil, errNotTLS
+	}
 	if len(b) < 5 {
 		return nil, common.ErrNoClue
-	}
-
-	if b[0] != 0x16 /* TLS Handshake */ {
-		return nil, errNotTLS
-	}
-	if !IsValidTLSVersion(b[1], b[2]) {
-		return nil, errNotTLS
 	}
 	headerLen := int(binary.BigEndian.Uint16(b[3:5]))
 	if 5+headerLen > len(b) {

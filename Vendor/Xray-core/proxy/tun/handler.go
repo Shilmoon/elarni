@@ -69,6 +69,7 @@ func (t *Handler) Init(ctx context.Context, pm policy.Manager, dispatcher routin
 	t.dispatcher = dispatcher
 	t.tcpAdmission.limit, t.udpAdmission.limit = tcpLimit.Load(), udpLimit.Load()
 	t.tcpAdmission.minIdle, t.udpAdmission.minIdle, t.dnsIdle = sessionEvictIdle, sessionEvictIdle, dnsSessionIdle
+	t.tcpAdmission.finishedIdle, t.udpAdmission.finishedIdle = tcpFinishedIdle, dnsFinishedIdle
 
 	if len(t.tag) > 0 && pm.ForSystem().Stats.InboundUplink {
 		statsManager := core.MustFromContext(ctx).GetFeature(stats.ManagerType()).(stats.Manager)
@@ -173,6 +174,10 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 	// when handling is done with any outcome, always signal back to the incoming connection
 	// to close, send completion packets back to the network, and cleanup
 	defer conn.Close()
+	var ready func() bool
+	if stream, ok := conn.(*tcpConn); ok {
+		ready = stream.readable
+	}
 	ctx, cancel := context.WithCancel(t.ctx)
 	defer cancel()
 	admission := &t.tcpAdmission
@@ -183,7 +188,7 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 	if udp, ok := conn.(*udpConn); ok {
 		clock = &udp.activity
 	} else {
-		tracked := &activeConn{Conn: conn}
+		tracked := newActiveConn(conn)
 		conn, clock = tracked, &tracked.activity
 	}
 	clock.touch()
@@ -253,6 +258,10 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 	link := &transport.Link{
 		Reader: &buf.TimeoutWrapperReader{Reader: buf.NewReader(conn)},
 		Writer: buf.NewWriter(conn),
+	}
+	if ready != nil {
+		link.Reader = &buf.TimeoutWrapperReader{Reader: &drainReader{Reader: conn, ready: ready}}
+		link.Writer = newTCPWriter(conn)
 	}
 	if destination.Network == net.Network_UDP {
 		// Count datagrams without hiding udpConn's per-packet destinations behind

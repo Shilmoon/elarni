@@ -11,6 +11,7 @@ import (
 	"github.com/xtls/libxray/xray"
 	"github.com/xtls/xray-core/common/geodata"
 	"github.com/xtls/xray-core/common/platform/filesystem"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -220,9 +221,12 @@ func TestAssetRefreshDownloadsOnlyChangedGeofiles(t *testing.T) {
 	}
 	var sent []assetValidators
 	reply := func(body []byte, validators assetValidators) assetFetch {
-		return func(_ string, stored assetValidators) ([]byte, assetValidators, error) {
+		return func(_ string, stored assetValidators, destination string) (bool, assetValidators, error) {
 			sent = append(sent, stored)
-			return body, validators, nil
+			if body == nil {
+				return false, validators, nil
+			}
+			return true, validators, os.WriteFile(destination, body, 0600)
 		}
 	}
 	request := assetRequest{Files: map[string]string{"geosite": "https://example.invalid/geosite.dat"}, Selectors: []string{"geosite:test"}, Reduce: true}
@@ -265,8 +269,69 @@ func TestAssetRefreshDownloadsOnlyChangedGeofiles(t *testing.T) {
 
 // bodies adapts a fetch that ignores validators, as a server without them would.
 func bodies(fetch func(string) ([]byte, error)) assetFetch {
-	return func(url string, _ assetValidators) ([]byte, assetValidators, error) {
+	return func(url string, _ assetValidators, destination string) (bool, assetValidators, error) {
 		body, err := fetch(url)
-		return body, assetValidators{}, err
+		if err != nil {
+			return false, assetValidators{}, err
+		}
+		return true, assetValidators{}, os.WriteFile(destination, body, 0600)
+	}
+}
+
+// A runetfreedom geosite.dat is 85 MB, most of it categories few profiles name (Elarni).
+func TestPreparedAssetsTrimAGeofileOverTheCoreLimit(t *testing.T) {
+	root := t.TempDir()
+	small, _ := proto.Marshal(&geodata.GeoSiteList{Entry: []*geodata.GeoSite{{Code: "TEST", Domain: []*geodata.Domain{{Value: "example.com", Type: geodata.Domain_Full}}}}})
+	const filler = 66 << 20
+	head := protowire.AppendBytes(protowire.AppendTag(nil, 1, protowire.BytesType), []byte("BIG"))
+	head = protowire.AppendVarint(protowire.AppendTag(head, 15, protowire.BytesType), filler)
+	framing := protowire.AppendVarint(protowire.AppendTag(nil, 1, protowire.BytesType), uint64(len(head)+filler))
+	original := slices.Concat(small, framing, head)
+	fetch := func(_ string, _ assetValidators, destination string) (bool, assetValidators, error) {
+		file, err := os.Create(destination)
+		if err != nil {
+			return false, assetValidators{}, err
+		}
+		_, err = file.Write(original)
+		// The unused record's zeros are sparse.
+		return true, assetValidators{}, errors.Join(err, file.Truncate(int64(len(original)+filler)), file.Close())
+	}
+	request := assetRequest{Files: map[string]string{"geosite": "https://example.invalid/geosite.dat"}, Selectors: []string{"geosite:test"}, Reduce: true}
+	value, err := prepareAssets(root, request, fetch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := value.(map[string]any)
+	file := result["geofiles"].([]map[string]any)[0]
+	if file["bytes"] != int64(len(small)) || file["originalBytes"] != int64(len(original)+filler) {
+		t.Fatalf("sizes %v", file)
+	}
+	if _, err := readAssets(root, result["assetRevision"].(string)); err != nil {
+		t.Fatal(err)
+	}
+	// The core would load the complete file whole.
+	request.Reduce = false
+	if _, err := prepareAssets(root, request, fetch); err == nil || err.Error() != "input_too_large" {
+		t.Fatalf("complete file: %v, want input_too_large", err)
+	}
+}
+
+// Elarni: runetfreedom's RU geosite.dat, the usual source of imported RU routing, passed 64 MiB in October 2026
+// (70.3 MiB, 81.6 on 2026-11-04) and every download and stored copy of it was refused as invalid_feed/invalid_geodata.
+func TestGeofilesLargerThan64MiBArePrepared(t *testing.T) {
+	root := t.TempDir()
+	original, _ := proto.Marshal(&geodata.GeoSiteList{Entry: []*geodata.GeoSite{
+		{Code: "TEST", Domain: []*geodata.Domain{{Value: "example.com", Type: geodata.Domain_Full}}},
+		{Code: "BIG", Domain: []*geodata.Domain{{Value: string(bytes.Repeat([]byte("a"), 82<<20)), Type: geodata.Domain_Substr}}},
+	}})
+	request := assetRequest{Files: map[string]string{"geosite": "https://example.invalid/geosite.dat"}, Selectors: []string{"geosite:test"}, Reduce: true}
+	value, err := prepareAssets(root, request, bodies(func(string) ([]byte, error) { return original, nil }))
+	if err != nil {
+		t.Fatalf("download of a %d MiB geosite: %v", len(original)>>20, err)
+	}
+	// The stored original serves the next preparation without a download.
+	request.Previous = value.(map[string]any)["assetRevision"].(string)
+	if _, err := prepareAssets(root, request, bodies(func(string) ([]byte, error) { return nil, errors.New("fetch_failed") })); err != nil {
+		t.Fatalf("stored %d MiB geosite: %v", len(original)>>20, err)
 	}
 }

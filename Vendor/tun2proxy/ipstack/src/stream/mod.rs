@@ -8,6 +8,8 @@ pub use self::unknown::IpStackUnknownTransport;
 mod seqnum;
 mod tcb;
 mod tcp;
+#[cfg(test)]
+mod tcp_tests;
 mod udp;
 mod unknown;
 

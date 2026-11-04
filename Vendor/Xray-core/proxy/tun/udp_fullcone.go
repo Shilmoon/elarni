@@ -3,7 +3,9 @@ package tun
 import (
 	"context"
 	"io"
+	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xtls/xray-core/common/buf"
@@ -47,16 +49,14 @@ func (u *udpConnectionHandler) HandlePacket(src net.Destination, dst net.Destina
 	}
 	conn, found := u.udpConns[src]
 	if found {
-		select {
-		case conn.egress <- &packet{
-			data: data,
-			dest: &dst,
-		}:
-		default:
-			errors.LogDebug(context.Background(), "drop udp with size ", len(data), " to ", dst.NetAddr(), " original ", conn.dst.NetAddr(), " > queue full")
+		queued, retired := conn.enqueue(&packet{data: data, dest: &dst})
+		if !retired {
+			if !queued {
+				errors.LogDebug(context.Background(), "drop udp with size ", len(data), " to ", dst.NetAddr(), " original ", conn.dst.NetAddr(), " > queue full")
+			}
+			u.RUnlock()
+			return
 		}
-		u.RUnlock()
-		return
 	}
 	u.RUnlock()
 
@@ -66,23 +66,32 @@ func (u *udpConnectionHandler) HandlePacket(src net.Destination, dst net.Destina
 		return
 	}
 
-	conn, found = u.udpConns[src]
-	if !found {
-		egress := make(chan *packet, 1024)
-		conn = &udpConn{handler: u, egress: egress, src: src, dst: dst}
-		u.udpConns[src] = conn
-
-		go u.handleConnection(conn, dst)
-	}
-
-	// send packet data to the egress channel, if it has buffer, or discard
-	select {
-	case conn.egress <- &packet{
-		data: data,
-		dest: &dst,
-	}:
-	default:
-		errors.LogDebug(context.Background(), "drop udp with size ", len(data), " to ", dst.NetAddr(), " original ", conn.dst.NetAddr(), " > queue full 2")
+	for {
+		conn, found = u.udpConns[src]
+		if !found {
+			egress := make(chan *packet, 1024)
+			conn = &udpConn{handler: u, egress: egress, src: src, dst: dst}
+			if dst.Port == 53 {
+				conn.done, conn.retire = conn.answered, conn.retireAnswered
+			}
+			u.udpConns[src] = conn
+		}
+		// send packet data to the egress channel, if it has buffer, or discard
+		queued, retired := conn.enqueue(&packet{data: data, dest: &dst})
+		if retired {
+			// Admission replaced this flow and its session is ending: the datagram starts a new one (Elarni).
+			delete(u.udpConns, src)
+			close(conn.egress)
+			continue
+		}
+		if !queued {
+			errors.LogDebug(context.Background(), "drop udp with size ", len(data), " to ", dst.NetAddr(), " original ", conn.dst.NetAddr(), " > queue full 2")
+		}
+		if !found {
+			// Started after its first datagram is queued and counted, so admission never takes it for answered.
+			go u.handleConnection(conn, dst)
+		}
+		return
 	}
 }
 
@@ -113,6 +122,48 @@ type udpConn struct {
 	egress chan *packet
 	src    net.Destination
 	dst    net.Destination
+	// datagrams from the app minus datagrams back to it; a DNS flow at zero has every query answered
+	unanswered atomic.Int64
+}
+
+// retiredFlow in unanswered marks a flow admission replaced; it takes no more datagrams.
+const retiredFlow = math.MinInt64 / 2
+
+func (c *udpConn) answered() bool { return c.unanswered.Load() <= 0 }
+
+// retire claims the flow for replacement while every query has its answer (Elarni).
+func (c *udpConn) retireAnswered() bool { return c.unanswered.CompareAndSwap(0, retiredFlow) }
+
+// answer counts n datagrams back to the app; extra replies (duplicates, forged answers) never count
+// for queries the app sends later.
+func (c *udpConn) answer(n int64) {
+	for {
+		old := c.unanswered.Load()
+		if old <= 0 || c.unanswered.CompareAndSwap(old, max(old-n, 0)) {
+			return
+		}
+	}
+}
+
+// enqueue hands a datagram from the app to the flow; queued is false when the queue is full, and retired
+// when admission replaced the flow, which then takes nothing.
+func (c *udpConn) enqueue(p *packet) (queued, retired bool) {
+	for {
+		n := c.unanswered.Load()
+		if n < 0 {
+			return false, true
+		}
+		if c.unanswered.CompareAndSwap(n, n+1) {
+			break
+		}
+	}
+	select {
+	case c.egress <- p:
+		return true, false
+	default:
+		c.unanswered.Add(-1)
+		return false, false
+	}
 }
 
 func (c *udpConn) ReadMultiBuffer() (buf.MultiBuffer, error) {
@@ -151,6 +202,7 @@ func (c *udpConn) Read(p []byte) (int, error) {
 
 func (c *udpConn) WriteMultiBuffer(mb buf.MultiBuffer) error {
 	c.touch()
+	c.answer(int64(len(mb)))
 	for i, b := range mb {
 		dst := c.dst
 		if b.UDP != nil {
@@ -174,6 +226,7 @@ func (c *udpConn) WriteMultiBuffer(mb buf.MultiBuffer) error {
 func (c *udpConn) Write(p []byte) (int, error) {
 	// sending packets back mean sending payload with source/destination reversed
 	c.touch()
+	c.answer(1)
 	err := c.handler.writePacket(p, c.dst, c.src)
 	if err != nil {
 		return 0, err

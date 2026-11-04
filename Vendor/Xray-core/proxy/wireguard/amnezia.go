@@ -51,6 +51,9 @@ func adaptAmneziaTUN(device tun.Device) *amneziaTUN {
 }
 
 func (t *amneziaTUN) Events() <-chan awgtun.Event { return t.events }
+
+// BatchSize stays 1: the AmneziaWG engine holds a 64 KiB buffer per batch slot.
+func (t *amneziaTUN) BatchSize() int { return 1 }
 func (t *amneziaTUN) Close() error {
 	t.once.Do(func() { close(t.done); t.err = t.Device.Close() })
 	return t.err
@@ -80,6 +83,7 @@ func (b *amneziaBind) Open(port uint16) ([]awgconn.ReceiveFunc, uint16, error) {
 func (b *amneziaBind) Send(packets [][]byte, endpoint awgconn.Endpoint) error {
 	return b.bind.Send(packets, endpoint)
 }
+func (b *amneziaBind) BatchSize() int { return 1 }
 func (b *amneziaBind) ParseEndpoint(value string) (awgconn.Endpoint, error) {
 	return b.bind.ParseEndpoint(value)
 }

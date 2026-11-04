@@ -37,6 +37,7 @@ struct SubscriptionChecks {
     passed += try await routingAssetChecks(directory: directory.appendingPathComponent("routing-assets"))
     passed += try await missingGeodataChecks(directory: directory.appendingPathComponent("routing-missing-geodata"))
     passed += try await externalGeodataChecks(directory: directory.appendingPathComponent("routing-external-geodata"))
+    passed += try await largeGeofileChecks(directory: directory.appendingPathComponent("routing-large-geodata"))
     func check(_ name: String, _ body: () throws -> Void) throws {
       try body()
       passed += 1
@@ -545,15 +546,16 @@ struct SubscriptionChecks {
     }
     let resourceURL = url.appendingPathComponent("binary-resource")
     var resourceApproval: [String] = []
+    let resourceFile = directory.appendingPathComponent("binary-resource.dat")
     do {
-      _ = try await RoutingResourceFetcher.fetch(resourceURL, maxBytes: 64 * 1024 * 1024)
+      _ = try await RoutingResourceFetcher.fetchGeofile(resourceURL, stored: nil, to: resourceFile)
       throw Failure(message: "routing resource bypassed private-address approval")
     } catch let requirement as SubscriptionApprovalRequirement {
       resourceApproval = requirement.candidateChain
     }
-    let resource = try await RoutingResourceFetcher.fetch(resourceURL, maxBytes: 64 * 1024 * 1024,
+    let resource = try await RoutingResourceFetcher.fetchGeofile(resourceURL, stored: nil, to: resourceFile,
       approvedChain: resourceApproval)
-    try expect(resource == Data(Array(repeating: [UInt8(0), 255, 128, 7], count: 1024).flatMap { $0 }),
+    try expect(resource.downloaded && Data(contentsOf: resourceFile) == Data(Array(repeating: [UInt8(0), 255, 128, 7], count: 1024).flatMap { $0 }),
       "native routing resource bridge changed binary bytes")
     print("PASS routing resources use the native address policy and preserve binary bytes")
     passed += 1
@@ -679,7 +681,7 @@ struct SubscriptionChecks {
     }
     let complete = field(1, field(1, Data("TEST".utf8)) + field(2, Data([8, 3]) + field(2, Data("example.com".utf8))))
     let routes = try RoutingStore(directory: directory)
-    routes.fetchGeofile = { _, _ in (complete, nil) }
+    routes.fetchGeofile = { _, _, file in try complete.write(to: file); return (true, nil) }
     routes.publishManaged = { try routes.publish($0) }
     func profile(_ rules: String, chunked: Bool) -> String {
       #"{"Name":"Missing codes","RemoteDNSType":"DoU","RemoteDNSIP":"1.1.1.1","DomesticDNSType":"DoU","DomesticDNSIP":"8.8.8.8",\#(rules),"Geositeurl":"https://fixture.invalid/geosite.dat","UseChunkFiles":"\#(chunked)"}"#
@@ -713,6 +715,56 @@ struct SubscriptionChecks {
     return 2
   }
 
+  // The core loads a geofile whole: one over 64 MB is trimmed from disk, and refused when it would serve complete.
+  static func largeGeofileChecks(directory: URL) async throws -> Int {
+    func field(_ number: UInt8, _ bytes: Data) -> Data {
+      precondition(bytes.count < 128)
+      return Data([number << 3 | 2, UInt8(bytes.count)]) + bytes
+    }
+    func varint(_ value: Int) -> Data {
+      var value = value, bytes = Data()
+      while value >= 128 { bytes.append(UInt8(value & 127 | 128)); value >>= 7 }
+      return bytes + [UInt8(value)]
+    }
+    let test = field(1, field(1, Data("TEST".utf8)) + field(2, Data([8, 3]) + field(2, Data("example.com".utf8))))
+    // An unused record whose unknown field 15 holds 66 MiB of zeros, sparse on disk.
+    let filler = 66 * 1024 * 1024
+    let inner = field(1, Data("BIG".utf8)) + Data([15 << 3 | 2]) + varint(filler)
+    let big = Data([10]) + varint(inner.count + filler) + inner
+    for (name, chunked, sites) in [("reduced", true, #""geosite:test""#), ("complete", false, #""geosite:test""#),
+                                   ("fallback", true, #""geosite:test","ext:geosite.dat:big""#)] {
+      let routes = try RoutingStore(directory: directory.appendingPathComponent(name))
+      routes.fetchGeofile = { _, _, file in
+        try big.write(to: file)
+        let handle = try FileHandle(forWritingTo: file)
+        defer { try? handle.close() }
+        try handle.truncate(atOffset: UInt64(big.count + filler))
+        try handle.seekToEnd()
+        try handle.write(contentsOf: test)
+        return (true, nil)
+      }
+      routes.publishManaged = { try routes.publish($0) }
+      try routes.importProvider(#"{"Name":"Large geofile","RemoteDNSType":"DoU","RemoteDNSIP":"1.1.1.1","DomesticDNSType":"DoU","DomesticDNSIP":"8.8.8.8","ProxySites":[\#(sites)],"Geositeurl":"https://fixture.invalid/geosite.dat","UseChunkFiles":"\#(chunked)"}"#,
+        subscriptionID: "source")
+      if name == "reduced" {
+        try await routes.prepareAssets(subscriptionID: "source")
+        let revision = try routes.runtimeRevision(subscriptionID: "source")!.assetRevision!
+        let runtime = try Data(contentsOf: directory.appendingPathComponent("\(name)/Assets/\(revision)/geosite.dat"))
+        try expect(runtime == test, "a geofile over 64 MB was not reduced to its used record")
+        continue
+      }
+      do {
+        try await routes.prepareAssets(subscriptionID: "source")
+        throw Failure(message: "a complete geofile over 64 MB was published (\(name))")
+      } catch RoutingStoreError.geofileTooLarge { }
+      let record = (routes.snapshot()["profiles"] as! [[String: Any]])[0]
+      try expect(record["geofileStatus"] as? String == "failed" && record["geofileError"] as? String == RoutingStore.geofileTooLargeMessage,
+        "a refused large geofile did not say why (\(name))")
+    }
+    print("PASS a geofile over 64 MB is reduced from disk, and refused when it would load whole")
+    return 1
+  }
+
   static func externalGeodataChecks(directory: URL) async throws -> Int {
     func field(_ number: UInt8, _ bytes: Data) -> Data {
       precondition(bytes.count < 128)
@@ -725,7 +777,7 @@ struct SubscriptionChecks {
     for selector in ["ext-site:geosite.dat:other", "ext-domain:geosite.dat:other"] {
       for inServer in [false, true] {
         let routes = try RoutingStore(directory: directory.appendingPathComponent("\(selector.prefix(8))-\(inServer)"))
-        routes.fetchGeofile = { _, _ in (site("TEST") + site("OTHER"), nil) }
+        routes.fetchGeofile = { _, _, file in try (site("TEST") + site("OTHER")).write(to: file); return (true, nil) }
         routes.publishManaged = { try routes.publish($0) }
         let servers: [Any] = inServer ? [["routing": ["rules": [["domain": [selector], "outboundTag": "proxy"]]]]] : []
         routes.serverConfigs = { ids in ids == ["source"] ? servers : [] }
@@ -744,7 +796,7 @@ struct SubscriptionChecks {
     }
     for (selector, file) in [("!geoip:ru", ip("US", 198) + ip("OTHER", 203)), ("!ext:geoip.dat:ru", ip("RU", 192) + ip("US", 198))] {
       let routes = try RoutingStore(directory: directory.appendingPathComponent(selector.hasPrefix("!ext") ? "negated-ext" : "negated-geoip"))
-      routes.fetchGeofile = { _, _ in (file, nil) }
+      routes.fetchGeofile = { _, _, target in try file.write(to: target); return (true, nil) }
       routes.publishManaged = { try routes.publish($0) }
       let servers: [Any] = [["routing": ["rules": [["ip": [selector], "outboundTag": "direct"]]]]]
       routes.serverConfigs = { ids in ids == ["source"] ? servers : [] }
@@ -777,7 +829,7 @@ struct SubscriptionChecks {
     let content = #"{"Name":"Asset fixture","RemoteDNSType":"DoU","RemoteDNSIP":"1.1.1.1","DomesticDNSType":"DoU","DomesticDNSIP":"8.8.8.8","DirectSites":["geosite:TEST"],"Geositeurl":"https://fixture.invalid/geosite.dat","UseChunkFiles":"true"}"#
     var data = site("TEST", "example.com") + site("UNUSED", "unused.example")
     var fetches = 0, publications = 0
-    routes.fetchGeofile = { _, _ in fetches += 1; return (data, nil) }
+    routes.fetchGeofile = { _, _, file in fetches += 1; try data.write(to: file); return (true, nil) }
     routes.publishManaged = { candidate in
       publications += 1
       try routes.publish(candidate)
@@ -797,11 +849,15 @@ struct SubscriptionChecks {
       "unused database records changed the effective runtime assets")
     print("PASS prepared and refreshed geodata retain byte-identical effective revisions")
 
-    // A refresh sends the stored file's validators, and nil data keeps that file.
+    // A refresh sends the stored file's validators, and no download keeps that file.
     let conditional = try RoutingStore(directory: directory.appendingPathComponent("conditional"))
     var sent: [GeofileValidators?] = []
     var reply: (Data?, GeofileValidators?) = (data, GeofileValidators(etag: "\"v1\""))
-    conditional.fetchGeofile = { _, stored in sent.append(stored); return reply }
+    conditional.fetchGeofile = { _, stored, file in
+      sent.append(stored)
+      try reply.0?.write(to: file)
+      return (reply.0 != nil, reply.1)
+    }
     conditional.publishManaged = { try conditional.publish($0) }
     try conditional.importProvider(content, subscriptionID: "source")
     try await conditional.prepareAssets(subscriptionID: "source")
@@ -832,7 +888,7 @@ struct SubscriptionChecks {
       "rollback could not restore assets after preparation")
     print("PASS changed selectors prepare once from retained originals and support rollback")
 
-    routes.fetchGeofile = { _, _ in throw Failure(message: "synthetic download failure") }
+    routes.fetchGeofile = { _, _, _ in throw Failure(message: "synthetic download failure") }
     try routes.importProvider(content.replacingOccurrences(of: "fixture.invalid", with: "changed.invalid"), subscriptionID: "source")
     do {
       try await routes.prepareAssets(subscriptionID: "source")
@@ -843,7 +899,7 @@ struct SubscriptionChecks {
     try expect(routes.runtimeRevision(subscriptionID: "source")?.assetRevision == original.assetRevision,
       "failed preparation discarded usable assets")
     try routes.restore(retained)
-    routes.fetchGeofile = { _, _ in throw CancellationError() }
+    routes.fetchGeofile = { _, _, _ in throw CancellationError() }
     do {
       _ = try await routes.refreshGeofiles(id: id, force: true)
       throw Failure(message: "cancelled database refresh succeeded")
@@ -854,9 +910,10 @@ struct SubscriptionChecks {
 
     try routes.restore(retained)
     var download: CheckedContinuation<Data, Error>?
-    routes.fetchGeofile = { _, _ in
+    routes.fetchGeofile = { _, _, file in
       let body: Data = try await withCheckedThrowingContinuation { download = $0 }
-      return (body, nil)
+      try body.write(to: file)
+      return (true, nil)
     }
     let pending = Task { @MainActor in try await routes.refreshGeofiles(id: id, force: true) }
     let deadline = Date().addingTimeInterval(2)
@@ -879,7 +936,7 @@ struct SubscriptionChecks {
 
     // A provider's JSON server can have its own rule on a code the routing profile never names.
     try routes.restore(retained)
-    routes.fetchGeofile = { _, _ in (data, nil) }
+    routes.fetchGeofile = { _, _, file in try data.write(to: file); return (true, nil) }
     var servers: [Any] = []
     var refs = ["server-1"]
     var reads = 0

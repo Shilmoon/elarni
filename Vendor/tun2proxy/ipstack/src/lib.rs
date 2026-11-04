@@ -2,7 +2,7 @@
 
 use ahash::AHashMap;
 use packet::{FragmentReassembler, NetworkPacket, NetworkTuple, TransportHeader};
-use std::{sync::Arc, time::Duration};
+use std::{collections::VecDeque, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     select,
@@ -306,7 +306,7 @@ impl Drop for IpStack {
 
 fn run<Device: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     config: IpStackConfig,
-    mut device: Device,
+    device: Device,
     accept_sender: UnboundedSender<IpStackStream>,
 ) -> JoinHandle<Result<()>> {
     let mut sessions: SessionCollection = AHashMap::new();
@@ -320,11 +320,39 @@ fn run<Device: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     // Keep the read boundary intact; TCP segmentation still uses config.mtu.
     let mut buffer = vec![0_u8; u16::MAX as usize + offset];
     let (up_pkt_sender, mut up_pkt_receiver) = mpsc::unbounded_channel::<NetworkPacket>();
+    // Elarni: writes run in their own task, so a device waiting for room does not stop reads.
+    let (mut reader, mut writer) = tokio::io::split(device);
+    let upstream = tokio::spawn(async move {
+        let mut queue = VecDeque::new();
+        loop {
+            let packet = match queue.pop_front() {
+                Some(packet) => packet,
+                None => match up_pkt_receiver.recv().await {
+                    Some(packet) => packet,
+                    None => return Ok::<(), IpStackError>(()),
+                },
+            };
+            let write = process_upstream_recv(
+                packet,
+                &mut writer,
+                #[cfg(unix)]
+                pi,
+            );
+            tokio::pin!(write);
+            loop {
+                select! {
+                    result = &mut write => break result?,
+                    Some(packet) = up_pkt_receiver.recv() => enqueue_upstream(&mut queue, packet),
+                }
+            }
+        }
+    });
 
     tokio::spawn(async move {
+        let mut upstream = AbortOnDrop(upstream);
         loop {
             select! {
-                Ok(n) = device.read(&mut buffer) => {
+                Ok(n) = reader.read(&mut buffer) => {
                     if let Err(e) = process_device_read(&buffer[offset..n], &mut fragments, &mut sessions, &session_remove_tx, &up_pkt_sender, &config, &accept_sender).await {
                         let io_err: std::io::Error = e.into();
                         if io_err.kind() == std::io::ErrorKind::ConnectionRefused {
@@ -339,12 +367,32 @@ fn run<Device: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
                     log::debug!("session destroyed: {network_tuple}");
                 }
                 _ = fragment_expiry.tick(), if !fragments.is_empty() => fragments.expire(),
-                Some(packet) = up_pkt_receiver.recv() => {
-                    process_upstream_recv(packet, &mut device, #[cfg(unix)]pi).await?;
+                result = &mut upstream.0 => {
+                    return result.map_err(std::io::Error::other)?;
                 }
             }
         }
     })
+}
+
+/// Packets queued while the device waits for room. Elarni: UDP and ICMP senders never wait, so a
+/// tunnel that stopped reading grew the queue without bound; past this many packets they are dropped
+/// like a full TUN queue drops them. TCP packets stay, bounded by each connection's window.
+const UPSTREAM_BACKLOG: usize = 1024;
+
+fn enqueue_upstream(queue: &mut VecDeque<NetworkPacket>, packet: NetworkPacket) {
+    if queue.len() < UPSTREAM_BACKLOG || matches!(packet.transport, TransportHeader::Tcp(_)) {
+        queue.push_back(packet);
+    }
+}
+
+/// Aborts the device writer when the stack's task ends or is aborted.
+struct AbortOnDrop(JoinHandle<Result<()>>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 async fn process_device_read(

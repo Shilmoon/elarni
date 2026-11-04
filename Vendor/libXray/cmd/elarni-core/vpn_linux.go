@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/xtls/libxray/geo"
 	"github.com/xtls/libxray/share"
 	"github.com/xtls/libxray/xray"
 	xnet "github.com/xtls/xray-core/common/net"
@@ -139,7 +140,7 @@ func linuxReadCommand(reader io.Reader) (linuxCommand, error) {
 	}
 	command.assets = map[string][]byte{}
 	for name, size := range command.AssetSizes {
-		if (name != "geoip.dat" && name != "geosite.dat") || size <= 0 || size > 64*1024*1024 {
+		if (name != "geoip.dat" && name != "geosite.dat") || size <= 0 || size > geo.MaxFileBytes {
 			return command, errors.New("invalid_assets")
 		}
 	}

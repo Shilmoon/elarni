@@ -1,0 +1,19 @@
+//go:build !android && !ios && !windows
+
+/* SPDX-License-Identifier: MIT
+ *
+ * Copyright (C) 2017-2025 WireGuard LLC. All Rights Reserved.
+ */
+
+package device
+
+import "golang.zx2c4.com/wireguard/conn"
+
+const (
+	QueueStagedSize            = conn.IdealBatchSize
+	QueueOutboundSize          = 1024
+	QueueInboundSize           = 1024
+	QueueHandshakeSize         = 1024
+	MaxSegmentSize             = 2048 - 32 // Elarni: one packet; Xray's bind does no UDP GSO/GRO and its TUN no offload
+	PreallocatedBuffersPerPool = 0         // Disable and allow for infinite memory growth
+)

@@ -341,7 +341,8 @@ object-code distribution under the existing GPLv3 release workflow.
 
 The resolved graph uses `github.com/sagernet/sing v0.9.0-beta.4` and
 `github.com/sagernet/quic-go v0.61.0-sing-box-mod.6` (MIT; retains the upstream
-quic-go contributors' license), alongside the existing Apernet QUIC dependency.
+quic-go contributors' license; source snapshot with Elarni changes in
+`Vendor/sagernet-quic-go`), alongside the existing Apernet QUIC dependency.
 The Xray adapter is Elarni-modified source recorded in
 `third_party/modifications.json`. Test-only sing-box/mihomo peers are not bundled.
 
@@ -370,6 +371,20 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## quic-go (Apernet) 0.61.1-0.20260806010916-184d081eef3e
+
+Module: github.com/apernet/quic-go
+Copyright (c) 2016 the quic-go authors & Google, Inc. Licensed under MIT.
+Source snapshot with Elarni changes recorded in `third_party/modifications.json`:
+`Vendor/quic-go`. License: `Vendor/quic-go/LICENSE`.
+
+## wireguard-go 0.0.0-20250521234502-f333402bd9cb
+
+Module: golang.zx2c4.com/wireguard
+Copyright (C) 2017-2025 WireGuard LLC. Licensed under MIT.
+Source snapshot with Elarni changes recorded in `third_party/modifications.json`:
+`Vendor/wireguard-go`. License: `Vendor/wireguard-go/LICENSE`.
 
 ## tun2proxy v0.8.3
 

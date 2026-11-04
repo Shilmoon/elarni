@@ -40,8 +40,11 @@ run(['cargo', 'build', '--locked', '-p', 'elarni-domain', '--target', target, '-
 shutil.copy2(output / f'rust/{target}/release/libelarni_domain.so', libraries)
 # ELARNI_RECORDING=1 builds the core with its connection recorder; Gradle reads the same switch.
 recording = ['-tags=elarni_recording'] if os.environ.get('ELARNI_RECORDING') == '1' else []
+# Go returns freed heap with MADV_FREE on GOOS=android (MADV_DONTNEED only on linux), so the kernel keeps it
+# in the app's RSS/PSS until memory pressure. The library starts with an empty environment, so GODEBUG is set
+# at link time; this replaces the go command's computed default, which is empty for this build.
 run([gomobile, 'bind', f'-target={gomobile_target}', '-androidapi=30', '-trimpath', *recording,
-    '-ldflags=-checklinkname=0', '-o', str(output / 'elarni-libxray.aar'), 'github.com/xtls/libxray'])
+    '-ldflags=-checklinkname=0 -X=runtime.godebugDefault=madvdontneed=1', '-o', str(output / 'elarni-libxray.aar'), 'github.com/xtls/libxray'])
 run([str(clang), '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror', '-I', 'include',
     'android/app/src/main/cpp/domain_jni.c', '-L', str(libraries), '-lelarni_domain',
     '-Wl,--no-undefined', '-Wl,-z,max-page-size=16384', '-o', str(libraries / 'libelarni_jni.so')])

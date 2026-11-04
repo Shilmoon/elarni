@@ -37,8 +37,9 @@ type assetValidators struct {
 	LastModified string `json:"lastModified,omitempty"`
 }
 
-// assetFetch downloads url; given the stored original's validators, a nil body means that original is current.
-type assetFetch func(url string, stored assetValidators) ([]byte, assetValidators, error)
+// assetFetch downloads url into the new file destination and reports whether it did: given the stored
+// original's validators, false means that original is current.
+type assetFetch func(url string, stored assetValidators, destination string) (bool, assetValidators, error)
 
 func prepareAssets(root string, request assetRequest, fetch assetFetch) (any, error) {
 	if len(request.Files) > 2 || len(request.Selectors)+len(request.Optional) > 65536 ||
@@ -81,32 +82,43 @@ func prepareAssets(root string, request assetRequest, fetch assetFetch) (any, er
 		if url == "" {
 			continue
 		}
-		var original []byte
+		// Originals stay on disk (Elarni): one may be far larger than the core's limit.
+		original := filepath.Join(stage, name+".original.dat")
+		var stored string
 		var validators assetValidators
-		var err error
 		if request.Previous != "" {
-			original, err = readAssetFile(filepath.Join(root, request.Previous, name+".original.dat"))
+			stored = filepath.Join(root, request.Previous, name+".original.dat")
 			validators = readAssetSource(filepath.Join(root, request.Previous, name+".source.json"), url)
+			if info, err := os.Stat(stored); err != nil || !info.Mode().IsRegular() {
+				stored = ""
+			}
 		}
-		if original == nil || err != nil {
-			original, validators, err = fetch(url, assetValidators{})
+		downloaded := false
+		var err error
+		if stored == "" {
+			downloaded, validators, err = fetch(url, assetValidators{}, original)
 		} else if request.Refresh && (request.File == "" || request.File == name) {
-			var body []byte
 			var fresh assetValidators
-			// A nil body leaves the stored original in place.
-			if body, fresh, err = fetch(url, validators); body != nil {
-				original, validators = body, fresh
+			if downloaded, fresh, err = fetch(url, validators, original); downloaded {
+				validators = fresh
 			}
 		}
 		if err != nil {
 			return nil, err
 		}
-		data, reduction, skips, err := geo.Reduce(name, original, request.Selectors, request.Optional, request.Reduce)
+		if !downloaded && copyAssetFile(stored, original) != nil {
+			return nil, errors.New("assets_unavailable")
+		}
+		target := filepath.Join(stage, name+".dat")
+		reduction, skips, err := geo.ReduceFile(name, original, target, request.Selectors, request.Optional, request.Reduce)
 		var lacks geo.MissingError
 		if errors.As(err, &lacks) {
 			// Name the codes from both files at once.
 			missing = append(missing, lacks...)
 			continue
+		}
+		if err != nil && (err.Error() == "input_too_large" || err.Error() == "assets_unavailable") {
+			return nil, err
 		}
 		if err != nil {
 			return nil, errors.New("invalid_geodata")
@@ -115,8 +127,9 @@ func prepareAssets(root string, request assetRequest, fetch assetFetch) (any, er
 		if reduction == "fullFileFallback" {
 			status = reduction
 		}
-		if writeAssetFile(filepath.Join(stage, name+".original.dat"), original) != nil ||
-			writeAssetFile(filepath.Join(stage, name+".dat"), data) != nil {
+		originalInfo, errOriginal := os.Stat(original)
+		targetInfo, errTarget := os.Stat(target)
+		if errOriginal != nil || errTarget != nil {
 			return nil, errors.New("assets_unavailable")
 		}
 		if validators != (assetValidators{}) {
@@ -137,8 +150,8 @@ func prepareAssets(root string, request assetRequest, fetch assetFetch) (any, er
 		if err != nil || !json.Valid(counts) {
 			return nil, errors.New("invalid_geodata")
 		}
-		files = append(files, map[string]any{"name": name, "source": url, "bytes": len(data),
-			"originalBytes": len(original), "updatedAt": float64(time.Now().UnixMilli()) / 1000})
+		files = append(files, map[string]any{"name": name, "source": url, "bytes": targetInfo.Size(),
+			"originalBytes": originalInfo.Size(), "updatedAt": float64(time.Now().UnixMilli()) / 1000})
 	}
 	if len(missing) > 0 {
 		return map[string]any{"missing": missing}, missing
@@ -176,16 +189,64 @@ func readAssetSource(path, url string) assetValidators {
 
 func sameAssetFiles(first, second string) bool {
 	for _, name := range []string{"geoip.dat", "geosite.dat", "geoip.original.dat", "geosite.original.dat"} {
-		a, errA := os.ReadFile(filepath.Join(first, name))
-		b, errB := os.ReadFile(filepath.Join(second, name))
+		_, errA := os.Stat(filepath.Join(first, name))
+		_, errB := os.Stat(filepath.Join(second, name))
 		if errors.Is(errA, os.ErrNotExist) && errors.Is(errB, os.ErrNotExist) {
 			continue
 		}
-		if errA != nil || errB != nil || !bytes.Equal(a, b) {
+		if !sameFile(filepath.Join(first, name), filepath.Join(second, name)) {
 			return false
 		}
 	}
 	return true
+}
+
+// sameFile compares two files a chunk at a time; an original may be far larger than the core's limit.
+func sameFile(first, second string) bool {
+	a, errA := os.Open(first)
+	b, errB := os.Open(second)
+	if errA == nil {
+		defer a.Close()
+	}
+	if errB == nil {
+		defer b.Close()
+	}
+	if errA != nil || errB != nil {
+		return false
+	}
+	infoA, errA := a.Stat()
+	infoB, errB := b.Stat()
+	if errA != nil || errB != nil || infoA.Size() != infoB.Size() {
+		return false
+	}
+	bufA, bufB := make([]byte, 64<<10), make([]byte, 64<<10)
+	for {
+		n, errA := io.ReadFull(a, bufA)
+		m, errB := io.ReadFull(b, bufB)
+		if n != m || !bytes.Equal(bufA[:n], bufB[:m]) {
+			return false
+		}
+		if errA != nil || errB != nil {
+			// ReadFull reports a short last chunk as ErrUnexpectedEOF and none as EOF.
+			return errA == errB && (errA == io.EOF || errA == io.ErrUnexpectedEOF)
+		}
+	}
+}
+
+// copyAssetFile copies a stored original into a staged revision.
+func copyAssetFile(source, target string) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	syncErr := out.Sync()
+	return errors.Join(copyErr, syncErr, out.Close())
 }
 
 func writeAssetFile(path string, data []byte) error {
@@ -299,19 +360,19 @@ func installAssets(assets map[string][]byte) error {
 	return nil
 }
 
-func downloadAsset(url string, stored assetValidators) ([]byte, assetValidators, error) {
-	result, err := share.FetchResource(context.Background(), share.SubscriptionFetchRequest{URL: url, ETag: stored.ETag, LastModified: stored.LastModified}, 64*1024*1024, 180*time.Second, true)
+func downloadAsset(url string, stored assetValidators, destination string) (bool, assetValidators, error) {
+	result, err := share.FetchResourceToFile(context.Background(), share.SubscriptionFetchRequest{URL: url, ETag: stored.ETag, LastModified: stored.LastModified}, geo.MaxSourceBytes, 180*time.Second, destination)
 	if err != nil {
-		return nil, assetValidators{}, err
+		return false, assetValidators{}, err
 	}
 	value := result.(map[string]any)
 	if value["warning"] != nil {
-		return nil, assetValidators{}, errors.New("approval_required")
+		return false, assetValidators{}, errors.New("approval_required")
 	}
 	if value["notModified"] == true {
-		return nil, stored, nil
+		return false, stored, nil
 	}
 	etag, _ := value["etag"].(string)
 	modified, _ := value["lastModified"].(string)
-	return value["body"].([]byte), assetValidators{ETag: etag, LastModified: modified}, nil
+	return true, assetValidators{ETag: etag, LastModified: modified}, nil
 }

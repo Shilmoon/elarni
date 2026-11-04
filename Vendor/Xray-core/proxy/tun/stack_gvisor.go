@@ -24,13 +24,15 @@ import (
 const (
 	defaultNIC tcpip.NICID = 1
 
+	// Elarni: a stalled app or upload keeps its buffer full, and gVisor grew them to 8 and 6 MiB.
+	// On a phone, 1 MiB kept upload speed and a 2 MiB send buffer kept download speed (1 MiB cost 9%).
 	tcpRXBufMinSize = tcp.MinBufferSize
 	tcpRXBufDefSize = tcp.DefaultSendBufferSize
-	tcpRXBufMaxSize = 8 << 20 // 8MiB
+	tcpRXBufMaxSize = 1 << 20
 
 	tcpTXBufMinSize = tcp.MinBufferSize
 	tcpTXBufDefSize = tcp.DefaultReceiveBufferSize
-	tcpTXBufMaxSize = 6 << 20 // 6MiB
+	tcpTXBufMaxSize = 2 << 20
 )
 
 // stackGVisor is ip stack implemented by gVisor package
@@ -62,6 +64,22 @@ func (e *closableEndpoint) WritePackets(packets stack.PacketBufferList) (int, tc
 	return e.LinkEndpoint.WritePackets(packets)
 }
 
+// GSOMaxSize and SupportedGSO pass the device's segmentation offload through,
+// which the embedded interface hides from gVisor.
+func (e *closableEndpoint) GSOMaxSize() uint32 {
+	if device, ok := e.LinkEndpoint.(stack.GSOEndpoint); ok {
+		return device.GSOMaxSize()
+	}
+	return 0
+}
+
+func (e *closableEndpoint) SupportedGSO() stack.SupportedGSO {
+	if device, ok := e.LinkEndpoint.(stack.GSOEndpoint); ok {
+		return device.SupportedGSO()
+	}
+	return stack.GSONotSupported
+}
+
 // closeWrites returns once no write is in progress or can start.
 func (e *closableEndpoint) closeWrites() {
 	e.mu.Lock()
@@ -89,7 +107,7 @@ func (t *stackGVisor) Start() error {
 	}
 	linkEndpoint := &closableEndpoint{LinkEndpoint: device}
 
-	ipStack, err := createStack(linkEndpoint)
+	ipStack, err := newStack()
 	if err != nil {
 		return err
 	}
@@ -113,7 +131,7 @@ func (t *stackGVisor) Start() error {
 			options.SetReusePort(true)
 
 			t.handler.HandleConnection(
-				gonet.NewTCPConn(&wq, ep),
+				&tcpConn{TCPConn: gonet.NewTCPConn(&wq, ep), ep: ep},
 				// local address on the gVisor side is connection destination
 				net.TCPDestination(net.IPAddress(id.LocalAddress.AsSlice()), net.Port(id.LocalPort)),
 			)
@@ -149,6 +167,10 @@ func (t *stackGVisor) Start() error {
 	})
 	ipStack.SetTransportProtocolHandler(icmp.ProtocolNumber4, t.handleICMPv4Packet)
 	ipStack.SetTransportProtocolHandler(icmp.ProtocolNumber6, t.handleICMPv6Packet)
+
+	if err := attachNIC(ipStack, linkEndpoint); err != nil {
+		return err
+	}
 
 	t.stack = ipStack
 	t.endpoint = linkEndpoint
@@ -249,16 +271,21 @@ func (t *stackGVisor) Wait() {
 
 // createStack configure gVisor ip stack
 func createStack(ep stack.LinkEndpoint) (*stack.Stack, error) {
-	opts := stack.Options{
-		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
-		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol, icmp.NewProtocol4, icmp.NewProtocol6},
-		HandleLocal:        false,
-	}
-	gStack := stack.New(opts)
-
-	err := gStack.CreateNIC(defaultNIC, ep)
+	gStack, err := newStack()
 	if err != nil {
-		return nil, errors.New(err.String())
+		return nil, err
+	}
+	if err := attachNIC(gStack, ep); err != nil {
+		return nil, err
+	}
+	return gStack, nil
+}
+
+// attachNIC starts the device's packet reader, so the stack must be complete,
+// handlers included: a reader started earlier delivers to a half-built stack.
+func attachNIC(gStack *stack.Stack, ep stack.LinkEndpoint) error {
+	if err := gStack.CreateNIC(defaultNIC, ep); err != nil {
+		return errors.New(err.String())
 	}
 
 	gStack.SetRouteTable([]tcpip.Route{
@@ -266,14 +293,22 @@ func createStack(ep stack.LinkEndpoint) (*stack.Stack, error) {
 		{Destination: header.IPv6EmptySubnet, NIC: defaultNIC},
 	})
 
-	err = gStack.SetSpoofing(defaultNIC, true)
-	if err != nil {
-		return nil, errors.New(err.String())
+	if err := gStack.SetSpoofing(defaultNIC, true); err != nil {
+		return errors.New(err.String())
 	}
-	err = gStack.SetPromiscuousMode(defaultNIC, true)
-	if err != nil {
-		return nil, errors.New(err.String())
+	if err := gStack.SetPromiscuousMode(defaultNIC, true); err != nil {
+		return errors.New(err.String())
 	}
+	return nil
+}
+
+func newStack() (*stack.Stack, error) {
+	opts := stack.Options{
+		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
+		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol, icmp.NewProtocol4, icmp.NewProtocol6},
+		HandleLocal:        false,
+	}
+	gStack := stack.New(opts)
 
 	cOpt := tcpip.CongestionControlOption("cubic")
 	gStack.SetTransportProtocolOption(tcp.ProtocolNumber, &cOpt)
@@ -286,12 +321,20 @@ func createStack(ep stack.LinkEndpoint) (*stack.Stack, error) {
 	rOpt := tcpip.TCPRecovery(0)
 	gStack.SetTransportProtocolOption(tcp.ProtocolNumber, &rOpt)
 
+	// The stack closes first for blocked sites and servers that close; the app's kernel then frees the port at once
+	// and may reuse it. A SYN meeting a TIME_WAIT endpoint is handed only to a listener, never to the forwarder, so
+	// that connect would hang for the whole TIME_WAIT (60 s). The TUN link has no stale duplicates for it to absorb.
+	twOpt := tcpip.TCPTimeWaitTimeoutOption(0)
+	if err := gStack.SetTransportProtocolOption(tcp.ProtocolNumber, &twOpt); err != nil {
+		return nil, errors.New(err.String())
+	}
+
 	tcpRXBufOpt := tcpip.TCPReceiveBufferSizeRangeOption{
 		Min:     tcpRXBufMinSize,
 		Default: tcpRXBufDefSize,
 		Max:     tcpRXBufMaxSize,
 	}
-	err = gStack.SetTransportProtocolOption(tcp.ProtocolNumber, &tcpRXBufOpt)
+	err := gStack.SetTransportProtocolOption(tcp.ProtocolNumber, &tcpRXBufOpt)
 	if err != nil {
 		return nil, errors.New(err.String())
 	}

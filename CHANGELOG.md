@@ -4,15 +4,6 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
-### Fixed
-
-- iOS: the VPN recovers after a switch between Wi-Fi and cellular, or between two Wi-Fi
-  networks. The tunnel restarts its core in place once the new network has held for
-  6 s, and retries if the new network isn't ready yet.
-- iOS and macOS: the packet tunnel no longer keeps every packet it wrote until it stops;
-  download-heavy apps made iOS end the VPN at its 50 MB memory limit.
-- iOS: diagnostics report the memory footprint iOS counts against that limit.
-
 ### Changed
 
 - Release files are built on GitHub-hosted runners and come with build provenance
@@ -34,6 +25,18 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ### Fixed
 
+- RU routing from runetfreedom's geofiles works again: its geosite.dat passed the
+  64 MiB limit. Downloaded geofiles (up to 256 MiB) are streamed to disk and trimmed
+  to the categories your rules use; with Reduce routing-data size off, a file over
+  64 MiB fails the refresh with a clear message.
+- Android: connections no longer hang when the phone reuses a port the tunnel still
+  held in TIME_WAIT, and connection bursts are no longer refused.
+- iOS: the VPN recovers after a switch between Wi-Fi and cellular, or between two Wi-Fi
+  networks. The tunnel restarts its core in place once the new network has held for
+  6 s, and retries if the new network isn't ready yet.
+- iOS and macOS: the packet tunnel no longer keeps every packet it wrote until it stops;
+  download-heavy apps made iOS end the VPN at its 50 MB memory limit.
+- iOS: diagnostics report the memory footprint iOS counts against that limit.
 - A subscription refresh no longer reconnects when the active server changed only its
   REALITY shortId or SNI, which 3x-ui picks at random on every fetch. The stored values
   are kept for 24 hours after the server's last connect, so a shortId the panel retired
@@ -51,6 +54,18 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - Windows: upgrading an install that never had the ElarniVPN service sets it up for the
   installing account once, so connecting stops asking for administrator approval. An
   install run as SYSTEM (Intune, SCCM) sets up no account.
+
+### Performance
+
+- Faster downloads and connects on every platform: WireGuard, QUIC (Hysteria2,
+  XHTTP/3, TUIC), XHTTP and the TUN stacks got larger, bounded buffers, and a stalled
+  QUIC stream no longer freezes its connection. On Windows, 8-stream downloads are
+  1.2-3.3x faster on 22 of 24 protocols, with 1.5-5x less CPU per GB.
+- Server-first protocols (SMTP, IMAP, MySQL, SSH and others) get their greeting at
+  once instead of after up to 0.7 s.
+- Per-app routing looks a connection's process up once instead of once per rule.
+- The core returns memory after traffic stops (desktop) and returns freed memory to
+  the system (Android).
 
 ## 0.4.0 - 2026-11-01
 

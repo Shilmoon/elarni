@@ -158,7 +158,7 @@ enum SubscriptionFeedFetcher {
       case "hwid_limit": throw SubscriptionError.hwidLimit
       case "hwid_required": throw SubscriptionError.hwidRequired
       case "invalid_target", "invalid_fetch_options": throw SubscriptionError.invalidURL
-      case "invalid_feed": throw SubscriptionError.invalidFeed
+      case "invalid_feed", "input_too_large": throw SubscriptionError.invalidFeed
       case "fetch_cancelled": throw CancellationError()
       case let code? where ["dns_failed", "provider_unreachable", "provider_error", "rate_limited",
                             "subscription_denied", "subscription_unavailable"].contains(code):
@@ -219,37 +219,42 @@ struct GeofileValidators: Codable, Equatable {
 // No production caller supplies approvals for routing resources.
 enum RoutingResourceFetcher {
   static func fetch(_ url: URL, maxBytes: Int, approvedChain: [String] = []) async throws -> Data {
-    guard let data = try await fetch(url, maxBytes: maxBytes, approvedChain: approvedChain, stored: nil).data else {
-      throw SubscriptionError.invalidFeed
-    }
+    guard maxBytes == 4 * 1024 * 1024 else { throw SubscriptionError.invalidFeed }
+    let result = try await fetchResource(url, kind: "domains", approvedChain: approvedChain, stored: nil, destination: nil)
+    guard let body = result["body"] as? String, let data = Data(base64Encoded: body),
+          !data.isEmpty, data.count <= maxBytes else { throw SubscriptionError.invalidFeed }
     return data
   }
 
-  /// With the stored copy's validators, nil data means that copy is current.
-  static func fetch(_ url: URL, maxBytes: Int, approvedChain: [String] = [],
-    stored: GeofileValidators?) async throws -> (data: Data?, validators: GeofileValidators?) {
-    guard [4 * 1024 * 1024, 64 * 1024 * 1024].contains(maxBytes) else {
-      throw SubscriptionError.invalidFeed
-    }
+  /// Saves the geofile to `destination` unread; libXray caps it at geo.MaxSourceBytes.
+  /// With the stored copy's validators, false means that copy is current.
+  static func fetchGeofile(_ url: URL, stored: GeofileValidators?, to destination: URL,
+    approvedChain: [String] = []) async throws -> (downloaded: Bool, validators: GeofileValidators?) {
+    let result = try await fetchResource(url, kind: "geofile", approvedChain: approvedChain, stored: stored, destination: destination)
+    if stored != nil, result["notModified"] as? Bool == true { return (false, stored) }
+    guard (result["bytes"] as? NSNumber)?.int64Value ?? 0 > 0 else { throw SubscriptionError.invalidFeed }
+    let validators = GeofileValidators(etag: result["etag"] as? String, lastModified: result["lastModified"] as? String)
+    return (true, validators == GeofileValidators() ? nil : validators)
+  }
+
+  private static func fetchResource(_ url: URL, kind: String, approvedChain: [String], stored: GeofileValidators?,
+    destination: URL?) async throws -> [String: Any] {
     let id = UUID().uuidString.lowercased()
-    let request: [String: Any] = ["operationId": id, "url": url.absoluteString,
-      "resourceKind": maxBytes == 64 * 1024 * 1024 ? "geofile" : "domains",
+    var request: [String: Any] = ["operationId": id, "url": url.absoluteString, "resourceKind": kind,
       "approvedChain": approvedChain, "etag": stored?.etag ?? "", "lastModified": stored?.lastModified ?? ""]
-    _ = try SubscriptionFeedFetcher.invoke("prepareFetch", request)
+    if let destination { request["destination"] = destination.path }
+    let arguments = request
+    _ = try SubscriptionFeedFetcher.invoke("prepareFetch", arguments)
     defer { _ = try? SubscriptionFeedFetcher.invoke("releaseFetch", ["operationId": id]) }
     return try await withTaskCancellationHandler {
       try Task.checkCancellation()
-      let result = try await Task.detached { try SubscriptionFeedFetcher.invoke("fetchResource", request) }.value
+      let result = try await Task.detached { try SubscriptionFeedFetcher.invoke("fetchResource", arguments) }.value
       try Task.checkCancellation()
       if let warning = result["warning"] as? [String: Any],
          let codes = warning["riskCodes"] as? [String], let chain = warning["chain"] as? [String] {
         throw SubscriptionApprovalRequirement(riskCodes: codes.compactMap(SubscriptionRiskCode.init(rawValue:)), candidateChain: chain)
       }
-      if stored != nil, result["notModified"] as? Bool == true { return (nil, stored) }
-      guard let body = result["body"] as? String, let data = Data(base64Encoded: body),
-            !data.isEmpty, data.count <= maxBytes else { throw SubscriptionError.invalidFeed }
-      let validators = GeofileValidators(etag: result["etag"] as? String, lastModified: result["lastModified"] as? String)
-      return (data, validators == GeofileValidators() ? nil : validators)
+      return result
     } onCancel: {
       _ = try? SubscriptionFeedFetcher.invoke("cancelFetch", ["operationId": id])
     }

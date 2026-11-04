@@ -126,10 +126,10 @@ func NewClient(ctx context.Context, conf *DeviceConfig) (*Handler, error) {
 	}
 	if !conf.NoKernelTun && kernelTunSupported {
 		errors.LogWarning(context.Background(), "Using kernel TUN")
-		tun, tnet, err = createKernelTun(localAddresses, dnsServers, int(conf.Mtu))
+		tun, tnet, err = createKernelTun(localAddresses, dnsServers, tunnelMTU(conf.Mtu, conf.Amnezia))
 	} else {
 		errors.LogWarning(context.Background(), "Using gVisor TUN")
-		tun, tnet, _, err = CreateNetTUN(localAddresses, dnsServers, int(conf.Mtu), true)
+		tun, tnet, _, err = CreateNetTUN(localAddresses, dnsServers, tunnelMTU(conf.Mtu, conf.Amnezia), true)
 	}
 	if err != nil {
 		return nil, err
@@ -581,4 +581,13 @@ func (c *PacketCounterConnection) WriteTo(p []byte, addr net.Addr) (n int, err e
 		c.WriteCounter.Add(int64(n))
 	}
 	return
+}
+
+// tunnelMTU keeps tunnel packets within the standard engine's message buffers, which the
+// Elarni wireguard-go fork sizes for one packet; AmneziaWG keeps 64 KiB buffers for its padding.
+func tunnelMTU(mtu int32, amnezia bool) int {
+	if amnezia {
+		return int(mtu)
+	}
+	return min(int(mtu), device.MaxContentSize)
 }

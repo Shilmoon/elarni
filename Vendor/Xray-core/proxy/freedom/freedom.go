@@ -533,23 +533,20 @@ type PacketReader struct {
 }
 
 func (r *PacketReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
-	// Copy each datagram out of one scratch buffer so queued small datagrams
-	// do not each pin a UDPSize allocation.
-	if r.scratch == nil {
-		r.scratch = make([]byte, buf.UDPSize)
-	}
 	for {
-		n, d, err := r.PacketConnWrapper.ReadFrom(r.scratch)
+		// Each datagram gets a buffer of its own size, so queued small datagrams do
+		// not each pin a UDPSize allocation and a waiting flow holds none.
+		b, d, err := buf.ReadPacketFrom(r.PacketConnWrapper.PacketConn, &r.scratch)
 		if err != nil {
 			return nil, err
 		}
+		n := b.Len()
 		udpAddr := d.(*net.UDPAddr)
 		sourceAddr := net.IPAddress(udpAddr.IP)
 		if rule := r.Handler.matchFinalRule(net.Network_UDP, sourceAddr, net.Port(udpAddr.Port), r.DefaultRule); rule != nil && rule.action == RuleAction_Block {
+			b.Release()
 			continue
 		}
-		b := buf.NewWithSize(int32(n))
-		b.Write(r.scratch[:n])
 
 		// if udp dest addr is changed, we are unable to get the correct src addr
 		// so we don't attach src info to udp packet, break cone behavior, assuming the dial dest is the expected scr addr

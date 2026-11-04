@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/xtls/xray-core/common/errors"
 )
@@ -166,44 +168,71 @@ func findInodeInFile(filePath, targetHexAddr, remote string, udp bool) (string, 
 	return inode, nil
 }
 
+// readLink is swapped by tests to count reads.
+var readLink = os.Readlink
+
+// recentOwners lists the processes that owned the last looked-up sockets, newest
+// first. A full scan readlinks every open file on the host (14 ms at 10k fds),
+// while apps open their connections in bursts.
+var recentOwners struct {
+	sync.Mutex
+	pids []string
+}
+
 func findPidByInode(inode string) (string, error) {
+	targetLink := "socket:[" + inode + "]"
+	recentOwners.Lock()
+	recent := slices.Clone(recentOwners.pids)
+	recentOwners.Unlock()
+	for _, pid := range recent {
+		if ownsSocket(pid, targetLink) {
+			rememberOwner(pid)
+			return pid, nil
+		}
+	}
+
 	procDir, err := os.ReadDir("/proc")
 	if err != nil {
 		return "", err
 	}
-
-	targetLink := "socket:[" + inode + "]"
-
 	for _, entry := range procDir {
-		if !entry.IsDir() {
+		pid := entry.Name()
+		if !entry.IsDir() || slices.Contains(recent, pid) {
 			continue
 		}
-		pid := entry.Name()
 		if _, err := strconv.Atoi(pid); err != nil {
 			continue
 		}
-
-		fdPath := fmt.Sprintf("/proc/%s/fd", pid)
-		fdDir, err := os.ReadDir(fdPath)
-		if err != nil {
-			continue
-		}
-
-		for _, fdEntry := range fdDir {
-			linkPath := fmt.Sprintf("%s/%s", fdPath, fdEntry.Name())
-			linkTarget, err := os.Readlink(linkPath)
-			if err != nil {
-				continue
-			}
-			if linkTarget == targetLink {
-				return pid, nil
-			}
+		if ownsSocket(pid, targetLink) {
+			rememberOwner(pid)
+			return pid, nil
 		}
 	}
 	return "", nil
 }
 
+func rememberOwner(pid string) {
+	recentOwners.Lock()
+	defer recentOwners.Unlock()
+	others := slices.DeleteFunc(recentOwners.pids, func(p string) bool { return p == pid })
+	recentOwners.pids = append([]string{pid}, others[:min(len(others), 7)]...)
+}
+
+func ownsSocket(pid, targetLink string) bool {
+	fdPath := "/proc/" + pid + "/fd"
+	fdDir, err := os.ReadDir(fdPath)
+	if err != nil {
+		return false
+	}
+	for _, fdEntry := range fdDir {
+		if linkTarget, err := readLink(fdPath + "/" + fdEntry.Name()); err == nil && linkTarget == targetLink {
+			return true
+		}
+	}
+	return false
+}
+
 func getAbsPath(pid string) (string, error) {
 	path := fmt.Sprintf("/proc/%s/exe", pid)
-	return os.Readlink(path)
+	return readLink(path)
 }

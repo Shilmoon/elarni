@@ -41,6 +41,8 @@ func (l *Loopback) Process(ctx context.Context, link *transport.Link, _ internet
 		// sniffed, and protocol and attribute rules would stop matching.
 		content.Protocol = origin.Protocol
 		content.Attributes = origin.Attributes
+		// The second pass sniffs nothing more, so a silent client would wait again for its first payload.
+		content.ClientSilent = origin.ClientSilent
 	}
 	content.SniffingRequest = l.sniffingRequest
 

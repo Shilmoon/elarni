@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	qtls "github.com/sagernet/sing-quic"
 	quic "github.com/sagernet/sing-quic/tuic"
 	M "github.com/sagernet/sing/common/metadata"
 	ST "github.com/sagernet/sing/common/tls"
@@ -89,7 +90,8 @@ func (c *Client) initialize(ctx context.Context, dialer internet.Dialer) (*quic.
 	client, err := quic.NewClient(quic.ClientOptions{Context: ownerCtx, Dialer: sockets,
 		ServerAddress: M.ParseSocksaddr(destination.NetAddr()), TLSConfig: &tlsAdapter{config: tlsConfig, timeout: 10 * time.Second},
 		UUID: id, Password: c.config.Password, CongestionControl: c.config.CongestionControl,
-		UDPStream: c.config.UdpStream, Heartbeat: time.Duration(c.config.Heartbeat), ZeroRTTHandshake: c.config.ZeroRttHandshake})
+		UDPStream: c.config.UdpStream, Heartbeat: time.Duration(c.config.Heartbeat), ZeroRTTHandshake: c.config.ZeroRttHandshake,
+		QUICOptions: clientQUICOptions})
 	if err != nil {
 		cancel()
 		return nil, errors.New("invalid TUIC options")
@@ -181,8 +183,10 @@ func (c *Client) Process(ctx context.Context, link *transport.Link, dialer inter
 		defer timer.SetTimeout(p.Timeouts.DownlinkOnly)
 		if handshake != nil {
 			// A client that half-closed without data still waits for the server to speak.
-			if err := buf.CopyOnceTimeout(link.Reader, writer, 100*time.Millisecond); err != nil && err != io.EOF && err != buf.ErrNotTimeoutReader && err != buf.ErrReadTimeout {
-				return err
+			if !session.SkipFirstPayloadWait(ctx, target) { // Elarni: its client waits for the server's greeting
+				if err := buf.CopyOnceTimeout(link.Reader, writer, 100*time.Millisecond); err != nil && err != io.EOF && err != buf.ErrNotTimeoutReader && err != buf.ErrReadTimeout {
+					return err
+				}
 			}
 			if err := handshake(); err != nil {
 				return err
@@ -196,6 +200,9 @@ func (c *Client) Process(ctx context.Context, link *transport.Link, dialer inter
 	}
 	return task.Run(ctx, request, task.OnSuccess(response, task.Close(link.Writer)))
 }
+
+// quicSocketBuffer is the size quic-go asks for on sockets it owns.
+const quicSocketBuffer = 7 << 20
 
 // DialSystem applies DNS strategy, UDP chaining and the mandatory platform controller.
 // sing-quic accepts this packet-oriented net.Conn directly, preserving datagrams.
@@ -218,6 +225,14 @@ func (d *socketDialer) DialContext(ctx context.Context, network string, destinat
 	if err != nil {
 		done()
 		return nil, err
+	}
+	if wrapper, ok := conn.(*xnet.PacketConnWrapper); ok {
+		if udp, ok := wrapper.PacketConn.(*net.UDPConn); ok {
+			// quic-go cannot reach the socket behind this wrapper to enlarge its buffers
+			// itself; the defaults (768 KiB on macOS) dropped datagrams during transfers.
+			_ = udp.SetReadBuffer(quicSocketBuffer)
+			_ = udp.SetWriteBuffer(quicSocketBuffer)
+		}
 	}
 	owned := &ownedSocket{Conn: conn}
 	owned.done = func() { done(); d.mu.Lock(); delete(d.sockets, owned); d.mu.Unlock() }
@@ -265,6 +280,10 @@ func (c *ownedSocket) Close() error {
 	c.once.Do(func() { err = c.Conn.Close(); c.done() })
 	return err
 }
+
+// quic-go starts the connection window at 3 MB, which two stalled downloads filled,
+// so every new stream on the connection waited until they were read.
+var clientQUICOptions = qtls.QUICOptions{ConnectionReceiveWindow: 16 << 20}
 
 type tlsAdapter struct {
 	config  *tls.Config

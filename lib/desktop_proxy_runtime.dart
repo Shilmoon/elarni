@@ -283,6 +283,7 @@ extension _ProxyRuntime on DesktopProxy {
         const safe = {
           'invalid_assets',
           'invalid_geodata',
+          'input_too_large',
           'missing_geodata',
           'assets_missing',
           'assets_unavailable',

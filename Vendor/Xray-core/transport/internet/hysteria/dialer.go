@@ -65,25 +65,8 @@ func (c *client) close() {
 	c.udpSM = nil
 }
 
-func (c *client) dial(ctx context.Context) error {
-	if c.forced {
-		return errors.New("client is closed")
-	}
-
-	switch c.status() {
-	case StatusActive:
-		return nil
-	case StatusInactive:
-		c.close()
-	}
-
-	quicParams := c.quicParams
-	if quicParams == nil {
-		quicParams = &internet.QuicParams{
-			BbrProfile: string(bbr.ProfileStandard),
-		}
-	}
-
+// newQuicConfig is the client's QUIC configuration for quicParams.
+func newQuicConfig(quicParams *internet.QuicParams) *quic.Config {
 	quicConfig := &quic.Config{
 		InitialStreamReceiveWindow:     quicParams.InitStreamReceiveWindow,
 		MaxStreamReceiveWindow:         quicParams.MaxStreamReceiveWindow,
@@ -113,6 +96,29 @@ func (c *client) dial(ctx context.Context) error {
 	if quicParams.MaxIdleTimeout == 0 {
 		quicConfig.MaxIdleTimeout = 30 * time.Second
 	}
+	return quicConfig
+}
+
+func (c *client) dial(ctx context.Context) error {
+	if c.forced {
+		return errors.New("client is closed")
+	}
+
+	switch c.status() {
+	case StatusActive:
+		return nil
+	case StatusInactive:
+		c.close()
+	}
+
+	quicParams := c.quicParams
+	if quicParams == nil {
+		quicParams = &internet.QuicParams{
+			BbrProfile: string(bbr.ProfileStandard),
+		}
+	}
+	quicConfig := newQuicConfig(quicParams)
+
 	// if quicParams.KeepAlivePeriod == 0 {
 	// 	quicConfig.KeepAlivePeriod = 10 * time.Second
 	// }
@@ -238,23 +244,26 @@ func (c *client) tcp(ctx context.Context) (stat.Connection, error) {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case c.lock <- struct{}{}:
-		defer c.unlock()
 	}
 
 	err := c.dial(ctx)
+	conn := c.conn
+	c.unlock()
 	if err != nil {
 		return nil, err
 	}
 
-	stream, err := c.conn.OpenStream()
+	// Elarni: past the server's stream limit, wait for the credit of a closed stream
+	// instead of failing; other dials may proceed meanwhile.
+	stream, err := conn.OpenStreamSync(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	return &interConn{
 		stream: stream,
-		local:  c.conn.LocalAddr(),
-		remote: c.conn.RemoteAddr(),
+		local:  conn.LocalAddr(),
+		remote: conn.RemoteAddr(),
 
 		client: true,
 		lock:   make(chan struct{}, 1),

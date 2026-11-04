@@ -47,7 +47,7 @@ var (
 
 func init() {
 	resetLogs()
-	log.SetTap(recordLog)
+	log.SetTap(recordLog, func() log.Severity { return log.Severity(logLevel.Load()) })
 }
 
 func resetLogs() {

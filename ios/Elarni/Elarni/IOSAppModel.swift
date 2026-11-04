@@ -1376,6 +1376,8 @@ final class IOSAppModel {
       return String(localized: "Select a server first. This routing link turns its profile on for the selected server’s subscription.")
     case .missingGeodata(let missing)?:
       return String(localized: "Proxy rules and servers need codes the geofiles lack: \(missing.joined(separator: ", ")). Fix the profile or its geofile links.")
+    case .geofileTooLarge?:
+      return String(localized: "A geofile is over 64 MB, which the core cannot load whole. Turn on Reduce routing-data size for this profile or use a smaller geofile.")
     case .routeModelTooLarge?:
       return String(localized: "This routing profile is too large for iPhone: its rules and lists exceed 2 MB. Remove some rules or managed lists.")
     default: break

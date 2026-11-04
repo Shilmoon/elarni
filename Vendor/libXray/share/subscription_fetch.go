@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -144,11 +145,25 @@ func FetchSubscription(ctx context.Context, request SubscriptionFetchRequest) (a
 }
 
 func FetchResource(ctx context.Context, request SubscriptionFetchRequest, limit int64, timeout time.Duration, binaryBody bool) (any, error) {
+	return fetchResource(ctx, request, limit, timeout, binaryBody, "")
+}
+
+// FetchResourceToFile is FetchResource for a binary resource written to destination as it arrives (Elarni):
+// a geofile never sits in memory whole. The result has its size as "bytes" instead of a body. A failed or
+// unchanged download leaves no file.
+func FetchResourceToFile(ctx context.Context, request SubscriptionFetchRequest, limit int64, timeout time.Duration, destination string) (any, error) {
+	if destination == "" {
+		return nil, errors.New("invalid_fetch_options")
+	}
+	return fetchResource(ctx, request, limit, timeout, true, destination)
+}
+
+func fetchResource(ctx context.Context, request SubscriptionFetchRequest, limit int64, timeout time.Duration, binaryBody bool, destination string) (any, error) {
 	resolve := net.DefaultResolver.LookupNetIP
 	if request.Proxy != "" {
 		resolve = tunnelResolver(request.Proxy).LookupNetIP
 	}
-	return fetchResourceUsing(ctx, request, resolve, func() *http.Transport { return &http.Transport{} }, limit, timeout, binaryBody)
+	return fetchResourceUsing(ctx, request, resolve, func() *http.Transport { return &http.Transport{} }, limit, timeout, binaryBody, destination)
 }
 
 // fallbackAttemptLimit caps each attempt but the last when a feed has mirrors.
@@ -182,7 +197,7 @@ func tunnelResolver(proxy string) *net.Resolver {
 	}}
 }
 
-func fetchResourceUsing(parent context.Context, request SubscriptionFetchRequest, resolve func(context.Context, string, string) ([]netip.Addr, error), newTransport func() *http.Transport, limit int64, timeout time.Duration, binaryBody bool) (any, error) {
+func fetchResourceUsing(parent context.Context, request SubscriptionFetchRequest, resolve func(context.Context, string, string) ([]netip.Addr, error), newTransport func() *http.Transport, limit int64, timeout time.Duration, binaryBody bool, destination string) (any, error) {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	if err := request.ValidateOptions(); err != nil {
@@ -219,7 +234,7 @@ func fetchResourceUsing(parent context.Context, request SubscriptionFetchRequest
 			deadline, _ := ctx.Deadline()
 			attempt, stop = context.WithTimeout(ctx, min(fallbackAttemptLimit, time.Until(deadline)/time.Duration(len(targets)-index)))
 		}
-		result, err = fetchResourceAttempt(attempt, request, targets[0], resolve, newTransport, limit, binaryBody, &chain)
+		result, err = fetchResourceAttempt(attempt, request, targets[0], resolve, newTransport, limit, binaryBody, destination, &chain)
 		if stop != nil {
 			stop()
 		}
@@ -236,7 +251,7 @@ func fetchResourceUsing(parent context.Context, request SubscriptionFetchRequest
 	return nil, err
 }
 
-func fetchResourceAttempt(ctx context.Context, request SubscriptionFetchRequest, identity string, resolve func(context.Context, string, string) ([]netip.Addr, error), newTransport func() *http.Transport, limit int64, binaryBody bool, encountered *[]string) (any, error) {
+func fetchResourceAttempt(ctx context.Context, request SubscriptionFetchRequest, identity string, resolve func(context.Context, string, string) ([]netip.Addr, error), newTransport func() *http.Transport, limit int64, binaryBody bool, destination string, encountered *[]string) (any, error) {
 	u, err := feedTarget(request.URL)
 	if err != nil {
 		return nil, err
@@ -399,13 +414,35 @@ func fetchResourceAttempt(ctx context.Context, request SubscriptionFetchRequest,
 			}
 			return nil, errors.New("fetch_failed")
 		}
-		body, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+		if response.ContentLength > limit {
+			// Elarni: refuse before downloading the limit only to discard it.
+			response.Body.Close()
+			transport.CloseIdleConnections()
+			return nil, errors.New("input_too_large")
+		}
+		var body []byte
+		var size int64
+		if destination != "" {
+			size, err = saveBody(response.Body, destination, limit)
+		} else {
+			body, err = io.ReadAll(io.LimitReader(response.Body, limit+1))
+			size = int64(len(body))
+		}
 		response.Body.Close()
 		transport.CloseIdleConnections()
+		if errors.Is(err, errSaveFailed) {
+			return nil, errSaveFailed
+		}
 		if err != nil {
 			return nil, errors.New("fetch_failed")
 		}
-		if int64(len(body)) > limit || !binaryBody && !utf8.Valid(body) {
+		if size > limit {
+			if destination != "" {
+				os.Remove(destination)
+			}
+			return nil, errors.New("input_too_large")
+		}
+		if !binaryBody && !utf8.Valid(body) {
 			return nil, errors.New("invalid_feed")
 		}
 		headers := map[string]string{}
@@ -422,6 +459,10 @@ func fetchResourceAttempt(ctx context.Context, request SubscriptionFetchRequest,
 			content = body
 		}
 		result := map[string]any{"body": content, "url": u.String(), "headers": headers, "approvedChain": chain, "usedOverrides": custom}
+		if destination != "" {
+			delete(result, "body")
+			result["bytes"] = size
+		}
 		for key, header := range map[string]string{"etag": "ETag", "lastModified": "Last-Modified"} {
 			if value := response.Header.Get(header); validatorValue(value) {
 				result[key] = value
@@ -430,6 +471,46 @@ func fetchResourceAttempt(ctx context.Context, request SubscriptionFetchRequest,
 		return result, nil
 	}
 	return nil, errors.New("fetch_failed")
+}
+
+var errSaveFailed = errors.New("assets_unavailable")
+
+// saveBody writes up to limit+1 bytes of body to path, replacing an earlier attempt's file; a
+// failure leaves no file. A disk failure is errSaveFailed, which no mirror can fix.
+func saveBody(body io.Reader, path string, limit int64) (int64, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	if err != nil {
+		return 0, errSaveFailed
+	}
+	sink := &fileSink{file: file}
+	n, err := io.Copy(sink, io.LimitReader(body, limit+1))
+	if sink.err != nil {
+		err = errSaveFailed
+	}
+	if err == nil && n <= limit && file.Sync() != nil {
+		err = errSaveFailed
+	}
+	if file.Close() != nil && err == nil {
+		err = errSaveFailed
+	}
+	if err != nil {
+		os.Remove(path)
+	}
+	return n, err
+}
+
+// fileSink records a write failure, which io.Copy reports like a read one.
+type fileSink struct {
+	file *os.File
+	err  error
+}
+
+func (s *fileSink) Write(p []byte) (int, error) {
+	n, err := s.file.Write(p)
+	if err != nil {
+		s.err = err
+	}
+	return n, err
 }
 
 // validatorValue holds an ETag or Last-Modified worth storing and sending back as one header line.

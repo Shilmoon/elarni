@@ -557,6 +557,8 @@ final class TunnelMethodChannel {
           result(FlutterError(code: "no_selected_subscription", message: Self.noSelectionMessage, details: nil))
         } catch RoutingStoreError.routeModelTooLarge {
           result(FlutterError(code: "route_model_too_large", message: "This routing profile is too large: its rules and lists exceed 8 MB. Remove some rules or managed lists.", details: nil))
+        } catch RoutingStoreError.geofileTooLarge {
+          result(FlutterError(code: "input_too_large", message: RoutingStore.geofileTooLargeMessage, details: nil))
         } catch RoutingStoreError.missingGeodata(let missing) {
           result(FlutterError(code: "missing_geodata", message: "Proxy rules and servers need codes the geofiles lack: \(missing.joined(separator: ", ")). Fix the profile or its geofile links.", details: nil))
         } catch SubscriptionError.incompatibleProfile(let message) {

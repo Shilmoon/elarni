@@ -20,20 +20,21 @@ func (h *SniffHeader) Domain() string {
 var errNotBittorrent = errors.New("not bittorrent header")
 
 func SniffBittorrent(b []byte) (*SniffHeader, error) {
-	if len(b) < 20 {
+	const header = "\x13BitTorrent protocol"
+	// Elarni: reject from the bytes so far rather than wait for all 20.
+	if n := min(len(b), len(header)); string(b[:n]) != header[:n] {
+		return nil, errNotBittorrent
+	}
+	if len(b) < len(header) {
 		return nil, common.ErrNoClue
 	}
-
-	if b[0] == 19 && string(b[1:20]) == "BitTorrent protocol" {
-		return &SniffHeader{}, nil
-	}
-
-	return nil, errNotBittorrent
+	return &SniffHeader{}, nil
 }
 
 func SniffUTP(b []byte) (*SniffHeader, error) {
+	// Elarni: a datagram arrives whole, so a shorter one is no uTP header.
 	if len(b) < 20 {
-		return nil, common.ErrNoClue
+		return nil, errNotBittorrent
 	}
 
 	// type 4 (ST_SYN), version 1
