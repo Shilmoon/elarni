@@ -54,6 +54,8 @@ data class AppState(
 // probe, or 3 s plus two probes (up to 4.5 s seen) when one revalidation fails.
 // Two failed revalidations take 7 s or more and count as a real move.
 private const val PATH_SETTLE_MS = 6000L
+// Up to two probes share an SNI, so a part takes at most four probe timeouts.
+private const val CONNECTED_TEST_BATCH = 8
 
 class Repository(private val app: ElarniApplication) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -352,6 +354,19 @@ class Repository(private val app: ElarniApplication) {
             catch (error: Exception) { report(error, args.string("id").takeIf { command == "refresh" && it.isNotEmpty() }); throw AppFailure(code(error)) }
             finally { mutable.update { it.copy(busy = false) }; publish() }
         }
+    }
+    /** A test batch holds the lock until it ends, so while connected it runs [CONNECTED_TEST_BATCH] servers
+     *  at a time with a health check between parts: a long batch can't hold failover back. */
+    suspend fun ping(args: JSONObject): JSONObject {
+        val ids = args.strings("ids")
+        if (!engine.running || ids.size <= CONNECTED_TEST_BATCH) return execute("ping", args)
+        val results = JSONArray()
+        for (part in ids.chunked(CONNECTED_TEST_BATCH)) {
+            val done = execute("ping", args.copy().put("ids", JSONArray(part))).getJSONArray("results")
+            for (i in 0 until done.length()) results.put(done.get(i))
+            tick()
+        }
+        return obj("results" to results)
     }
     private fun dispatch(command: String, args: JSONObject, generation: Long): JSONObject = try {
         dispatchUnchecked(command, args, generation)

@@ -181,7 +181,7 @@ class MainActivity : ComponentActivity() {
         }
         repository.scope.launch {
             try {
-                val result = repository.execute(command, args)
+                val result = if (command == "ping") repository.ping(args) else repository.execute(command, args)
                 withContext(Dispatchers.Main) {
                     if (command == "reject") { interaction.reviewingEditor = false; interaction.importing = false }
                     if (interaction.importing && result.optBoolean("saved")) {
