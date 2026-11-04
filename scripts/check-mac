@@ -6,7 +6,8 @@ included) to the host and checks it out in one workspace that keeps its ignored
 build outputs, Go cache and TUIC fixture, so a run only rebuilds what changed.
 The command runs under nohup and caffeinate: a dropped SSH connection or idle
 sleep does not stop it, and this script waits for its exit while streaming its
-output. New check reports are copied to .build/check-results here.
+output. New check reports are copied to .build/check-results here. The pinned
+Flutter, Go and cbindgen live in the workspace's toolchains directory.
 
 Android: python scripts/check-mac -- python3 scripts/check-android --avd Elarni_API_36_16K --avd Elarni_API_30
 """
@@ -38,8 +39,9 @@ echo "$RUN" > lock/run
 cat > "runs/$RUN/run.sh" <<'RUNSCRIPT'
 set -e
 W=$HOME/$1 RUN=$2 COMMIT=$3; shift 4
-# Flutter, Go and cbindgen at the repo's pins, kept beside the workspace's checkout.
+# The workspace keeps the pinned Flutter, Go and cbindgen; without them PATH falls back to Homebrew's.
 T=$W/toolchains
+[ -x "$T/flutter/bin/flutter" ] && [ -x "$T/go/bin/go" ] || { echo "Missing toolchains in $T (flutter, go, cbindgen)" >&2; exit 1; }
 export ANDROID_HOME=$HOME/Library/Android/sdk JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer GOCACHE=$W/gocache GOFLAGS=-count=1 GOMOBILE=$HOME/go/bin/gomobile
 export PATH="$JAVA_HOME/bin:$HOME/go/bin:$T/go/bin:$HOME/.cargo/bin:$T/flutter/bin:$T/cbindgen/bin:/opt/homebrew/bin:$ANDROID_HOME/platform-tools:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -49,7 +51,7 @@ git fetch -q --no-tags ../repo.git "$COMMIT"
 git checkout -q -f --detach "$COMMIT"
 # Untracked leftovers go; ignored build outputs and the toolchain link stay.
 git clean -fdq -e /.toolchains
-[ -e .toolchains ] || ln -s "$T" .toolchains
+ln -sfn "$T" .toolchains
 export ELARNI_GO="$(go env GOROOT)/bin/go"
 [ -x .build/tuic/tools/sing-box ] || GOWORK=off GOBIN="$PWD/.build/tuic/tools" go install -tags=with_quic github.com/sagernet/sing-box/cmd/sing-box@v1.14.0
 flutter pub get > /dev/null
