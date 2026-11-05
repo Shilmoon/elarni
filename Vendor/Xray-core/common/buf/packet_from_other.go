@@ -1,4 +1,4 @@
-//go:build !unix
+//go:build !unix && !windows
 
 package buf
 
@@ -9,6 +9,6 @@ import (
 
 const pooledUDPReads = false
 
-func readUDPFrom(*net.UDPConn) (*Buffer, net.Addr, error) {
+func readUDPFrom(*net.UDPConn, *[]byte) (*Buffer, net.Addr, error) {
 	return nil, nil, errors.ErrUnsupported
 }

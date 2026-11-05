@@ -38,6 +38,7 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   replaced first.
 - Hysteria keeps its connection alive (10 s keepalive) and shares one dial between
   flows; XHTTP gives new flows a connection that is already up.
+- Windows: an idle direct UDP flow no longer holds a 64 KiB read buffer.
 
 ## 0.4.1 - 2026-11-04
 
