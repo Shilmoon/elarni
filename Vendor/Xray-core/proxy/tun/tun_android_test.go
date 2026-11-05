@@ -33,7 +33,7 @@ func TestAndroidTunDescriptorOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	owned := value.(*AndroidTun).tunFd
+	owned := value.(*AndroidTun).fd
 	if owned == pipe[0] {
 		t.Fatal("borrowed descriptor was not duplicated")
 	}

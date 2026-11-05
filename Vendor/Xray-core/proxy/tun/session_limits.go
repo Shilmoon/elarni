@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/net"
 )
 
@@ -69,6 +70,39 @@ func (c *activeConn) Read(b []byte) (int, error) {
 func (c *activeConn) Write(b []byte) (int, error) {
 	c.touch()
 	return c.Conn.Write(b)
+}
+
+// activeBufConn tracks a connection that hands over buffers, as the stack's TCP connections do (Elarni):
+// wrapping them in activeConn alone would hide those methods and copy every byte through Read and Write.
+type activeBufConn struct {
+	*activeConn
+	r buf.Reader
+	w buf.Writer
+}
+
+func (c *activeBufConn) ReadMultiBuffer() (buf.MultiBuffer, error) {
+	mb, err := c.r.ReadMultiBuffer()
+	c.touch()
+	if err != nil {
+		c.closed.Store(true)
+	}
+	return mb, err
+}
+
+func (c *activeBufConn) WriteMultiBuffer(mb buf.MultiBuffer) error {
+	c.touch()
+	return c.w.WriteMultiBuffer(mb)
+}
+
+// trackConn wraps conn to record its traffic, keeping its buffer methods when it has them.
+func trackConn(conn net.Conn) (net.Conn, *activity) {
+	c := newActiveConn(conn)
+	r, readsBuffers := conn.(buf.Reader)
+	w, writesBuffers := conn.(buf.Writer)
+	if readsBuffers && writesBuffers {
+		return &activeBufConn{activeConn: c, r: r, w: w}, &c.activity
+	}
+	return c, &c.activity
 }
 
 type sessionAdmission struct {

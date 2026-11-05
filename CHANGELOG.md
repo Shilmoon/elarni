@@ -4,6 +4,18 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Performance
+
+- The VPN (TUN) mode on Windows, Linux and Android runs on Xray's own TCP/IP stack instead
+  of gVisor. One connection downloads up to 2.5x faster (VLESS: 2.75 vs 1.08 GB/s on the
+  test host) at less than half the CPU per MB, now level with upstream Xray on every protocol.
+
+### Changed
+
+- The bundled Xray core is upstream main a52db8f6 (v26.10.31 and later), which adds Windows
+  TUN fixes (starting with IPv6 disabled, reusing an adapter by name), MPTCP off on listeners
+  by default, and fixes for QUIC sniffing and HTTP 100-continue.
+
 ## 0.4.1 - 2026-11-04
 
 ### Changed

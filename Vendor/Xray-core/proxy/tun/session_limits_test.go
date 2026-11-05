@@ -109,7 +109,7 @@ func newUDPFlowFixture(t *testing.T, handler *Handler) *udpFlowFixture {
 func (f *udpFlowFixture) exchange(t *testing.T, client, server net.Port) {
 	t.Helper()
 	f.udp.HandlePacket(net.UDPDestination(net.ParseAddress("198.18.0.2"), client),
-		net.UDPDestination(net.ParseAddress("198.18.0.3"), server), []byte("x"))
+		net.UDPDestination(net.ParseAddress("198.18.0.3"), server), buf.FromBytes([]byte("x")))
 	select {
 	case got := <-f.replies:
 		if got != client {
@@ -289,7 +289,7 @@ func TestFullTCPTableReplacesConnectionTheAppClosed(t *testing.T) {
 func TestFullUDPTableReplacesAnsweredDNSFlow(t *testing.T) {
 	send := func(f *udpFlowFixture, client, server net.Port) {
 		f.udp.HandlePacket(net.UDPDestination(net.ParseAddress("198.18.0.2"), client),
-			net.UDPDestination(net.ParseAddress("198.18.0.3"), server), []byte("x"))
+			net.UDPDestination(net.ParseAddress("198.18.0.3"), server), buf.FromBytes([]byte("x")))
 	}
 	admitted := func(t *testing.T, h *Handler, n int) {
 		t.Helper()
@@ -368,15 +368,15 @@ func TestFullUDPTableReplacesAnsweredDNSFlow(t *testing.T) {
 // Admission retires an answered DNS flow while its session is still ending (Elarni): a query from the same
 // port in that window must start a new flow instead of being queued to the old one and lost.
 func TestRetiredDNSFlowPassesLaterQueriesToANewFlow(t *testing.T) {
-	c := &udpConn{egress: make(chan *packet, 1)}
-	if queued, _ := c.enqueue(&packet{}); !queued || c.retireAnswered() {
+	c := &udpConn{queue: newPacketQueue(1)}
+	if queued, _ := c.enqueue(buf.New()); !queued || c.retireAnswered() {
 		t.Fatal("retired a flow with an unanswered query")
 	}
 	c.answer(1)
 	if !c.retireAnswered() {
 		t.Fatal("answered flow not retired")
 	}
-	if queued, retired := c.enqueue(&packet{}); queued || !retired {
+	if queued, retired := c.enqueue(buf.New()); queued || !retired {
 		t.Fatal("retired flow took another datagram")
 	}
 
@@ -477,4 +477,20 @@ func (d *streamDispatcher) DispatchLink(ctx context.Context, _ net.Destination, 
 func isTimeout(err error) bool {
 	var ne stdnet.Error
 	return errors.As(err, &ne) && ne.Timeout()
+}
+
+// The stack hands its TCP connections' data over in buffers; the admission wrapper must keep that path, or
+// every byte is copied through Read and Write (Elarni: the gVisor-era wrapper hid it).
+func TestTrackedConnectionKeepsBufferMethods(t *testing.T) {
+	wrapped, _ := trackConn(&tcpConn{})
+	if _, ok := wrapped.(buf.Reader); !ok {
+		t.Fatal("tracked stack connection lost ReadMultiBuffer")
+	}
+	if _, ok := wrapped.(buf.Writer); !ok {
+		t.Fatal("tracked stack connection lost WriteMultiBuffer")
+	}
+	plain, _ := trackConn(&stdnet.TCPConn{})
+	if _, ok := plain.(buf.Reader); ok {
+		t.Fatal("a plain connection must not claim buffer methods it lacks")
+	}
 }

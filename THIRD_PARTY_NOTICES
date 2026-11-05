@@ -311,7 +311,7 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-## Xray-core v26.7.28
+## Xray-core v26.10.31 (main a52db8f6)
 
 Copyright XTLS contributors. Licensed under Mozilla Public License 2.0.
 Source snapshot with Elarni changes recorded in `third_party/modifications.json`:

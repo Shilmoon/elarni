@@ -7,7 +7,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/xtls/xray-core/app/dispatcher"
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/buf"
 	c "github.com/xtls/xray-core/common/ctx"
@@ -27,20 +26,59 @@ import (
 
 // Handler is managing object that tie together tun interface, ip stack and dispatch connections to the routing
 type Handler struct {
-	ctx                        context.Context
-	config                     *Config
-	stack                      Stack
-	tun                        Tun
-	policyManager              policy.Manager
-	dispatcher                 routing.Dispatcher
-	tag                        string
-	sniffingRequest            session.SniffingRequest
-	uplinkCounter              stats.Counter
-	downlinkCounter            stats.Counter
+	ctx             context.Context
+	config          *Config
+	stack           Stack
+	tun             Tun
+	policyManager   policy.Manager
+	dispatcher      routing.Dispatcher
+	tag             string
+	sniffingRequest session.SniffingRequest
+	uplinkCounter   stats.Counter
+	downlinkCounter stats.Counter
+	// Elarni: open sessions, read by the embedder, and admission limits of the session table
 	tcpSessions                stats.Counter
 	udpSessions                stats.Counter
 	tcpAdmission, udpAdmission sessionAdmission
 	dnsIdle                    time.Duration
+}
+
+type tunUDPStatsWriter struct {
+	writer  buf.Writer
+	counter stats.Counter
+}
+
+func (w *tunUDPStatsWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
+	for len(mb) > 0 {
+		remaining, packet := buf.SplitFirst(mb)
+		packetSize := packet.Len()
+		if err := w.writer.WriteMultiBuffer(buf.MultiBuffer{packet}); err != nil {
+			buf.ReleaseMulti(remaining)
+			return err
+		}
+		w.counter.Add(int64(packetSize))
+		mb = remaining
+	}
+	return nil
+}
+
+// TCPWriter is the writing side of a TCP connection of the stack for the dispatcher. It has no Close: the outbound
+// closes its writer when the other side has no more to send, and the system may still be sending
+type TCPWriter struct {
+	Writer buf.Writer
+	// Counter counts what is written, if there is one
+	Counter stats.Counter
+}
+
+func (w *TCPWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
+	size := mb.Len()
+	if err := w.Writer.WriteMultiBuffer(mb); err != nil {
+		return err
+	}
+	if w.Counter != nil {
+		w.Counter.Add(int64(size))
+	}
+	return nil
 }
 
 // ConnectionHandler interface with the only method that stack is going to push new connections to
@@ -118,9 +156,10 @@ func (t *Handler) Start() error {
 			iface := updater.Get()
 			if iface == nil {
 				errors.LogInfo(context.Background(), "[tun] falied to set interface > iface == nil")
-				return nil
+				return errors.New("iface not found")
 			}
-			return c.Control(func(fd uintptr) {
+			var controlErr, sockErr error
+			controlErr = c.Control(func(fd uintptr) {
 				addrPort, _ := netip.ParseAddrPort(address)
 				// skip loopback
 				if addrPort.Addr().IsLoopback() || strings.HasPrefix(strings.ToLower(address), "localhost:") {
@@ -128,9 +167,13 @@ func (t *Handler) Start() error {
 				}
 				err := setinterface(network, address, fd, iface)
 				if err != nil {
-					errors.LogInfoInner(context.Background(), err, "[tun] falied to set interface")
+					sockErr = errors.New("[tun] falied to set interface").Base(err)
 				}
 			})
+			if sockErr != nil {
+				return sockErr
+			}
+			return controlErr
 		})
 	}
 
@@ -138,6 +181,7 @@ func (t *Handler) Start() error {
 
 	tunStackOptions := StackOptions{
 		Tun:         tunInterface,
+		MTU:         t.config.MTU,
 		IdleTimeout: t.policyManager.ForLevel(t.config.UserLevel).Timeouts.ConnectionIdle,
 	}
 	tunStack, err := NewStack(t.ctx, tunStackOptions, t)
@@ -150,7 +194,6 @@ func (t *Handler) Start() error {
 	if err != nil {
 		_ = tunStack.Close()
 		_ = tunInterface.Close()
-		tunStack.Wait()
 		return err
 	}
 
@@ -158,8 +201,19 @@ func (t *Handler) Start() error {
 	if err != nil {
 		_ = tunStack.Close()
 		_ = tunInterface.Close()
-		tunStack.Wait()
 		return err
+	}
+
+	// Platform-specific system DNS takeover, where the platform implements it.
+	// Rather no TUN than one that the system DNS bypasses.
+	if c, ok := tunInterface.(interface {
+		ConfigureSystemDNS(context.Context, string) error
+	}); ok {
+		if err := c.ConfigureSystemDNS(t.ctx, t.tag); err != nil {
+			_ = tunStack.Close()
+			_ = tunInterface.Close()
+			return errors.New("unable to set the system DNS (remove autoSystemDnsToGateway to run without)").Base(err)
+		}
 	}
 
 	t.stack = tunStack
@@ -174,10 +228,7 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 	// when handling is done with any outcome, always signal back to the incoming connection
 	// to close, send completion packets back to the network, and cleanup
 	defer conn.Close()
-	var ready func() bool
-	if stream, ok := conn.(*tcpConn); ok {
-		ready = stream.readable
-	}
+
 	ctx, cancel := context.WithCancel(t.ctx)
 	defer cancel()
 	admission := &t.tcpAdmission
@@ -188,8 +239,7 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 	if udp, ok := conn.(*udpConn); ok {
 		clock = &udp.activity
 	} else {
-		tracked := newActiveConn(conn)
-		conn, clock = tracked, &tracked.activity
+		conn, clock = trackConn(conn)
 	}
 	clock.touch()
 	closeConn := conn.Close
@@ -201,35 +251,17 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 	if destination.Network == net.Network_UDP && destination.Port == 53 && t.dnsIdle > 0 {
 		go admitted.evictWhenIdle(ctx.Done(), t.dnsIdle)
 	}
-	var sessionCounter stats.Counter
-	switch destination.Network {
-	case net.Network_TCP:
-		sessionCounter = t.tcpSessions
-	case net.Network_UDP:
+	sessionCounter := t.tcpSessions
+	if destination.Network == net.Network_UDP {
 		sessionCounter = t.udpSessions
 	}
 	if sessionCounter != nil {
 		sessionCounter.Add(1)
 		defer sessionCounter.Add(-1)
 	}
-
 	ctx = c.ContextWithID(ctx, session.NewID())
 
-	// if the connection is already closed, conn.RemoteAddr() will be nil
-	// due to gvisor weird behavior
-	remote := conn.RemoteAddr()
-	if remote == nil {
-		errors.LogInfo(t.ctx, "dropped quickly closed connection")
-		return
-	}
-	source := net.DestinationFromAddr(remote)
-	if destination.Network != net.Network_UDP && (t.uplinkCounter != nil || t.downlinkCounter != nil) {
-		conn = &stat.CounterConnection{
-			Connection:   conn,
-			ReadCounter:  t.uplinkCounter,
-			WriteCounter: t.downlinkCounter,
-		}
-	}
+	source := net.DestinationFromAddr(conn.RemoteAddr())
 
 	inbound := session.Inbound{
 		Name:          "tun",
@@ -255,21 +287,18 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 	})
 	errors.LogInfo(ctx, "processing from ", source, " to ", destination)
 
+	// both kinds of connection are buf.Reader and buf.Writer, what they carry is counted on the way
+	reader := &buf.TimeoutWrapperReader{Reader: buf.NewReader(conn), Counter: t.uplinkCounter}
+	writer := buf.NewWriter(conn)
+	if destination.Network != net.Network_UDP {
+		writer = &TCPWriter{Writer: writer, Counter: t.downlinkCounter}
+	} else if t.downlinkCounter != nil {
+		writer = &tunUDPStatsWriter{writer: writer, counter: t.downlinkCounter}
+	}
+
 	link := &transport.Link{
-		Reader: &buf.TimeoutWrapperReader{Reader: buf.NewReader(conn)},
-		Writer: buf.NewWriter(conn),
-	}
-	if ready != nil {
-		link.Reader = &buf.TimeoutWrapperReader{Reader: &drainReader{Reader: conn, ready: ready}}
-		link.Writer = newTCPWriter(conn)
-	}
-	if destination.Network == net.Network_UDP {
-		// Count datagrams without hiding udpConn's per-packet destinations behind
-		// a byte-stream CounterConnection, which pins a reused socket to its first peer.
-		link.Reader.(*buf.TimeoutWrapperReader).Counter = t.uplinkCounter
-		if t.downlinkCounter != nil {
-			link.Writer = &dispatcher.SizeStatWriter{Writer: link.Writer, Counter: t.downlinkCounter}
-		}
+		Reader: reader,
+		Writer: writer,
 	}
 	if err := t.dispatcher.DispatchLink(ctx, destination, link); err != nil {
 		errors.LogError(ctx, errors.New("connection closed").Base(err))
@@ -278,11 +307,7 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 
 // Close implements common.Closable.
 func (t *Handler) Close() error {
-	err := errors.Combine(common.CloseIfExists(t.stack), common.CloseIfExists(t.tun))
-	if t.stack != nil {
-		t.stack.Wait()
-	}
-	return err
+	return errors.Combine(common.CloseIfExists(t.stack), common.CloseIfExists(t.tun))
 }
 
 // Network implements proxy.Inbound

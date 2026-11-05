@@ -8,7 +8,7 @@ require (
 	github.com/ghodss/yaml v1.0.1-0.20220118164431-d8423dcdf344
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/klauspost/cpuid/v2 v2.4.1
+	github.com/klauspost/cpuid/v2 v2.4.2
 	github.com/libp2p/go-nat v1.0.1-0.20250821073202-01afc089f138
 	github.com/miekg/dns v1.1.73
 	github.com/pelletier/go-toml v1.9.5
@@ -31,8 +31,8 @@ require (
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2
 	golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb
 	golang.zx2c4.com/wireguard/windows v1.1.1
-	google.golang.org/grpc v1.84.0
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/grpc v1.85.0
+	google.golang.org/protobuf v1.36.12
 	gvisor.dev/gvisor v0.0.0-20260122175437-89a5d21be8f0
 	layeh.com/gopher-luar v1.0.11
 	lukechampine.com/blake3 v1.4.1
@@ -62,6 +62,6 @@ require (
 	github.com/wlynxg/anet v0.0.5 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260817212433-ac3dfec99bb1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
