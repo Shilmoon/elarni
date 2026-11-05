@@ -2,12 +2,55 @@
 #include "desktop_host.h"
 #include "flutter/generated_plugin_registrant.h"
 
+#include <epoxy/egl.h>
+#include <epoxy/gl.h>
+#include <string.h>
+#ifdef GDK_WINDOWING_X11
+#include <gdk/gdkx.h>
+#endif
+#ifdef GDK_WINDOWING_WAYLAND
+#include <gdk/gdkwayland.h>
+#endif
+
 struct _MyApplication {
   GtkApplication parent_instance;
   GtkWindow* window;
   DesktopHost* host;
 };
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
+
+// Without a GPU (VMs, remote desktops, Xvfb) Mesa's llvmpipe or softpipe rasterizes Flutter's GL output on the
+// CPU anyway, with its buffers in system memory. Flutter's own CPU renderer is cheaper there: on Xvfb at 1920x1080
+// the window used 166 instead of 246 MB and a quarter of the CPU while repainting. The EGL display is the one
+// Flutter's FlOpenGLManager opens next, so it is left initialized.
+static bool software_gl() {
+  GdkDisplay* display = gdk_display_get_default();
+  EGLDisplay egl = EGL_NO_DISPLAY;
+#ifdef GDK_WINDOWING_X11
+  if (GDK_IS_X11_DISPLAY(display))
+    egl = eglGetPlatformDisplayEXT(EGL_PLATFORM_X11_EXT, gdk_x11_display_get_xdisplay(display), nullptr);
+#endif
+#ifdef GDK_WINDOWING_WAYLAND
+  if (GDK_IS_WAYLAND_DISPLAY(display))
+    egl = eglGetPlatformDisplayEXT(EGL_PLATFORM_WAYLAND_EXT, gdk_wayland_display_get_wl_display(display), nullptr);
+#endif
+  if (egl == EGL_NO_DISPLAY || !eglInitialize(egl, nullptr, nullptr)) return false;
+  const EGLint config_attributes[] = {EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8, EGL_NONE};
+  EGLConfig config = nullptr;
+  EGLint configs = 0;
+  if (!eglChooseConfig(egl, config_attributes, &config, 1, &configs) || configs == 0) return false;
+  const EGLint context_attributes[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
+  EGLContext context = eglCreateContext(egl, config, EGL_NO_CONTEXT, context_attributes);
+  if (context == EGL_NO_CONTEXT) return false;
+  bool software = false;
+  if (eglMakeCurrent(egl, EGL_NO_SURFACE, EGL_NO_SURFACE, context)) {
+    const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+    software = renderer && (strncmp(renderer, "llvmpipe", 8) == 0 || strncmp(renderer, "softpipe", 8) == 0);
+    eglMakeCurrent(egl, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+  }
+  eglDestroyContext(egl, context);
+  return software;
+}
 
 static void first_frame_cb(FlView* view, gpointer) {
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
@@ -22,7 +65,12 @@ static void my_application_activate(GApplication* application) {
   gtk_window_set_icon_name(self->window, APPLICATION_ID);
   g_signal_connect_swapped(self->window, "destroy", G_CALLBACK(g_application_quit), self);
   g_autoptr(FlDartProject) project = fl_dart_project_new();
+  // The engine reads the renderer choice when the view creates it; a user's own setting wins. Processes the app
+  // starts later must not inherit the choice.
+  bool chosen = !g_getenv("FLUTTER_LINUX_RENDERER") && software_gl();
+  if (chosen) g_setenv("FLUTTER_LINUX_RENDERER", "software", TRUE);
   FlView* view = fl_view_new(project);
+  if (chosen) g_unsetenv("FLUTTER_LINUX_RENDERER");
   GdkRGBA background;
   gdk_rgba_parse(&background, "#202124");
   fl_view_set_background_color(view, &background);

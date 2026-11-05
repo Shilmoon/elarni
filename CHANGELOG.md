@@ -9,6 +9,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - The VPN (TUN) mode on Windows, Linux and Android runs on Xray's own TCP/IP stack instead
   of gVisor. One connection downloads up to 2.5x faster (VLESS: 2.75 vs 1.08 GB/s on the
   test host) at less than half the CPU per MB, now level with upstream Xray on every protocol.
+- Linux: without a GPU (virtual machines, remote desktops), the window draws with Flutter's own
+  CPU renderer instead of Mesa's software OpenGL: 80 MB less memory and a quarter of the CPU
+  while it repaints. Set `FLUTTER_LINUX_RENDERER=opengl` to keep OpenGL.
+- The window no longer redraws every second while the connection status is unavailable.
 
 ### Changed
 
