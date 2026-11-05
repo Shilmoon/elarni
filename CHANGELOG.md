@@ -11,6 +11,11 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   GNOME's and KDE Plasma's, at Elarni's HTTP listener while connected and puts the
   previous setting back on disconnect, on quit, and at the next start after a crash.
 
+### Fixed
+
+- Android: in Only listed mode, a connection whose app Android cannot identify stays in
+  the tunnel.
+
 ## 0.4.1 - 2026-11-04
 
 ### Changed

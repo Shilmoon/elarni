@@ -16,12 +16,14 @@ fn compiled_fixtures() -> Value {
         json!({"tag": tag, "protocol": "vless", "settings": {"address": "127.0.0.1", "port": 1,
             "id": "00000000-0000-4000-8000-000000000001", "encryption": "none"}})
     };
-    // Every hostname the router resolves is in dns.hosts, so the tests stay offline.
+    // Every hostname the router resolves is in dns.hosts, so the tests stay offline. The
+    // DNS policy loads the remote resolver's timeout and its route into the real core.
     let routes: RouteModel = serde_json::from_value(json!({
         "rules": [
             {"action": "block", "domains": ["full:blocked.test"], "ips": []},
             {"action": "direct", "domains": [], "ips": ["198.51.100.0/24"]}],
         "dnsServers": ["192.0.2.53"],
+        "dnsPolicy": {"remote": {"address": "192.0.2.53"}, "domestic": {"address": "192.0.2.54"}},
         "staticHosts": {"direct-range.test": ["198.51.100.7"], "outside.test": ["203.0.113.9"]},
         "fallbackAction": "proxy", "domainStrategy": "IPIfNonMatch"}))
     .unwrap();

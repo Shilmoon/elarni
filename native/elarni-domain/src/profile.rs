@@ -29,8 +29,8 @@ pub struct CompiledProfile {
     pub endpoints: Vec<ProfileEndpoint>,
 }
 
-// Xray's "localhost" server asks the system resolver over a socket the platform keeps
-// outside the tunnel, so a provider entry for it would send lookups to the ISP's DNS.
+// Xray's "localhost" server asks the system resolver, and its "+local" schemes dial outside
+// routing, over sockets the platform keeps outside the tunnel: lookups would reach the ISP.
 fn without_system_resolver(dns: &Value) -> Value {
     let mut dns = dns.clone();
     if let Some(servers) = dns.get_mut("servers").and_then(Value::as_array_mut) {
@@ -38,7 +38,12 @@ fn without_system_resolver(dns: &Value) -> Value {
             !server
                 .as_str()
                 .or_else(|| server["address"].as_str())
-                .is_some_and(|address| address.eq_ignore_ascii_case("localhost"))
+                .is_some_and(|address| {
+                    address.eq_ignore_ascii_case("localhost")
+                        || address.split_once(':').is_some_and(|(scheme, _)| {
+                            scheme.to_ascii_lowercase().ends_with("+local")
+                        })
+                })
         });
     }
     dns
@@ -482,6 +487,14 @@ pub fn compile_profile(
                         owned[section]["system"][key] = flag;
                     }
                 }
+                // Elarni's listeners use level 0; the user's idle timeout outlives the copy.
+                if !owned[section]["levels"].is_object() {
+                    owned[section]["levels"] = json!({});
+                }
+                if !owned[section]["levels"]["0"].is_object() {
+                    owned[section]["levels"]["0"] = json!({});
+                }
+                owned[section]["levels"]["0"]["connIdle"] = json!(runtime.connection_idle_seconds);
             } else {
                 // One spelling only: Xray folds both to the same field and keeps the last.
                 let target = if section == "fakedns" {
