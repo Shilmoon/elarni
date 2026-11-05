@@ -87,7 +87,7 @@ func (o *Outbound) Process(ctx context.Context, link *transport.Link, dialer int
 	serverDestination.Network = network
 
 	var conn net.Conn
-	if err := retry.ExponentialBackoff(5, 100).On(func() error {
+	if err := retry.ExponentialBackoff(5, 100).OnContext(ctx, func() error {
 		rawConn, err := dialer.Dial(ctx, serverDestination)
 		if err != nil {
 			return err

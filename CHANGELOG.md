@@ -13,6 +13,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ### Fixed
 
+- A TLS, REALITY or HTTPUpgrade handshake that DPI swallows gives up after 16 s and frees
+  its socket; a failed handshake no longer leaks it. A refused or timed-out server fails
+  at once instead of after five tries.
 - DNS: a lookup that fails is answered with SERVFAIL, so apps try again at once instead
   of waiting out their own timeout; a lost query is sent again after 1 s; a remote
   resolver that stalls gives up after 2 s, and expired answers are served while they

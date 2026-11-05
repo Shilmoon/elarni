@@ -60,7 +60,7 @@ func (c *Client) Process(ctx context.Context, link *transport.Link, dialer inter
 	server := c.server
 	var conn stat.Connection
 
-	err := retry.ExponentialBackoff(5, 100).On(func() error {
+	err := retry.ExponentialBackoff(5, 100).OnContext(ctx, func() error {
 		rawConn, err := dialer.Dial(ctx, server.Destination)
 		if err != nil {
 			return err

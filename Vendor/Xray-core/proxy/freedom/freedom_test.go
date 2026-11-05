@@ -3,9 +3,11 @@ package freedom
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	gonet "net"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -23,8 +25,9 @@ import (
 )
 
 type ipv4OnlyDialer struct {
-	mu    sync.Mutex
-	dials []net.Destination
+	mu      sync.Mutex
+	dials   []net.Destination
+	ipv6Err error // how the IPv6 dial fails; unreachable by default
 }
 
 func (d *ipv4OnlyDialer) Dial(ctx context.Context, dest net.Destination) (stat.Connection, error) {
@@ -32,6 +35,9 @@ func (d *ipv4OnlyDialer) Dial(ctx context.Context, dest net.Destination) (stat.C
 	d.dials = append(d.dials, dest)
 	d.mu.Unlock()
 	if dest.Address.Family().IsIPv6() {
+		if d.ipv6Err != nil {
+			return nil, d.ipv6Err
+		}
 		return nil, errors.New("connect: network is unreachable")
 	}
 	conn, err := gonet.Dial("tcp", dest.NetAddr())
@@ -59,6 +65,13 @@ func (r *loopbackResolver) LookupIP(domain string, option dns.IPOption) ([]net.I
 // A TUN flow keeps its IPv6 destination when sniffing is route-only. On a host
 // without IPv6 the direct dial must reach the sniffed domain over IPv4.
 func TestDirectIPv6DialFallsBackToSniffedDomainOverIPv4(t *testing.T) {
+	// A timed-out or refused attempt ends the retries, but not before the IPv4 one.
+	for _, ipv6Err := range []error{nil, context.DeadlineExceeded, syscall.ECONNREFUSED} {
+		t.Run(fmt.Sprint(ipv6Err), func(t *testing.T) { testDirectIPv6DialFallsBack(t, ipv6Err) })
+	}
+}
+
+func testDirectIPv6DialFallsBack(t *testing.T, ipv6Err error) {
 	listener, err := gonet.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +112,7 @@ func TestDirectIPv6DialFallsBackToSniffedDomainOverIPv4(t *testing.T) {
 		t.Fatal(err)
 	}
 	upWriter.Close()
-	dialer := &ipv4OnlyDialer{}
+	dialer := &ipv4OnlyDialer{ipv6Err: ipv6Err}
 	done := make(chan error, 1)
 	go func() { done <- h.Process(ctx, &transport.Link{Reader: upReader, Writer: downWriter}, dialer) }()
 	select {
@@ -146,5 +159,41 @@ func TestRedirectedIPv6DialKeepsItsDestination(t *testing.T) {
 		if dial.Address != net.ParseAddress("2001:db8::99") {
 			t.Fatalf("dials %v left the redirect target", dialer.dials)
 		}
+	}
+}
+
+// Apps fall back to their next address on a refused port, so report it at once: the
+// retries used to hold the flow 1 s and dial 5 times.
+func TestRefusedDirectDialFailsAtOnce(t *testing.T) {
+	listener, err := gonet.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := net.Port(listener.Addr().(*gonet.TCPAddr).Port)
+	listener.Close()
+	// Windows retries a refused SYN for about 2 s, so measure what the outbound adds to one dial.
+	started := time.Now()
+	if conn, err := gonet.Dial("tcp", listener.Addr().String()); err == nil {
+		conn.Close()
+		t.Skip("a closed loopback port accepted a connection")
+	}
+	oneDial := time.Since(started)
+	h := new(Handler)
+	if err := h.Init(&Config{}, policy.DefaultManager{}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := session.ContextWithOutbounds(context.Background(), []*session.Outbound{{Target: net.TCPDestination(net.LocalHostIP, port)}})
+	upReader, _ := pipe.New()
+	_, downWriter := pipe.New()
+	dialer := &ipv4OnlyDialer{}
+	started = time.Now()
+	if err := h.Process(ctx, &transport.Link{Reader: upReader, Writer: downWriter}, dialer); err == nil {
+		t.Fatal("the port refused, yet Process succeeded")
+	}
+	if elapsed := time.Since(started); elapsed > oneDial+500*time.Millisecond {
+		t.Fatalf("reported the refusal after %v; one dial takes %v", elapsed, oneDial)
+	}
+	if len(dialer.dials) != 1 {
+		t.Fatalf("dialed %d times, want 1", len(dialer.dials))
 	}
 }

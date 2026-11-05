@@ -17,6 +17,9 @@ import (
 	"github.com/xtls/xray-core/transport/internet/tls"
 )
 
+// handshakeTimeout bounds the dial, TLS and upgrade handshakes; a variable so tests can shorten it.
+var handshakeTimeout = 8 * time.Second
+
 // Dial dials a WebSocket connection to the given destination.
 func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (stat.Connection, error) {
 	errors.LogInfo(ctx, "creating connection to ", dest)
@@ -47,7 +50,8 @@ func dialWebSocket(ctx context.Context, dest net.Destination, streamSettings *in
 	wsSettings := streamSettings.ProtocolSettings.(*Config)
 
 	dialer := &websocket.Dialer{
-		NetDial: func(network, addr string) (net.Conn, error) {
+		// Elarni: gorilla's ctx carries HandshakeTimeout, so it bounds the dial too.
+		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			var conn net.Conn
 			var err error
 			if streamSettings.FinalMask != nil {
@@ -62,7 +66,7 @@ func dialWebSocket(ctx context.Context, dest net.Destination, streamSettings *in
 		},
 		ReadBufferSize:   4 * 1024,
 		WriteBufferSize:  4 * 1024,
-		HandshakeTimeout: time.Second * 8,
+		HandshakeTimeout: handshakeTimeout,
 	}
 
 	protocol := "ws"
@@ -73,7 +77,7 @@ func dialWebSocket(ctx context.Context, dest net.Destination, streamSettings *in
 		tlsConfig := tConfig.GetTLSConfig(tls.WithDestination(dest), tls.WithNextProto("http/1.1"))
 		dialer.TLSClientConfig = tlsConfig
 		if fingerprint := tls.GetFingerprint(tConfig.Fingerprint); fingerprint != nil {
-			dialer.NetDialTLSContext = func(_ context.Context, _, addr string) (net.Conn, error) {
+			dialer.NetDialTLSContext = func(ctx context.Context, _, addr string) (net.Conn, error) {
 				// Like the NetDial in the dialer
 				var pconn net.Conn
 				var err error
@@ -89,11 +93,13 @@ func dialWebSocket(ctx context.Context, dest net.Destination, streamSettings *in
 				// TLS and apply the handshake
 				cn := tls.UClient(pconn, tlsConfig, fingerprint).(*tls.UConn)
 				if err := cn.WebsocketHandshakeContext(ctx); err != nil {
+					cn.Close()
 					errors.LogErrorInner(ctx, err, "failed to dial to "+addr)
 					return nil, err
 				}
 				if !tlsConfig.InsecureSkipVerify {
 					if err := cn.VerifyHostname(tlsConfig.ServerName); err != nil {
+						cn.Close()
 						errors.LogErrorInner(ctx, err, "failed to dial to "+addr)
 						return nil, err
 					}
