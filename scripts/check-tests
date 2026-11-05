@@ -9,7 +9,7 @@ if [ -z "${ELARNI_CHECK_REPORT:-}" ]; then
 fi
 case "${1:-all}" in
   go)
-    set -- ./Vendor/libXray/share ./Vendor/libXray/geo ./Vendor/libXray ./Vendor/libXray/xray ./Vendor/libXray/cmd/elarni-core ./Vendor/Xray-core/proxy/tun ./Vendor/Xray-core/proxy/wireguard ./Vendor/Xray-core/proxy/socks ./Vendor/Xray-core/infra/conf ./Vendor/Xray-core/transport/internet ./Vendor/Xray-core/transport/internet/websocket ./Vendor/Xray-core/transport/internet/grpc ./Vendor/Xray-core/transport/internet/grpc/encoding ./Vendor/Xray-core/common/net ./Vendor/Xray-core/common/flightrecorder ./Vendor/Xray-core/common/buf ./Vendor/Xray-core/common/signal ./Vendor/Xray-core/common/mux ./Vendor/Xray-core/app/proxyman/inbound ./Vendor/Xray-core/app/proxyman/outbound ./Vendor/Xray-core/common/geodata ./Vendor/Xray-core/transport/internet/hysteria ./Vendor/Xray-core/proxy/tuic ./Vendor/Xray-core/proxy/freedom ./Vendor/Xray-core/app/dispatcher ./Vendor/wireguard-go/device ./Vendor/quic-go ./Vendor/sagernet-quic-go
+    set -- ./Vendor/libXray/share ./Vendor/libXray/geo ./Vendor/libXray ./Vendor/libXray/xray ./Vendor/libXray/cmd/elarni-core ./Vendor/Xray-core/proxy/tun ./Vendor/Xray-core/proxy/wireguard ./Vendor/Xray-core/proxy/socks ./Vendor/Xray-core/infra/conf ./Vendor/Xray-core/transport/internet ./Vendor/Xray-core/transport/internet/websocket ./Vendor/Xray-core/transport/internet/grpc ./Vendor/Xray-core/transport/internet/grpc/encoding ./Vendor/Xray-core/common/net ./Vendor/Xray-core/common/flightrecorder ./Vendor/Xray-core/common/buf ./Vendor/Xray-core/common/signal ./Vendor/Xray-core/common/mux ./Vendor/Xray-core/app/proxyman/inbound ./Vendor/Xray-core/app/proxyman/outbound ./Vendor/Xray-core/common/geodata ./Vendor/Xray-core/transport/internet/hysteria ./Vendor/Xray-core/proxy/tuic ./Vendor/Xray-core/proxy/hysteria ./Vendor/Xray-core/proxy/freedom ./Vendor/Xray-core/app/dispatcher ./Vendor/Xray-core/app/router ./Vendor/Xray-core/app/dns ./Vendor/Xray-core/proxy/dns ./Vendor/Xray-core/common/retry ./Vendor/Xray-core/transport/internet/tcp ./Vendor/Xray-core/transport/internet/reality ./Vendor/Xray-core/transport/internet/httpupgrade ./Vendor/libXray/dns ./Vendor/libXray/memory ./Vendor/wireguard-go/device ./Vendor/quic-go ./Vendor/sagernet-quic-go
     go vet "$@" ./Vendor/Xray-core/transport/internet/splithttp
     go test "$@"
     # splithttp measures latency and throughput over an emulated line: it runs after the other packages, alone,
@@ -23,8 +23,9 @@ case "${1:-all}" in
     ;;
   rust)
     cargo test --workspace --locked
-    # ipstack sits outside the workspace; its doctests need a TUN device crate.
-    exec cargo test --locked -p ipstack --lib
+    # ipstack and tun2proxy sit outside the workspace; their doctests need a TUN device crate.
+    cargo test --locked -p ipstack --lib
+    exec cargo test --locked -p tun2proxy --lib
     ;;
   lint)
     cargo fmt --all -- --check
@@ -35,7 +36,7 @@ case "${1:-all}" in
     ;;
   race)
     go test -race -count=1 -tags=elarni_recording ./Vendor/Xray-core/common/flightrecorder ./Vendor/libXray/cmd/elarni-core
-    exec go test -race -count=1 ./Vendor/Xray-core/common/flightrecorder ./Vendor/Xray-core/common/buf ./Vendor/Xray-core/common/signal ./Vendor/Xray-core/common/mux ./Vendor/Xray-core/app/proxyman/inbound ./Vendor/Xray-core/app/proxyman/outbound ./Vendor/Xray-core/transport/internet/hysteria ./Vendor/Xray-core/transport/internet/splithttp ./Vendor/Xray-core/transport/internet/grpc ./Vendor/Xray-core/proxy/tun ./Vendor/Xray-core/proxy/socks ./Vendor/libXray/cmd/elarni-core
+    exec go test -race -count=1 ./Vendor/Xray-core/common/flightrecorder ./Vendor/Xray-core/common/buf ./Vendor/Xray-core/common/signal ./Vendor/Xray-core/common/mux ./Vendor/Xray-core/app/proxyman/inbound ./Vendor/Xray-core/app/proxyman/outbound ./Vendor/Xray-core/transport/internet/hysteria ./Vendor/Xray-core/transport/internet/splithttp ./Vendor/Xray-core/transport/internet/grpc ./Vendor/Xray-core/proxy/tun ./Vendor/Xray-core/proxy/socks ./Vendor/Xray-core/app/dns ./Vendor/libXray/dns ./Vendor/libXray/memory ./Vendor/libXray/cmd/elarni-core
     ;;
   swift)
     sh scripts/check-core
