@@ -153,7 +153,8 @@ object Widgets {
             speed = tr(R.string.traffic_rates, rate(1), rate(2))
         }
         sample = now
-        refresh(app, state)
+        // With monitoring on, the 2 s tick reads the counters for the app too; with the screen off no widget is in view.
+        if (app.getSystemService(PowerManager::class.java).isInteractive) refresh(app, state)
     }
     @Synchronized fun refresh(app: ElarniApplication, state: AppState) {
         if (state.connection != "connected") { sample = null; speed = null }

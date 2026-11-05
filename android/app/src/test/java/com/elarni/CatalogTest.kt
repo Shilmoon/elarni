@@ -80,6 +80,24 @@ class CatalogTest {
         assertNull("A plain server sends no SNI", Catalog.probeKey(node("none")))
     }
 
+    @Test fun perAppModesKeepAppsThatNeedNoTunnelOutOfIt() {
+        val uids = mapOf("com.a" to 10001, "com.b" to 10002, "com.c" to 10003, "com.shared.one" to 10009, "com.shared.two" to 10009, "com.elarni" to 10000)
+        fun apps(mode: String, listed: List<String>, targets: JSONObject = JSONObject()) =
+            Catalog.tunnelApps(obj("perAppMode" to mode, "perAppProcesses" to JSONArray(listed), "perAppTargets" to targets), "com.elarni") { uids[it] }
+        assertNull("Off: every app enters", apps("off", listOf("com.a")))
+        assertEquals("Only listed: just the listed apps enter, whatever their target", true to listOf("com.a", "com.b"),
+            apps("proxyOnly", listOf("com.a", "com.gone", "com.b", "com.elarni"), obj("com.b" to "direct")))
+        assertNull("With no listed app installed, an allowed list would match no app", apps("proxyOnly", listOf("com.gone", "com.elarni")))
+        assertEquals("Bypass: only apps going direct stay out", false to listOf("com.a", "com.b"),
+            apps("bypass", listOf("com.a", "com.b", "com.c", "com.gone", "com.elarni"), obj("com.b" to "direct", "com.c" to "routing")))
+        for (target in listOf("routing", "block", "node:server", "proxy:socks5://127.0.0.1:1080"))
+            assertEquals("A $target target keeps its app in the tunnel", false to emptyList<String>(), apps("bypass", listOf("com.a"), obj("com.a" to target)))
+        assertEquals("An app sharing a UID follows the target of an app listed with one", false to emptyList<String>(),
+            apps("bypass", listOf("com.shared.one", "com.shared.two"), obj("com.shared.two" to "routing")))
+        assertEquals("The first listed target wins for a shared UID", false to listOf("com.shared.one", "com.shared.two"),
+            apps("bypass", listOf("com.shared.one", "com.shared.two"), obj("com.shared.one" to "direct", "com.shared.two" to "routing")))
+    }
+
     @Test fun retryDelayAndCanonicalForm() {
         assertEquals(listOf(60, 60, 300, 1800, 1800), listOf(0, 1, 2, 3, 9).map(Catalog::retryDelay))
         assertEquals(Catalog.canonical(JSONObject("""{"b":[1,{"y":2,"x":"s"}],"a":null}""")), Catalog.canonical(JSONObject("""{"a":null,"b":[1,{"x":"s","y":2}]}""")))

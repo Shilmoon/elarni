@@ -11,6 +11,16 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   GNOME's and KDE Plasma's, at Elarni's HTTP listener while connected and puts the
   previous setting back on disconnect, on quit, and at the next start after a crash.
 
+### Changed
+
+- Android: apps that need no tunnel (bypassed apps going direct, and unlisted apps in
+  Only listed mode) stay out of the VPN entirely while lockdown is off, and use the
+  system's DNS.
+- Android: after a crash the VPN comes back by itself, at most once in 10 minutes, and
+  the watchdog also runs while the phone dozes.
+- Android: the background refresh job runs hourly, and only when a subscription, route
+  list or expiry reminder is due. Server checks run only while traffic flows.
+
 ### Fixed
 
 - A TLS, REALITY or HTTPUpgrade handshake that DPI swallows gives up after 16 s and frees
@@ -26,8 +36,11 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   stall for 16 s, and closing the first app no longer aborts the shared dial.
 - Routing with IP rules uses the connection's own address instead of looking its domain
   up again.
+- Android: an error in a background task no longer ends the app and its VPN; a failed
+  save no longer undoes a connect.
 - Android: in Only listed mode, a connection whose app Android cannot identify stays in
   the tunnel.
+- Android: the Quick Settings tile shows a VPN paused for sleep as off.
 
 ### Performance
 

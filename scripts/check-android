@@ -47,7 +47,7 @@ if sys.platform == 'darwin' and not env.get('JAVA_HOME'):
 adb = sdk / 'platform-tools/adb'
 RUNNER = 'com.elarni.debug.test/androidx.test.runner.AndroidJUnitRunner'
 # Tests per class run (the catalog's without its large-geofile test); shards of one AVD must add up to them.
-EXPECTED = {'com.elarni.AndroidE2E': 68, 'com.elarni.AndroidUIE2E': 39, 'com.elarni.AndroidVpnE2E': 22}
+EXPECTED = {'com.elarni.AndroidE2E': 69, 'com.elarni.AndroidUIE2E': 39, 'com.elarni.AndroidVpnE2E': 22}
 out = ROOT / '.build/android-development'
 native_env = env.copy()
 host = 'darwin-x86_64' if sys.platform == 'darwin' else 'linux-x86_64'
@@ -352,7 +352,9 @@ if args.case != 'native':
                         # The first phase of each pair kills its own process; the second is the next process start.
                         for killed, marker, restarted in [('a_connectedProcessIsKilled', 'killed-while-connected', 'b_vpnReturnsWithoutTheUser'),
                                                           ('c_processWithoutTheServiceIsKilled', 'killed-without-service', 'd_vpnStaysDownWithoutItsService'),
-                                                          ('e_processPausedForSleepIsKilled', 'killed-while-paused', 'f_vpnStaysPausedUntilTheScreenTurnsOn')]:
+                                                          ('e_processPausedForSleepIsKilled', 'killed-while-paused', 'f_vpnStaysPausedUntilTheScreenTurnsOn'),
+                                                          ('g_connectedProcessCrashes', 'crashed-while-connected', 'h_vpnReturnsAfterACrash'),
+                                                          ('i_restoredProcessCrashesAgain', 'crashed-again', 'j_secondCrashSoonStaysDown')]:
                             def kill(killed=killed, marker=marker):
                                 died = shell('am', 'instrument', '-w', '-r', '-e', 'class', f'com.elarni.AndroidProcessDeathE2E#{killed}', *peers, RUNNER)
                                 if f'elarni={marker}' not in died or 'Process crashed' not in died:

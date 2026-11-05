@@ -86,8 +86,8 @@ object Native {
         }
     }
 
-    fun cancelOperations() {
-        operations.forEach { (id, kind) -> runCatching { call("cancel$kind", obj("operationId" to id)) } }
+    fun cancelOperations(kind: String? = null) {
+        operations.forEach { (id, running) -> if (kind == null || running == kind) runCatching { call("cancel$running", obj("operationId" to id)) } }
     }
 
     fun qr(bytes: ByteArray): String = try { LibXray.decodeAndroidQRImage(bytes) }
