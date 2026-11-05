@@ -1,6 +1,12 @@
 part of 'desktop_proxy.dart';
 
 extension _ProxyProbes on DesktopProxy {
+  // Ports handed to probe cores that are still running; parallel picks repeat
+  // one. Two probes on one port fail: with SO_REUSEPORT (Linux, macOS) each gets
+  // some of the other's connections and its SOCKS login fails, and on Windows
+  // the second core cannot listen.
+  static final _probePorts = <int>{};
+
   Future<CatalogMap> _pingICMP(CatalogMap args, int generation) async {
     final catalog = _catalog!;
     if (_state != 'connected' || !catalog.settings.xrayTunEnabled)
@@ -75,6 +81,7 @@ extension _ProxyProbes on DesktopProxy {
         _state == 'connected' &&
         catalog.settings.xrayTunEnabled)
       throw desktopError('unavailableProbePath');
+    int? reserved;
     try {
       int latency;
       Object? exit;
@@ -168,12 +175,16 @@ extension _ProxyProbes on DesktopProxy {
             ],
           });
         } else {
-          final socket = await ServerSocket.bind(
-            InternetAddress.loopbackIPv4,
-            0,
-          );
-          final port = socket.port;
-          await socket.close();
+          int port;
+          do {
+            final socket = await ServerSocket.bind(
+              InternetAddress.loopbackIPv4,
+              0,
+            );
+            port = socket.port;
+            await socket.close();
+          } while (!_probePorts.add(port));
+          reserved = port;
           final probe = catalog.copy();
           // Other local apps, including ones the VPN excludes, must not
           // borrow this listener while the probe runs.
@@ -239,6 +250,8 @@ extension _ProxyProbes on DesktopProxy {
         message: desktopError(code).message,
         details: error is PlatformException ? error.details : null,
       );
+    } finally {
+      if (reserved != null) _probePorts.remove(reserved);
     }
   }
 

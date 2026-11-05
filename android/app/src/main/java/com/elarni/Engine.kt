@@ -28,6 +28,15 @@ class Engine(private val app: ElarniApplication, private val assets: RoutingAsse
         // VPN mode always authenticates its listeners: other apps, including ones
         // excluded from the VPN, must not proxy through them to learn the exit address.
         @Volatile private var sessionAuth: JSONObject? = null
+        // Ports handed to probe cores that are still running; parallel picks repeat one. The cores listen with
+        // SO_REUSEPORT, so two probes on one port would get some of each other's connections and fail the login.
+        private val probePorts = HashSet<Int>()
+        private fun reserveProbePort(): Int {
+            while (true) {
+                val port = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
+                synchronized(probePorts) { if (probePorts.add(port)) return port }
+            }
+        }
         fun socksProxy(catalog: Catalog): String {
             val auth = if (catalog.settings.optBoolean("inboundAuthEnabled")) catalog.data.mapObject("inboundCredentials") else sessionAuth
             val user = auth?.let { it.getString("username") + ":" + it.getString("password") }
@@ -205,23 +214,28 @@ class Engine(private val app: ElarniApplication, private val assets: RoutingAsse
             val request = obj("timeout" to timeout, "url" to args.string("url", "https://www.gstatic.com/generate_204"), "method" to args.string("method", "HEAD"), "mode" to args.string("mode", "default"))
             for (key in listOf("expectedStatus", "expectedBody")) if (args.has(key)) request.put(key, args.get(key))
             if (args.optBoolean("trace")) request.put("trace", true)
-            if (active) {
-                request.put("proxy", fetchProxy ?: throw AppFailure("not_connected"))
-                    .put("configJSON", obj("inbounds" to JSONArray(), "outbounds" to JSONArray(listOf(obj("protocol" to "freedom")))).toString())
-            } else {
-                val port = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
-                // Only settings change; 32 workers each copying a 4,096-server catalog ran out of memory.
-                val probe = Catalog(JSONObject().merge(catalog.data))
-                probe.data.put("settings", probe.settings.put("socksPort", port).put("httpInboundEnabled", false).put("xrayTunEnabled", false).put("perAppMode", "off").put("allowLAN", false).put("inboundAuthEnabled", false))
-                // Other apps, including ones the VPN excludes, must not borrow this listener.
-                val auth = sessionCredentials()
-                request.put("configJSON", prepare(probe, id, auth).toString()).put("proxy", "socks5://${auth.getString("username")}:${auth.getString("password")}@127.0.0.1:$port")
-                    .put("androidAssetDirectory", assets.directory(catalog.routeFor(id)?.string("assetRevision") ?: ""))
+            var reserved = 0
+            try {
+                if (active) {
+                    request.put("proxy", fetchProxy ?: throw AppFailure("not_connected"))
+                        .put("configJSON", obj("inbounds" to JSONArray(), "outbounds" to JSONArray(listOf(obj("protocol" to "freedom")))).toString())
+                } else {
+                    val port = reserveProbePort().also { reserved = it }
+                    // Only settings change; 32 workers each copying a 4,096-server catalog ran out of memory.
+                    val probe = Catalog(JSONObject().merge(catalog.data))
+                    probe.data.put("settings", probe.settings.put("socksPort", port).put("httpInboundEnabled", false).put("xrayTunEnabled", false).put("perAppMode", "off").put("allowLAN", false).put("inboundAuthEnabled", false))
+                    // Other apps, including ones the VPN excludes, must not borrow this listener.
+                    val auth = sessionCredentials()
+                    request.put("configJSON", prepare(probe, id, auth).toString()).put("proxy", "socks5://${auth.getString("username")}:${auth.getString("password")}@127.0.0.1:$port")
+                        .put("androidAssetDirectory", assets.directory(catalog.routeFor(id)?.string("assetRevision") ?: ""))
+                }
+                val reply = Native.cancellable("ping", request)
+                delay = reply.getLong("delay")
+                if (delay < 0) throw AppFailure("ping_failed")
+                exit = reply.optJSONObject("exit")
+            } finally {
+                if (reserved != 0) synchronized(probePorts) { probePorts.remove(reserved) }
             }
-            val reply = Native.cancellable("ping", request)
-            delay = reply.getLong("delay")
-            if (delay < 0) throw AppFailure("ping_failed")
-            exit = reply.optJSONObject("exit")
         }
         return obj("nodeId" to id, "configurationRevision" to catalog.node(id).string("configurationRevision", id), "protocol" to method, "status" to "success", "latencyMs" to delay, "timestamp" to now())
             .apply { exit?.let { put("exit", it) } }

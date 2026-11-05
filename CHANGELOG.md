@@ -65,6 +65,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   leftover redirect.
 - Windows: a DNS setting that could not be restored on disconnect is reported, and
   retried.
+- Testing many servers at once no longer fails a server now and then: two probes could be
+  given the same local port and fail each other's login (Windows, Linux, macOS, Android).
 
 ### Performance
 
