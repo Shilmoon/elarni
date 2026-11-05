@@ -205,6 +205,16 @@
         }
       }
     },
+    "The VPN extension that is running (%@) is not this app's (%@). Delete other copies of Elarni, then disconnect and connect again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запущенное расширение VPN (%@) не от этого приложения (%@). Удалите другие копии Elarni, затем отключитесь и подключитесь снова."
+          }
+        }
+      }
+    },
     "connected" : {
       "localizations" : {
         "ru" : {

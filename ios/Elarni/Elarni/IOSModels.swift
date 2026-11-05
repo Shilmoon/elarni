@@ -233,7 +233,8 @@ struct IOSTunnelSettings: Codable, Equatable {
   var allowLAN = false
   var inboundAuthEnabled = false
   var inboundCredentialRef: String?
-  var onDemandEnabled = false
+  /// On for a new install: iOS starts no killed extension again without it. Saved settings keep their choice.
+  var onDemandEnabled = true
   /// Joining a Wi-Fi network outside trustedWiFiNetworks connects, through On Demand. Optional: older saved settings lack them.
   var connectOnUntrustedWiFi: Bool?
   var trustedWiFiNetworks: [String]?

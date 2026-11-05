@@ -10,6 +10,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   System proxy or Local proxy only. System proxy points the Windows proxy setting, or
   GNOME's and KDE Plasma's, at Elarni's HTTP listener while connected and puts the
   previous setting back on disconnect, on quit, and at the next start after a crash.
+- macOS: the app warns when the VPN extension that runs is another build's (a leftover
+  development build's extension used 6.6 GB).
 
 ### Changed
 
@@ -24,6 +26,7 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   instead of 30 s, so failover leaves a dead server within about 80 s instead of 120 s.
   Each backup is tried in turn without saving the catalog again or restarting the
   failed server in between; the original comes back only if no backup works.
+- iOS: On Demand is on for new installs; a saved choice is kept.
 - Android: apps that need no tunnel (bypassed apps going direct, and unlisted apps in
   Only listed mode) stay out of the VPN entirely while lockdown is off, and use the
   system's DNS.
@@ -43,6 +46,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   refresh. A DoH server that stalls while connecting gives up after 16 s instead of
   holding every lookup. A plain-UDP remote resolver now goes through the proxy, and
   `+local` resolvers in imported profiles, which bypassed the tunnel, are dropped.
+- After a network change, pooled XHTTP, gRPC, Hysteria, TUIC and DNS connections are
+  checked and only dead ones are closed; new connections use the new network (Windows,
+  Linux, Android, macOS, iOS). Android and macOS keep the core running instead of
+  restarting it, and Linux and Windows also do this after sleep.
 - XHTTP/3: a failed dial no longer leaks its socket, more than 100 sessions no longer
   stall for 16 s, and closing the first app no longer aborts the shared dial.
 - Routing with IP rules uses the connection's own address instead of looking its domain
@@ -52,6 +59,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - Android: in Only listed mode, a connection whose app Android cannot identify stays in
   the tunnel.
 - Android: the Quick Settings tile shows a VPN paused for sleep as off.
+- iOS and macOS: a stalled core is restarted after two failed checks, and packet writes
+  refused while settings change no longer end the tunnel.
 - Linux: a failed nft cleanup keeps the marker, so Repair VPN setup still finds the
   leftover redirect.
 - Windows: a DNS setting that could not be restored on disconnect is reported, and
@@ -73,6 +82,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   again for the same route, and logs are capped at 200 lines a second.
 - The core returns memory after light traffic at most once a minute instead of every
   5 s, and still at once after a large download or when many connections close.
+- iOS: lower peak memory for XHTTP and QUIC downloads, and the core is not compiled
+  again for a restart with the same settings.
 - Desktop: no window rebuilds or catalog saves on unchanged state, direct TCP tests use
   sockets instead of a core per server, and the helper returns memory after each start.
 - Windows: reconnecting with unchanged routing data no longer sends and checks the

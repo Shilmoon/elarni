@@ -29,6 +29,7 @@ private final class PumpFlow: PacketFlow {
     var reads: [@Sendable ([NEPacket]) -> Void] = []
     var written: [NEPacket] = []
     var acceptsWrites = true
+    var refused = 0
   }
   let state = Locked(State())
   let delivered = Signal()
@@ -37,7 +38,7 @@ private final class PumpFlow: PacketFlow {
   }
   func writePacketObjects(_ packets: [NEPacket]) -> Bool {
     let accepted = state.withValue {
-      guard $0.acceptsWrites else { return false }
+      guard $0.acceptsWrites else { $0.refused += 1; return false }
       $0.written.append(contentsOf: packets)
       return true
     }
@@ -94,6 +95,14 @@ struct CoreChecks {
   static func rejects(_ body: () throws -> Void) throws {
     do { try body() } catch { return }
     throw Failure(message: "invalid input was accepted")
+  }
+  static func until(_ message: String, _ condition: () -> Bool) async throws {
+    var waited = 0
+    while !condition() {
+      waited += 1
+      try expect(waited < 500, message)
+      try await Task.sleep(for: .milliseconds(10))
+    }
   }
 
   static func main() async {
@@ -507,6 +516,20 @@ struct CoreChecks {
         try expect(saved.snapshot?.outcome == "expired", "expiry receipt missing")
       }
     }
+    try check("liveness checks only while traffic leaves and counts failures in a row") {
+      var tracker = ProviderLiveness(interval: 0)
+      try expect(tracker.needsProbe(uplink: 0, at: 0), "Connect was not checked")
+      tracker.record(passed: false, uplink: 0, at: 0)
+      try expect(tracker.state == "noTraffic" && tracker.failures == 1, "failed check not counted")
+      // A dead server on an idle phone was checked every minute, keeping the radio awake.
+      try expect(!tracker.needsProbe(uplink: 0, at: 1), "an idle tunnel was checked again after a failure")
+      try expect(tracker.needsProbe(uplink: 1, at: 2), "traffic after a failed check was not checked")
+      tracker.record(passed: false, uplink: 1, at: 2)
+      try expect(tracker.failures == 2, "failures in a row not counted")
+      tracker.record(passed: true, uplink: 1, at: 3)
+      try expect(tracker.state == "ok" && tracker.failures == 0, "a passing check did not end the failures")
+      try expect(!tracker.needsProbe(uplink: 1, at: 4) && tracker.needsProbe(uplink: 2, at: 5), "idle and busy intervals after a pass")
+    }
     try await packetFlowChecks()
     passed += 2
     print("\(passed) core checks passed")
@@ -515,7 +538,7 @@ struct CoreChecks {
   static func packetFlowChecks() async throws {
     let flow = PumpFlow(), bridge = PumpBridge()
     let failed = Signal(), failures = Locked(0)
-    let pump = PacketFlowPump(flow: flow, bridge: bridge) { _ in
+    let pump = PacketFlowPump(flow: flow, bridge: bridge, rejectionGrace: 0.3) { _ in
       failures.withValue { $0 += 1 }
       Task { await failed.fire() }
     }
@@ -541,16 +564,31 @@ struct CoreChecks {
     pump.start()
     flow.deliver(Data([0x45, 2])) // Pending read from the stopped generation.
     try expect(bridge.state.snapshot.submitted == [input], "old read entered a restarted pump")
+    // One refused write drops its batch; the pump keeps reading and writing.
     flow.state.withValue { $0.acceptsWrites = false }
+    bridge.push([Data([0x45, 3])])
+    try await until("refused write not attempted") { flow.state.snapshot.refused == 1 }
     flow.deliver(Data([0x45, 4]))
-    bridge.push([Data([0x45, 3])]) // Output wakes the pump at once, so the input goes first.
+    // A written batch ends the refusals, however long they lasted.
+    try await Task.sleep(for: .milliseconds(400))
+    flow.state.withValue { $0.acceptsWrites = true }
+    bridge.push([Data([0x45, 5])])
+    try await until("write after a refusal lost") { flow.state.snapshot.written.last?.data == Data([0x45, 5]) }
+    flow.state.withValue { $0.acceptsWrites = false }
+    bridge.push([Data([0x45, 6])])
+    try await until("second refusal not attempted") { flow.state.snapshot.refused == 2 }
+    try expect(failures.snapshot == 0 && bridge.state.snapshot.submitted == [input, Data([0x45, 4])],
+      "a refused write, or refusals that a written batch ended, stopped the pump")
+    // Refusals through the whole grace stop the current pump exactly once.
+    try await Task.sleep(for: .milliseconds(400))
+    bridge.push([Data([0x45, 7])])
     await failed.wait()
     let failedPolls = bridge.state.snapshot.polls
-    flow.deliver(Data([0x45, 5]))
+    flow.deliver(Data([0x45, 8]))
     try await Task.sleep(for: .milliseconds(50))
     try expect(failures.snapshot == 1 && bridge.state.snapshot.polls == failedPolls &&
-      bridge.state.snapshot.submitted == [input, Data([0x45, 4])], "write failure did not stop the current pump exactly once")
-    print("PASS packet pump rejects stale reads after restart and stops on a rejected write")
+      bridge.state.snapshot.submitted == [input, Data([0x45, 4])], "refused writes did not stop the current pump exactly once")
+    print("PASS packet pump rejects stale reads after restart, drops refused writes and stops when refusals last")
   }
 
   @MainActor

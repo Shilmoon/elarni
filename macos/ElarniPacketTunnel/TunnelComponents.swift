@@ -15,6 +15,9 @@ protocol XrayCore: AnyObject, Sendable {
   func metrics() async -> [String: UInt64]
   // A request through the running core's routing, the way app traffic goes.
   func passesTraffic(url: String, timeout: Int) async -> Bool
+  /// Tells the running core its network moved, so it checks pooled connections and dials new ones on the
+  /// current path. False when the core cannot take the signal.
+  func socketPathChanged() async -> Bool
   #if DEBUG
   func injectExit()
   #endif
@@ -24,6 +27,8 @@ struct PreparedXray: Sendable {
   let config: String
   let addresses: [String]
   let memoryLimitBytes: Int
+  /// Digest of everything that produced `config`; equal digests mean an equal configuration.
+  var source: Data? = nil
 }
 
 protocol PacketBridge: AnyObject, Sendable {
@@ -54,13 +59,17 @@ final class PacketFlowPump: @unchecked Sendable {
   private let flow: PacketFlow
   private let bridge: PacketBridge
   private let onFailure: (Error) -> Void
+  // NetworkExtension may refuse writes while settings are re-applied (well under a second); refusals
+  // that last this long, across at least two batches, mean the tunnel is gone.
+  private let rejectionGrace: TimeInterval
   private let lock = NSLock()
   private var running = false
   private var generation: UInt64 = 0
 
-  init(flow: PacketFlow, bridge: PacketBridge, onFailure: @escaping (Error) -> Void) {
+  init(flow: PacketFlow, bridge: PacketBridge, rejectionGrace: TimeInterval = 5, onFailure: @escaping (Error) -> Void) {
     self.flow = flow
     self.bridge = bridge
+    self.rejectionGrace = rejectionGrace
     self.onFailure = onFailure
   }
 
@@ -73,11 +82,12 @@ final class PacketFlowPump: @unchecked Sendable {
     }
     guard let started else { return }
     // The output thread sleeps in the bridge until a packet is ready: an idle tunnel wakes once a
-    // second instead of polling. A stopped pump's thread ends at its next wake, a stopped bridge's at once.
+    // minute instead of polling. A stopped pump's thread ends at its next wake, a stopped bridge's at once.
     let output = Thread { [weak self] in
-      while let self, self.isCurrent(started), let ready = self.bridge.awaitOutput(timeout: .seconds(1)) {
+      var rejectedSince: TimeInterval?
+      while let self, self.isCurrent(started), let ready = self.bridge.awaitOutput(timeout: .seconds(60)) {
         // A thread's own pool drains only when the thread ends; without one per wake every written NEPacket stays alive.
-        if ready { autoreleasepool { self.drainOutput(generation: started) } }
+        if ready { autoreleasepool { self.drainOutput(generation: started, rejectedSince: &rejectedSince) } }
       }
     }
     output.name = "com.elarni.packet-output"
@@ -94,36 +104,44 @@ final class PacketFlowPump: @unchecked Sendable {
     lock.withLock { self.running && self.generation == generation }
   }
 
+  // The pump's lock covers only the generation check: the bridge locks itself, and holding this one
+  // across submit or a write would make each direction wait for the other. A submit that races a stop
+  // throws notRunning, which fail() ignores for a stopped pump.
   private func readNextBatch(generation: UInt64) {
-    guard lock.withLock({ self.running && self.generation == generation }) else { return }
+    guard isCurrent(generation) else { return }
     flow.readPacketObjects { [weak self] packets in
-      guard let self else { return }
+      guard let self, self.isCurrent(generation) else { return }
       do {
-        let submitted = try lock.withLock {
-          guard self.running && self.generation == generation else { return false }
-          for packet in packets { try self.bridge.submit(packet.data) }
-          return true
-        }
-        guard submitted else { return }
-        readNextBatch(generation: generation)
+        for packet in packets { try self.bridge.submit(packet.data) }
       } catch {
-        fail(error, generation: generation)
+        self.fail(error, generation: generation)
+        return
       }
+      self.readNextBatch(generation: generation)
     }
   }
 
-  // Writes up to 256 packets; the bridge reports more at once on the next wait.
-  private func drainOutput(generation: UInt64) {
-    let rejected = lock.withLock {
-      guard self.running && self.generation == generation else { return false }
-      var output = [NEPacket]()
-      while output.count < 256, let data = bridge.receive() {
-        let family = data.first.map { $0 >> 4 } == 6 ? AF_INET6 : AF_INET
-        output.append(NEPacket(data: data, protocolFamily: sa_family_t(family)))
-      }
-      return !output.isEmpty && !flow.writePacketObjects(output)
+  // Writes up to 256 packets; the bridge reports more at once on the next wait. A refused batch is
+  // dropped like a congested link drops it; only refusals for rejectionGrace fail the pump.
+  private func drainOutput(generation: UInt64, rejectedSince: inout TimeInterval?) {
+    guard isCurrent(generation) else { return }
+    var output = [NEPacket]()
+    while output.count < 256, let data = bridge.receive() {
+      let family = data.first.map { $0 >> 4 } == 6 ? AF_INET6 : AF_INET
+      output.append(NEPacket(data: data, protocolFamily: sa_family_t(family)))
     }
-    if rejected { fail(PacketFlowError.writeRejected, generation: generation) }
+    guard !output.isEmpty else { return }
+    if flow.writePacketObjects(output) {
+      rejectedSince = nil
+      return
+    }
+    let now = ProcessInfo.processInfo.systemUptime
+    DiagnosticLog.record("packet_write_rejected", ["packets": Int64(output.count)])
+    guard let since = rejectedSince else {
+      rejectedSince = now
+      return
+    }
+    if now - since >= rejectionGrace { fail(PacketFlowError.writeRejected, generation: generation) }
   }
 
   private func fail(_ error: Error, generation: UInt64) {
@@ -139,23 +157,26 @@ final class PacketFlowPump: @unchecked Sendable {
 enum PacketFlowError: Error { case writeRejected }
 
 // Whether the connected server passes traffic: checked once after Connect, then
-// each interval while traffic leaves or the last check failed. The counters only
-// gate the check; their downlink proves nothing, since SOCKS replies and direct
-// routes move it while the server is gone.
+// each interval while traffic leaves. An idle tunnel is not checked, even after a
+// failed check: nothing needs the server, and each check keeps the radio awake.
+// The counters only gate the check; their downlink proves nothing, since SOCKS
+// replies and direct routes move it while the server is gone.
 struct ProviderLiveness {
   // The failover defaults, as on desktop and Android.
   static let targets = ["https://www.gstatic.com/generate_204", "https://cp.cloudflare.com/generate_204"]
   let interval: TimeInterval
   private(set) var state: String?
+  /// Failed checks since the last one that passed.
+  private(set) var failures = 0
   private var checked: (at: TimeInterval, uplink: UInt64)?
 
   init(interval: TimeInterval = 60) { self.interval = interval }
 
   func due(at now: TimeInterval) -> Bool { checked.map { now - $0.at >= interval } ?? true }
 
-  // An idle interval after a passing check starts the next interval instead.
+  // An idle interval starts the next interval instead.
   mutating func needsProbe(uplink: UInt64, at now: TimeInterval) -> Bool {
-    if let checked, state == "ok", uplink <= checked.uplink {
+    if let checked, uplink <= checked.uplink {
       self.checked = (now, uplink)
       return false
     }
@@ -164,6 +185,7 @@ struct ProviderLiveness {
 
   mutating func record(passed: Bool, uplink: UInt64, at now: TimeInterval) {
     state = passed ? "ok" : "noTraffic"
+    failures = passed ? 0 : failures + 1
     checked = (now, uplink)
   }
 }
