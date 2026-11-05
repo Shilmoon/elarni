@@ -285,6 +285,10 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, d internet.
 
 	response := func() error {
 		defer timer.SetTimeout(0)
+		// Elarni: the reader takes its 64 KiB scratch on the first read, and most flows are answered here and never dial.
+		if _, open := <-conn.connReady; !open {
+			return nil
+		}
 		for {
 			b, err := connReader.ReadMessage()
 			if err == io.EOF {
@@ -331,9 +335,10 @@ func (h *Handler) handleIPQuery(id uint16, qType dnsmessage.Type, domain string,
 	}
 
 	rCode := dns.RCodeFromError(err)
-	if rCode == 0 && len(ips) == 0 && !go_errors.Is(err, dns.ErrEmptyResponse) {
+	if rCode == 0 && len(ips) == 0 && err != nil && !go_errors.Is(err, dns.ErrEmptyResponse) {
+		// Elarni: answer a failed lookup (timeout, no server) so the app's stub fails over now instead of waiting out its own timeout.
 		errors.LogInfoInner(context.Background(), err, "ip query")
-		return
+		rCode = uint16(dnsmessage.RCodeServerFailure)
 	}
 
 	b := buf.New()

@@ -13,6 +13,14 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ### Fixed
 
+- DNS: a lookup that fails is answered with SERVFAIL, so apps try again at once instead
+  of waiting out their own timeout; a lost query is sent again after 1 s; a remote
+  resolver that stalls gives up after 2 s, and expired answers are served while they
+  refresh. A DoH server that stalls while connecting gives up after 16 s instead of
+  holding every lookup. A plain-UDP remote resolver now goes through the proxy, and
+  `+local` resolvers in imported profiles, which bypassed the tunnel, are dropped.
+- Routing with IP rules uses the connection's own address instead of looking its domain
+  up again.
 - Android: in Only listed mode, a connection whose app Android cannot identify stays in
   the tunnel.
 

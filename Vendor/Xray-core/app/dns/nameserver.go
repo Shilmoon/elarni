@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xtls/xray-core/common/errors"
@@ -14,7 +15,45 @@ import (
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/dns"
 	"github.com/xtls/xray-core/features/routing"
+	"github.com/xtls/xray-core/transport/internet"
 )
+
+// Elarni: connections a socket path change left behind get this long to answer the queries they
+// carry, longer than any query deadline here (pull's 8 s), before they close.
+var pathChangeGrace = 10 * time.Second
+
+// pathChangeSettle is how often a burst of socket path changes retires connections at most.
+var pathChangeSettle = time.Second
+
+// onSocketPathChange runs retire when the socket path changes (contract C1): at once, and once more
+// when a burst of signals settles, so a burst costs at most one fresh connection per settle period.
+func onSocketPathChange(retire func(grace time.Duration)) (remove func()) {
+	settle, grace := pathChangeSettle, pathChangeGrace
+	var mu sync.Mutex
+	var settling, again bool
+	var settled func()
+	settled = func() {
+		mu.Lock()
+		defer mu.Unlock()
+		settling = again
+		if again {
+			again = false
+			retire(grace)
+			time.AfterFunc(settle, settled)
+		}
+	}
+	return internet.OnSocketPathChange(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if settling {
+			again = true
+			return
+		}
+		settling = true
+		retire(grace)
+		time.AfterFunc(settle, settled)
+	})
+}
 
 // Server is the interface for Name Server.
 type Server interface {

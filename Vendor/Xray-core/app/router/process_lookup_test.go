@@ -1,8 +1,11 @@
 package router
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/xtls/xray-core/common/errors"
+	"github.com/xtls/xray-core/common/log"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/session"
 	routingsession "github.com/xtls/xray-core/features/routing/session"
@@ -48,5 +51,42 @@ func TestProcessRulesOfOneRoutingDecisionShareOneLookup(t *testing.T) {
 	matchers[0].Apply(connection())
 	if calls != 2 {
 		t.Fatalf("%d lookups after a second connection, want 2", calls)
+	}
+}
+
+type quietHandler struct{}
+
+func (quietHandler) Handle(log.Message)     {}
+func (quietHandler) Severity() log.Severity { return log.Severity_Unknown }
+
+// Routing a connection whose process lookup fails, with the core's log off and the app's log tap at
+// its default warning level, through the per-app rules of three targets.
+func BenchmarkProcessRulesOfAFailedLookup(b *testing.B) {
+	previous := lookupProcess
+	lookupProcess = func(string, string, uint16, string, uint16) (int, string, string, error) {
+		return 0, "", "", errors.New("failed to find the process")
+	}
+	log.RegisterHandler(quietHandler{})
+	kept := 0
+	log.SetTap(func(m log.Message) { kept += len(fmt.Sprint(m.(*log.GeneralMessage).Content)) }, func() log.Severity { return log.Severity_Warning })
+	b.Cleanup(func() {
+		lookupProcess = previous
+		log.SetTap(nil, nil)
+		log.RegisterHandler(log.NewLogger(log.CreateStdoutLogWriter()))
+	})
+	matchers := []*ProcessNameMatcher{
+		NewProcessNameMatcher([]string{"game.exe"}),
+		NewProcessNameMatcher([]string{"telegram"}),
+		NewProcessNameMatcher([]string{"browser"}),
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		ctx := &routingsession.Context{
+			Inbound:  &session.Inbound{Source: net.TCPDestination(net.LocalHostIP, 50000)},
+			Outbound: &session.Outbound{Target: net.TCPDestination(net.ParseAddress("1.2.3.10"), 443)},
+		}
+		for _, m := range matchers {
+			m.Apply(ctx)
+		}
 	}
 }
