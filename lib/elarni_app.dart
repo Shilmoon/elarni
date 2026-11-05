@@ -787,22 +787,44 @@ class _ElarniHomeState extends State<ElarniHome> {
       SettingsCategory.connection: [
         section('VPN'),
         if (widget.desktopCore)
-          ElarniCheckboxTile(
+          ElarniSelectTile(
             title: ElarniHelpLabel(
-              l10n.systemWideVpn,
+              l10n.connectionMode,
               help: widget.windows
-                  ? l10n.systemWideVpnServiceHelp
-                  : l10n.systemWideVpnHelp,
+                  ? l10n.connectionModeServiceHelp
+                  : l10n.connectionModeHelp,
             ),
-            value: _settings.xrayTunEnabled,
-            onChanged: _busy
-                ? null
-                : (value) => _saveSettings(
-                    _settings.copyWith(
-                      xrayTunEnabled: value,
-                      perAppMode: value ? _settings.perAppMode : 'off',
-                    ),
-                  ),
+            trailing: ElarniSelect<String>(
+              value: _settings.xrayTunEnabled
+                  ? 'tun'
+                  : _settings.systemProxyEnabled
+                  ? 'systemProxy'
+                  : 'localProxy',
+              items: [
+                DropdownMenuItem(value: 'tun', child: Text(l10n.systemWideVpn)),
+                DropdownMenuItem(
+                  value: 'systemProxy',
+                  child: Text(l10n.systemProxy),
+                ),
+                DropdownMenuItem(
+                  value: 'localProxy',
+                  child: Text(l10n.localProxyOnly),
+                ),
+              ],
+              onChanged: _busy
+                  ? null
+                  : (value) {
+                      if (value == null) return;
+                      final tun = value == 'tun';
+                      _saveSettings(
+                        _settings.copyWith(
+                          xrayTunEnabled: tun,
+                          systemProxyEnabled: value == 'systemProxy',
+                          perAppMode: tun ? _settings.perAppMode : 'off',
+                        ),
+                      );
+                    },
+            ),
           )
         else
           toggle(
@@ -933,10 +955,16 @@ class _ElarniHomeState extends State<ElarniHome> {
             ),
           ),
         section(l10n.localProxy),
-        toggle(
-          l10n.httpInbound,
-          _settings.httpInboundEnabled,
-          (value) => _settings.copyWith(httpInboundEnabled: value),
+        if (_settings.systemProxy)
+          ListTile(subtitle: Text(l10n.systemProxyListeners)),
+        ElarniCheckboxTile(
+          title: Text(l10n.httpInbound),
+          value: _settings.listeners.httpInboundEnabled,
+          onChanged: _busy || _settings.systemProxy
+              ? null
+              : (value) => _saveSettings(
+                  _settings.copyWith(httpInboundEnabled: value),
+                ),
         ),
         action(
           label: l10n.edit,
@@ -946,9 +974,11 @@ class _ElarniHomeState extends State<ElarniHome> {
           ),
           subtitle: Text(
             l10n.listenersSummary(
-              _settings.allowLAN ? l10n.listenLan : l10n.listenLoopback,
+              _settings.listeners.allowLAN
+                  ? l10n.listenLan
+                  : l10n.listenLoopback,
               _settings.socksPort,
-              _settings.httpInboundEnabled
+              _settings.listeners.httpInboundEnabled
                   ? '${_settings.httpPort}'
                   : l10n.httpOff,
             ),
@@ -991,8 +1021,8 @@ class _ElarniHomeState extends State<ElarniHome> {
               l10n.allowAppsWithoutLoginToggle,
               help: l10n.allowAppsWithoutLoginHelp,
             ),
-            value: !_settings.inboundAuthEnabled,
-            onChanged: _busy
+            value: !_settings.listeners.inboundAuthEnabled,
+            onChanged: _busy || _settings.systemProxy
                 ? null
                 : (allow) => allow ? _allowAppsWithoutLogin() : _requireLogin(),
           )
@@ -1014,8 +1044,9 @@ class _ElarniHomeState extends State<ElarniHome> {
           ),
         ElarniCheckboxTile(
           title: ElarniHelpLabel(l10n.allowLan, help: l10n.allowLanHelp),
-          value: _settings.allowLAN,
-          onChanged: _busy || !_settings.inboundAuthEnabled
+          value: _settings.listeners.allowLAN,
+          onChanged:
+              _busy || !_settings.inboundAuthEnabled || _settings.systemProxy
               ? null
               : (value) => _saveSettings(_settings.copyWith(allowLAN: value)),
         ),

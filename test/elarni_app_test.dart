@@ -1314,9 +1314,28 @@ void main() {
       expect(find.text('Tunnel settings'), findsNothing);
       await openSettings(tester);
       await selectCategory(tester, SettingsCategory.connection);
-      expect(find.text('System-wide VPN'), findsOneWidget);
+      expect(find.text('Connection mode'), findsOneWidget);
+      await tester.tap(find.text('Local proxy only'));
+      await tester.pumpAndSettle();
+      expect(
+        find.widgetWithText(MenuItemButton, 'System-wide VPN'),
+        findsOneWidget,
+      );
+      await tester.tap(find.widgetWithText(MenuItemButton, 'System proxy'));
+      await tester.pumpAndSettle();
+      expect(
+        (control.settings.systemProxyEnabled, control.settings.xrayTunEnabled),
+        (true, false),
+      );
       await reveal(tester, find.text('SOCKS5 and HTTP ports'));
       expect(find.text('SOCKS5 and HTTP ports'), findsOneWidget);
+      // The listeners System proxy mode needs are fixed while it is on.
+      expect(
+        find.text(
+          'In System proxy mode, apps on this computer use the HTTP port without a login.',
+        ),
+        findsOneWidget,
+      );
       await selectCategory(tester, SettingsCategory.ping);
       expect(find.byKey(const Key('ping-url')), findsNothing);
       await tester.tap(find.text('Direct TCP'));
@@ -1844,8 +1863,8 @@ void main() {
     await tester.pumpAndSettle();
     await openSettings(tester);
     await selectCategory(tester, SettingsCategory.connection);
-    await reveal(tester, find.text('System-wide VPN'));
-    expect(find.text('System-wide VPN'), findsOneWidget);
+    await reveal(tester, find.text('Connection mode'));
+    expect(find.text('Connection mode'), findsOneWidget);
     expect(find.text('Connect without administrator approval'), findsNothing);
   });
 

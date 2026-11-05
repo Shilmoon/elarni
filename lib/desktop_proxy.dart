@@ -13,6 +13,7 @@ import 'desktop_automation.dart';
 import 'desktop_version.dart';
 import 'update_check.dart' show isHttpsURL;
 import 'connection_diagnostics.dart';
+import 'system_proxy.dart';
 import 'headless_transport.dart' show windowsPowerShell;
 
 part 'desktop_proxy_commands.dart';
@@ -43,6 +44,7 @@ final class DesktopProxy {
     Duration? refreshInterval,
     Future<WiFiReading> Function()? wifiNetwork,
     Duration? wifiInterval,
+    SystemProxySession? systemProxy,
   }) : _startProcess =
            startProcess ??
            ((path) => Process.start(path, const [], runInShell: false)),
@@ -64,7 +66,8 @@ final class DesktopProxy {
        _refreshClock = clock ?? DateTime.now,
        _refreshInterval = refreshInterval ?? const Duration(seconds: 30),
        _wifiNetwork = wifiNetwork ?? readWiFiNetwork,
-       _wifiInterval = wifiInterval ?? const Duration(seconds: 5);
+       _wifiInterval = wifiInterval ?? const Duration(seconds: 5),
+       _systemProxy = systemProxy;
   final String corePath, domainPath;
   // Links come from web pages and other apps. Imports and stops wait for the
   // user; without a window to ask, they are declined. The prompt is
@@ -86,6 +89,9 @@ final class DesktopProxy {
   final Duration _replyTimeout, _helperExitGrace, _refreshInterval;
   final Future<WiFiReading> Function() _wifiNetwork;
   final Duration _wifiInterval;
+  // Null where System proxy mode does not apply: tests and the headless daemon.
+  final SystemProxySession? _systemProxy;
+  bool _proxyReleased = false;
   Timer? _wifiTimer;
   // The network last acted on; null before the first reading.
   ({String? name})? _wifi;
@@ -282,6 +288,10 @@ final class DesktopProxy {
 
   Future<void> _initialize() => _initializing ??=
       () async {
+        // A run that ended without restoring the OS proxy left it pointing at
+        // a closed listener, which breaks every app that follows it.
+        if (await _systemProxy?.recover() case final message?)
+          _listener?.call(message);
         // A retry after a failed load keeps the lease it already holds.
         if (_catalogIO == null && _lease == null)
           await _native('acquireCatalog', {});
@@ -344,6 +354,7 @@ final class DesktopProxy {
           _automationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
             unawaited(_automationTick());
             unawaited(_livenessTick());
+            unawaited(_syncSystemProxy());
           });
           _wifiTimer = Timer.periodic(
             _wifiInterval,
@@ -528,7 +539,7 @@ final class DesktopProxy {
     DesktopCatalog catalog,
     CatalogMap node,
   ) {
-    final settings = _nodeSettings(catalog, node);
+    final settings = _nodeSettings(catalog, node).listeners;
     final source = catalog.sources.firstWhere(
       (source) =>
           catalogList(source['nodes']).any((item) => item['id'] == node['id']),
@@ -615,9 +626,33 @@ final class DesktopProxy {
     }
   }
 
+  /// Puts the user's proxy setting back. Quitting the window does not wait
+  /// for [dispose], and the OS proxy must not outlive its listener.
+  Future<void> releaseSystemProxy() async {
+    _proxyReleased = true;
+    await _syncSystemProxy();
+  }
+
+  // The OS proxy follows a running System proxy session; any other state gives
+  // the user's own setting back.
+  Future<void> _syncSystemProxy() async {
+    final settings = _catalog?.settings;
+    final message = await _systemProxy?.sync(
+      !_disposed &&
+              !_proxyReleased &&
+              settings != null &&
+              settings.systemProxy &&
+              {'connected', 'reconnecting', 'reasserting'}.contains(_state)
+          ? settings.httpPort
+          : null,
+    );
+    if (message != null) _listener?.call(message);
+  }
+
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    await _syncSystemProxy();
     _timer?.cancel();
     _initRetry?.cancel();
     _automationTimer?.cancel();

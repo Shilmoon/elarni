@@ -10,6 +10,7 @@ import 'package:elarni/desktop_proxy.dart';
 import 'package:elarni/desktop_catalog.dart';
 import 'package:elarni/tunnel_channel.dart';
 import 'package:elarni/headless.dart';
+import 'package:elarni/system_proxy.dart';
 import 'package:elarni/wifi_network.dart';
 
 const userID = '00000000-0000-4000-8000-000000000001';
@@ -149,6 +150,23 @@ Future<void> checkHTTPRejected(int proxyPort, int targetPort) async {
   } finally {
     client.close(force: true);
   }
+}
+
+// The OS proxy setting, kept in memory: the user's own, or Elarni's port.
+final class FakeSystemProxy implements SystemProxy {
+  ProxySettings current = {'user': 'pac'};
+
+  @override
+  Future<ProxySettings> read() async => {...current};
+
+  @override
+  Future<void> point(int port) async => current = {'port': port};
+
+  @override
+  Future<void> write(ProxySettings settings) async => current = {...settings};
+
+  @override
+  bool pointsAt(ProxySettings settings, int port) => settings['port'] == port;
 }
 
 void main() {
@@ -320,6 +338,7 @@ void main() {
     Duration? livenessInterval,
     DateTime Function()? clock,
     Duration? refreshInterval,
+    SystemProxySession? systemProxy,
   }) {
     final created = DesktopProxy(
       corePath: corePath,
@@ -333,6 +352,7 @@ void main() {
       livenessInterval: livenessInterval,
       clock: clock,
       refreshInterval: refreshInterval,
+      systemProxy: systemProxy,
       wifiNetwork: () async => wifi,
       wifiInterval: const Duration(milliseconds: 50),
       confirmLink: (prompt) async {
@@ -2190,6 +2210,88 @@ rules:
       await backend.dispose();
       await expectClosed(settings.socksPort);
       await expectClosed(settings.httpPort);
+    },
+  );
+
+  test(
+    'System proxy mode points the OS at an open HTTP listener while connected',
+    () async {
+      final os = FakeSystemProxy()..current = {'port': 1};
+      final backup = File.fromUri(temporary.uri.resolve('system-proxy.json'));
+      // A run that crashed left the OS proxy on its listener.
+      await backup.writeAsString(
+        jsonEncode({
+          'port': 1,
+          'previous': {'user': 'pac'},
+        }),
+      );
+      await backend.dispose();
+      backend = createBackend(systemProxy: SystemProxySession(os, backup));
+      await prepare();
+      expect(os.current, {'user': 'pac'});
+      expect(await backup.exists(), isFalse);
+
+      // Login and HTTP are off; System proxy mode needs neither choice.
+      final settings = (await backend.control.tunnelSettings()).copyWith(
+        httpInboundEnabled: false,
+        systemProxyEnabled: true,
+      );
+      await backend.control.updateTunnelSettings(settings);
+      expect(os.current, {'user': 'pac'}, reason: 'only a connection sets it');
+      expect(await backend.control.connect(), 'connected');
+      expect(os.current, {'port': settings.httpPort});
+      final client = HttpClient()
+        ..findProxy = (_) => 'PROXY 127.0.0.1:${settings.httpPort}';
+      try {
+        final response = await (await client.getUrl(
+          Uri.parse('http://127.0.0.1:${target.port}/fixture'),
+        )).close();
+        expect(response.statusCode, 200);
+        expect(await utf8.decoder.bind(response).join(), body);
+      } finally {
+        client.close(force: true);
+      }
+      expect(await backend.control.disconnect(), 'disconnected');
+      expect(os.current, {'user': 'pac'});
+      expect(await backup.exists(), isFalse);
+      await expectClosed(settings.httpPort);
+      // A server test runs its own core, which must leave the HTTP port alone.
+      final occupied = await ServerSocket.bind(
+        InternetAddress.loopbackIPv4,
+        settings.httpPort,
+      );
+      try {
+        final probe = await backend.control.pingNode(
+          (await backend.control.subscriptions()).selectedNodeId!,
+          protocol: 'proxy',
+          method: 'GET',
+          mode: 'default',
+          timeout: 5,
+          url: 'http://127.0.0.1:${target.port}/fixture',
+          expectedStatus: 200,
+          expectedBody: body,
+        );
+        expect(probe.status, 'success');
+      } finally {
+        await occupied.close();
+      }
+
+      // Local proxy only keeps the user's choices and the OS setting.
+      await backend.control.updateTunnelSettings(
+        settings.copyWith(systemProxyEnabled: false),
+      );
+      expect(await backend.control.connect(), 'connected');
+      expect(os.current, {'user': 'pac'});
+      await expectClosed(settings.httpPort);
+      expect(await backend.control.disconnect(), 'disconnected');
+
+      // Quitting gives the setting back while the connection still runs.
+      await backend.control.updateTunnelSettings(settings);
+      expect(await backend.control.connect(), 'connected');
+      expect(os.current, {'port': settings.httpPort});
+      await backend.releaseSystemProxy();
+      expect(os.current, {'user': 'pac'});
+      expect(await backend.control.state(), 'connected');
     },
   );
 

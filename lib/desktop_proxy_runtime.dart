@@ -20,6 +20,7 @@ extension _ProxyRuntime on DesktopProxy {
       _checkGeneration(generation);
       _catalog = candidate;
       _listener?.call(null);
+      await _syncSystemProxy();
       return {'state': _state};
     } on Object catch (error) {
       await _stopProcess();
@@ -90,15 +91,16 @@ extension _ProxyRuntime on DesktopProxy {
         preparedConfig ??
         await _prepareConfig(catalog, catalog.node(catalog.selected!));
     _checkGeneration(generation);
+    final listeners = catalog.settings.listeners;
     // The core reports a taken port like any start failure, which would blame
     // the server and send failover through every backup.
     for (final port in [
-      catalog.settings.socksPort,
-      if (catalog.settings.httpInboundEnabled) catalog.settings.httpPort,
+      listeners.socksPort,
+      if (listeners.httpInboundEnabled) listeners.httpPort,
     ]) {
       try {
         await (await ServerSocket.bind(
-          catalog.settings.allowLAN
+          listeners.allowLAN
               ? InternetAddress.anyIPv4
               : InternetAddress.loopbackIPv4,
           port,
@@ -135,8 +137,8 @@ extension _ProxyRuntime on DesktopProxy {
     );
     _checkGeneration(generation);
     for (final port in [
-      catalog.settings.socksPort,
-      if (catalog.settings.httpInboundEnabled) catalog.settings.httpPort,
+      listeners.socksPort,
+      if (listeners.httpInboundEnabled) listeners.httpPort,
     ]) {
       final socket = await Socket.connect(
         InternetAddress.loopbackIPv4,
@@ -508,5 +510,6 @@ extension _ProxyRuntime on DesktopProxy {
     await _operation?.future;
     await _stopProcess(); // A launch can cross the first cancellation.
     _state = 'disconnected';
+    await _syncSystemProxy();
   }
 }

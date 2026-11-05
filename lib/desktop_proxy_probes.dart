@@ -141,7 +141,7 @@ extension _ProxyProbes on DesktopProxy {
             catalog.settings.perAppMode != 'proxyOnly') {
           payload['packetPath'] = true;
         } else if (active) {
-          final credentials = catalog.settings.inboundAuthEnabled
+          final credentials = catalog.settings.listeners.inboundAuthEnabled
               ? catalogMap(catalog.data['inboundCredentials'] ?? {})
               : catalog.settings.xrayTunEnabled
               ? _vpnLogin
@@ -180,6 +180,7 @@ extension _ProxyProbes on DesktopProxy {
           probe.data['settings'] = catalog.settings
               .copyWith(
                 xrayTunEnabled: false,
+                systemProxyEnabled: false,
                 perAppMode: 'off',
                 socksPort: port,
                 httpInboundEnabled: false,

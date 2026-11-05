@@ -4,6 +4,13 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Added
+
+- Windows and Linux: Settings › Connection › Connection mode picks System-wide VPN (the default),
+  System proxy or Local proxy only. System proxy points the Windows proxy setting, or
+  GNOME's and KDE Plasma's, at Elarni's HTTP listener while connected and puts the
+  previous setting back on disconnect, on quit, and at the next start after a crash.
+
 ## 0.4.1 - 2026-11-04
 
 ### Changed
