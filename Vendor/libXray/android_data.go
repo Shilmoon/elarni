@@ -73,13 +73,21 @@ func ReduceAndroidGeoFile(name, source, target, selectorsJSON, optionalJSON stri
 
 var androidAssets struct {
 	sync.RWMutex
-	once  sync.Once
-	files map[string][]byte
+	once      sync.Once
+	directory string // the files' revision directory
+	files     map[string][]byte
 }
 
 // Called by the serialized Android native owner before config compilation or
 // startup. Readers retain immutable bytes; no config can name arbitrary files.
 func UseAndroidAssets(directory string) error {
+	androidAssets.RLock()
+	loaded := directory != "" && directory == androidAssets.directory
+	androidAssets.RUnlock()
+	if loaded {
+		// A revision directory never changes (RoutingAssets.kt), so its files are already served.
+		return nil
+	}
 	files := map[string][]byte{}
 	if directory != "" {
 		for _, name := range []string{"geoip", "geosite"} {
@@ -103,7 +111,7 @@ func UseAndroidAssets(directory string) error {
 	}
 	androidAssets.Lock()
 	changed := !maps.EqualFunc(androidAssets.files, files, bytes.Equal)
-	androidAssets.files = files
+	androidAssets.files, androidAssets.directory = files, directory
 	androidAssets.Unlock()
 	if changed {
 		// Parsed-geodata caches key on this; each route serves its own files.

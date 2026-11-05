@@ -51,6 +51,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   replaced first.
 - Hysteria keeps its connection alive (10 s keepalive) and shares one dial between
   flows; XHTTP gives new flows a connection that is already up.
+- Android: the core's DNS answers are cached for their TTL, routing data is not read
+  again for the same route, and logs are capped at 200 lines a second.
+- The core returns memory after light traffic at most once a minute instead of every
+  5 s, and still at once after a large download or when many connections close.
 - Linux: per-app routing looks up the owners of a burst of new connections in one
   pass (64 connections: 9 ms instead of 36 ms).
 - Windows: an idle direct UDP flow no longer holds a 64 KiB read buffer.

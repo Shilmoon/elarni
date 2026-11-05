@@ -15,6 +15,7 @@ import (
 	"github.com/xtls/libxray/xray"
 	"github.com/xtls/xray-core/common/flightrecorder"
 	"github.com/xtls/xray-core/common/probe"
+	"github.com/xtls/xray-core/transport/internet"
 )
 
 type invokeResponse struct {
@@ -168,6 +169,10 @@ func Invoke(requestJSON string) string {
 		}
 		logs := xray.ReadLogs(request.After)
 		return encodeInvokeResponse(&logs, nil)
+	case LibXrayMethodSocketPathChanged:
+		// The Apple path monitor: sockets would now leave through another interface.
+		internet.SocketPathChanged()
+		return encodeInvokeNoDataResponse(nil)
 	default:
 		return encodeInvokeResponse(nil, errors.New("unknown method"))
 	}

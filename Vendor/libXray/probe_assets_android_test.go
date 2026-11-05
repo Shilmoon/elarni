@@ -9,11 +9,13 @@ import (
 
 	"github.com/xtls/xray-core/common/geodata"
 	"github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/common/platform/filesystem"
 	"google.golang.org/protobuf/proto"
 )
 
 // A probe of a server on another route serves that route's files, then restores the
-// active ones; matchers built after the restore must not reuse the probe's geodata.
+// active ones; matchers built after the restore must not reuse the probe's geodata. The
+// loaded revision directory is served as is, without reading and checking it again.
 func TestAndroidProbeRestoreRefreshesGeodata(t *testing.T) {
 	route := func(prefix byte) string {
 		directory := t.TempDir()
@@ -47,11 +49,20 @@ func TestAndroidProbeRestoreRefreshesGeodata(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = UseAndroidAssets("") })
-	if !probe(other).Match(net.ParseAddress("198.0.2.1").IP()) {
-		t.Fatal("the other route's probe did not use its geodata")
+	for range 2 {
+		if !probe(other).Match(net.ParseAddress("198.0.2.1").IP()) {
+			t.Fatal("the other route's probe did not use its geodata")
+		}
 	}
 	matcher := probe(active)
 	if !matcher.Match(net.ParseAddress("192.0.2.1").IP()) || matcher.Match(net.ParseAddress("198.0.2.1").IP()) {
 		t.Fatal("the active route's probe reused the other route's geodata")
+	}
+	generation := filesystem.AssetGeneration.Load()
+	if err := os.WriteFile(filepath.Join(active, "geoip.dat"), []byte("not geodata"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := UseAndroidAssets(active); err != nil || filesystem.AssetGeneration.Load() != generation {
+		t.Fatalf("the loaded directory was read again: %v", err)
 	}
 }
