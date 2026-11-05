@@ -1,0 +1,33 @@
+name: Runner health
+
+# The checks wait silently for an offline self-hosted runner (the Windows VM was once offline for 21 h). This
+# scheduled run fails when either runner is offline, and GitHub emails a failed scheduled run to its owner.
+# Listing runners needs a token with the repository's Administration read permission, which GITHUB_TOKEN lacks:
+# RUNNER_HEALTH_TOKEN is a fine-grained token for this repository with only that permission.
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  runners:
+    if: github.repository == 'Shilmoon/elarni'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require both self-hosted runners online
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_HEALTH_TOKEN }}
+          EXPECTED: elarni-linux-server elarni-windows-vm
+        run: |
+          set -e
+          test -n "$GH_TOKEN" || { echo '::error::RUNNER_HEALTH_TOKEN is not set'; exit 1; }
+          runners=$(gh api "repos/$GITHUB_REPOSITORY/actions/runners" --jq '.runners[] | "\(.name) \(.status) busy=\(.busy)"')
+          echo "$runners"
+          failed=0
+          for name in $EXPECTED; do
+            echo "$runners" | grep -q "^$name online " || { echo "::error::$name is not online"; failed=1; }
+          done
+          exit $failed
