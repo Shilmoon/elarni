@@ -13,4 +13,15 @@ copied, as in `Vendor/quic-go`.
   unread bytes new streams still wait, which bounds memory.
   Test: `flow_controller_stalled_test.go`; end to end in Xray-core's
   `proxy/tuic/stalled_streams_test.go`.
+  On iOS the allowance is half the maximum window instead of twice it (`unreadAllowance`), so
+  one TUIC connection holds at most 24 MiB unread instead of 48 MiB: iOS kills the packet
+  tunnel above about 50 MB. Test: `TestUnreadAllowanceIsSmallerOnIOS`.
+- `client.go` (`setupTransportConn`, `DialConn`, `DialEarlyConn`): a conn with a
+  `PacketConn() net.PacketConn` method that returns non-nil gets quic-go's unconnected-socket
+  path on that socket (batched receive, GSO, ECN, DF). Xray's UDP dialer returns an unconnected
+  socket in a wrapper, which hid it from quic-go; the connected path a syscall.Conn gets sends
+  without an address, which that socket rejects. A conn with a `SetQUICConn(*Conn)` method
+  learns the connection dialed over it, which sing-quic's TUIC client keeps private; Xray-core
+  checks it after a network change. Tests: `client_unconnected_test.go`; end to end in
+  Xray-core's `proxy/tuic/path_test.go`.
 - `go.mod`, `go.sum`: tidied for the copied sources, without the `tool` block.

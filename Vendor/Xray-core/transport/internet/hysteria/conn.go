@@ -21,10 +21,11 @@ type interConn struct {
 	local  net.Addr
 	remote net.Addr
 
-	client bool
-	user   *protocol.MemoryUser
-	lock   chan struct{}
-	mu     sync.Mutex
+	client  bool
+	user    *protocol.MemoryUser
+	lock    chan struct{}
+	mu      sync.Mutex
+	release func() // a client stream's hold on its connection, ended by Close
 }
 
 func (c *interConn) unlock() {
@@ -56,6 +57,10 @@ func (c *interConn) Write(b []byte) (int, error) {
 func (c *interConn) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.release != nil {
+		c.release()
+		c.release = nil
+	}
 	select {
 	case c.lock <- struct{}{}:
 		defer c.unlock()
@@ -184,6 +189,12 @@ func (m *udpSessionManager) close(udpConn *InterConn) {
 		close(udpConn.ch)
 		delete(m.m, udpConn.id)
 	}
+}
+
+func (m *udpSessionManager) sessions() int {
+	m.RLock()
+	defer m.RUnlock()
+	return len(m.m)
 }
 
 func (m *udpSessionManager) clean() {

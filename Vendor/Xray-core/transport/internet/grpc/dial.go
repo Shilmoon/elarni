@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xtls/xray-core/common"
@@ -19,9 +20,11 @@ import (
 	"github.com/xtls/xray-core/transport/internet/tls"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 )
 
 func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (stat.Connection, error) {
@@ -44,10 +47,76 @@ type dialerConf struct {
 	*internet.MemoryStreamConfig
 }
 
+// client is a pooled gRPC connection.
+type client struct {
+	*grpc.ClientConn
+	streams atomic.Int32 // flows on it
+	retired atomic.Bool  // set after a socket path change: it closes once its flows end
+}
+
 var (
-	globalDialerMap    map[dialerConf]*grpc.ClientConn
+	globalDialerMap    map[dialerConf]*client
 	globalDialerAccess sync.Mutex
+	watchPathOnce      sync.Once
 )
+
+// probeBound is how long a connection kept after a socket path change may take to answer.
+var probeBound = 5 * time.Second
+
+func (c *client) release() {
+	if c.streams.Add(-1) == 0 && c.retired.Load() {
+		c.Close()
+	}
+}
+
+// answers reports whether the server replies to a request within bound. A client ping
+// below the server's 5 min minimum would get the connection closed (too_many_pings),
+// so the probe is a health check, which servers answer even when they lack it.
+func (c *client) answers(bound time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
+	defer cancel()
+	err := c.Invoke(ctx, "/grpc.health.v1.Health/Check", &encoding.Hunk{}, &encoding.Hunk{})
+	return status.Code(err) != codes.DeadlineExceeded && c.GetState() == connectivity.Ready
+}
+
+// moved retires every pooled connection after the socket path changed: new flows dial on the
+// new path, and an old connection closes once its flows end, or at once if it stopped answering.
+func moved() {
+	globalDialerAccess.Lock()
+	retired := make([]*client, 0, len(globalDialerMap))
+	for key, c := range globalDialerMap {
+		delete(globalDialerMap, key)
+		c.retired.Store(true)
+		retired = append(retired, c)
+	}
+	globalDialerAccess.Unlock()
+	for _, c := range retired {
+		go func() {
+			if c.streams.Load() == 0 || !c.answers(probeBound) {
+				c.Close()
+			}
+		}()
+	}
+}
+
+func watchPath() {
+	moves := make(chan struct{}, 1)
+	internet.OnSocketPathChange(func() {
+		select {
+		case moves <- struct{}{}:
+		default:
+		}
+	})
+	go coalesce(moves, moved)
+}
+
+// coalesce runs pass on each signal; a burst of signals while its checks run gets one more pass.
+func coalesce(moves <-chan struct{}, pass func()) {
+	for range moves {
+		pass()
+		time.Sleep(probeBound)
+	}
+}
 
 // releaseClients closes the gRPC connections dialed for streamSettings,
 // including streams in use, and forgets them. Their dialers hold the first
@@ -61,9 +130,7 @@ func releaseClients(streamSettings *internet.MemoryStreamConfig) {
 	for key, conn := range globalDialerMap {
 		if key.MemoryStreamConfig == streamSettings {
 			delete(globalDialerMap, key)
-			if conn != nil {
-				conn.Close()
-			}
+			conn.Close()
 		}
 	}
 }
@@ -75,37 +142,43 @@ func dialgRPC(ctx context.Context, dest net.Destination, streamSettings *interne
 	if err != nil {
 		return nil, errors.New("Cannot dial gRPC").Base(err)
 	}
-	client := encoding.NewGRPCServiceClient(conn)
+	release := sync.OnceFunc(conn.release)
+	client := encoding.NewGRPCServiceClient(conn.ClientConn)
 	if grpcSettings.MultiMode {
 		errors.LogDebug(ctx, "using gRPC multi mode service name: `"+grpcSettings.getServiceName()+"` stream name: `"+grpcSettings.getTunMultiStreamName()+"`")
 		grpcService, err := client.(encoding.GRPCServiceClientX).TunMultiCustomName(ctx, grpcSettings.getServiceName(), grpcSettings.getTunMultiStreamName())
 		if err != nil {
+			release()
 			return nil, errors.New("Cannot dial gRPC").Base(err)
 		}
-		return encoding.NewMultiHunkConn(grpcService, nil, nil), nil
+		return encoding.NewMultiHunkConn(grpcService, release, nil), nil
 	}
 
 	errors.LogDebug(ctx, "using gRPC tun mode service name: `"+grpcSettings.getServiceName()+"` stream name: `"+grpcSettings.getTunStreamName()+"`")
 	grpcService, err := client.(encoding.GRPCServiceClientX).TunCustomName(ctx, grpcSettings.getServiceName(), grpcSettings.getTunStreamName())
 	if err != nil {
+		release()
 		return nil, errors.New("Cannot dial gRPC").Base(err)
 	}
 
-	return encoding.NewHunkConn(grpcService, nil, nil), nil
+	return encoding.NewHunkConn(grpcService, release, nil), nil
 }
 
-func getGrpcClient(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (*grpc.ClientConn, error) {
+// getGrpcClient returns the pooled connection for dest, counting the caller's flow on it.
+func getGrpcClient(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (*client, error) {
+	watchPathOnce.Do(watchPath)
 	globalDialerAccess.Lock()
 	defer globalDialerAccess.Unlock()
 
 	if globalDialerMap == nil {
-		globalDialerMap = make(map[dialerConf]*grpc.ClientConn)
+		globalDialerMap = make(map[dialerConf]*client)
 	}
 	tlsConfig := tls.ConfigFromStreamSettings(streamSettings)
 	realityConfig := reality.ConfigFromStreamSettings(streamSettings)
 	grpcSettings := streamSettings.ProtocolSettings.(*Config)
 
 	if client, found := globalDialerMap[dialerConf{dest, streamSettings}]; found && client.GetState() != connectivity.Shutdown {
+		client.streams.Add(1)
 		return client, nil
 	}
 
@@ -216,24 +289,27 @@ func getGrpcClient(ctx context.Context, dest net.Destination, streamSettings *in
 		"passthrough:///"+net.JoinHostPort(grpcDestHost, dest.Port.String()),
 		dialOptions...,
 	)
-	if err == nil {
-		userAgent := grpcSettings.UserAgent
-		// It's NOT recommended to set the UA of gRPC connections to that of real browsers, as they are fundamentally incapable of initiating real gRPC connections.
-		switch userAgent {
-		case "chrome", "":
-			userAgent = utils.ChromeUA
-		case "firefox":
-			userAgent = utils.FirefoxUA
-		case "edge":
-			userAgent = utils.MSEdgeUA
-		case "golang":
-			userAgent = ""
-		}
-		setUserAgent(conn, userAgent)
-		conn.Connect()
+	if err != nil {
+		return nil, err
 	}
-	globalDialerMap[dialerConf{dest, streamSettings}] = conn
-	return conn, err
+	userAgent := grpcSettings.UserAgent
+	// It's NOT recommended to set the UA of gRPC connections to that of real browsers, as they are fundamentally incapable of initiating real gRPC connections.
+	switch userAgent {
+	case "chrome", "":
+		userAgent = utils.ChromeUA
+	case "firefox":
+		userAgent = utils.FirefoxUA
+	case "edge":
+		userAgent = utils.MSEdgeUA
+	case "golang":
+		userAgent = ""
+	}
+	setUserAgent(conn, userAgent)
+	conn.Connect()
+	pooled := &client{ClientConn: conn}
+	pooled.streams.Add(1)
+	globalDialerMap[dialerConf{dest, streamSettings}] = pooled
+	return pooled, nil
 }
 
 // setUserAgent overrides the user-agent on a ClientConn to remove the

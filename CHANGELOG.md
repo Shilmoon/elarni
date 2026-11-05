@@ -29,6 +29,11 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - Android: in Only listed mode, a connection whose app Android cannot identify stays in
   the tunnel.
 
+### Performance
+
+- Hysteria keeps its connection alive (10 s keepalive) and shares one dial between
+  flows; XHTTP gives new flows a connection that is already up.
+
 ## 0.4.1 - 2026-11-04
 
 ### Changed

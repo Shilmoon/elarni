@@ -65,7 +65,7 @@ func TestBindMovesDatagramBatchesWithReservedBytesAndCounters(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if runtime.GOOS == "linux" && n != 5 {
+		if wantBatch > 1 && n != 5 {
 			t.Fatalf("one receive returned %d of 5 queued datagrams", n)
 		}
 		for i := range n {
@@ -155,4 +155,98 @@ func receiveBuffer(t *testing.T, conn syscall.Conn) int {
 		t.Fatal(err)
 	}
 	return size
+}
+
+// Every received datagram allocated an endpoint, though the one peer rarely changes address.
+func TestBindReusesTheEndpointOfAnUnchangedPeer(t *testing.T) {
+	for name, wrap := range map[string]func(net.PacketConn) net.PacketConn{
+		"batched":      func(c net.PacketConn) net.PacketConn { return c },
+		"per datagram": func(c net.PacketConn) net.PacketConn { return plainSocket{c} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			socket, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			b := &bind{listenFunc: func() (net.PacketConn, error) { return wrap(socket), nil }}
+			fns, _, err := b.Open(0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer b.Close()
+			var peers [2]*net.UDPConn
+			for i := range peers {
+				if peers[i], err = net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)}); err != nil {
+					t.Fatal(err)
+				}
+				defer peers[i].Close()
+			}
+			target := socket.LocalAddr().(*net.UDPAddr).AddrPort()
+			bufs, sizes, eps := [][]byte{make([]byte, 2048)}, make([]int, 1), make([]conn.Endpoint, 1)
+			receive := func(peer *net.UDPConn) conn.Endpoint {
+				if _, err := peer.WriteToUDPAddrPort([]byte{4, 0, 0, 0}, target); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := fns[0](bufs, sizes, eps); err != nil {
+					t.Fatal(err)
+				}
+				return eps[0]
+			}
+			first, again, other := receive(peers[0]), receive(peers[0]), receive(peers[1])
+			if first != again {
+				t.Error("a second datagram from the same peer got a new endpoint")
+			}
+			if other == again || other.(*conn.StdNetEndpoint).Port() != peers[1].LocalAddr().(*net.UDPAddr).AddrPort().Port() {
+				t.Errorf("a datagram from another peer got endpoint %v", other)
+			}
+			samePeer := testing.AllocsPerRun(100, func() { receive(peers[0]) })
+			next := 0
+			alternating := testing.AllocsPerRun(100, func() { next ^= 1; receive(peers[next]) })
+			if samePeer >= alternating {
+				t.Errorf("%v allocations per datagram from one peer, %v from alternating peers", samePeer, alternating)
+			}
+		})
+	}
+}
+
+// plainSocket hides the UDP socket, as masks and diagnostics wrappers do.
+type plainSocket struct{ net.PacketConn }
+
+func benchmarkBindReceive(b *testing.B, wrap func(net.PacketConn) net.PacketConn) {
+	socket, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		b.Fatal(err)
+	}
+	peer, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer peer.Close()
+	bd := &bind{listenFunc: func() (net.PacketConn, error) { return wrap(socket), nil }}
+	fns, _, err := bd.Open(0)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer bd.Close()
+	datagram, target := make([]byte, 1200), socket.LocalAddr()
+	bufs, sizes, eps := [][]byte{make([]byte, 2048)}, make([]int, 1), make([]conn.Endpoint, 1)
+	b.ReportAllocs()
+	for b.Loop() {
+		b.StopTimer()
+		if _, err := peer.WriteTo(datagram, target); err != nil {
+			b.Fatal(err)
+		}
+		b.StartTimer()
+		if _, err := fns[0](bufs, sizes, eps); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkBindReceiveBatched(b *testing.B) {
+	benchmarkBindReceive(b, func(c net.PacketConn) net.PacketConn { return c })
+}
+
+func BenchmarkBindReceivePerDatagram(b *testing.B) {
+	benchmarkBindReceive(b, func(c net.PacketConn) net.PacketConn { return plainSocket{c} })
 }
