@@ -90,6 +90,36 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('an idle log does not rebuild the dialog each second', (
+    tester,
+  ) async {
+    final control = FakeTunnelControl()
+      ..logLines.add({
+        'seq': 1,
+        'time': 0,
+        'level': 'warning',
+        'text': 'core: Xray started',
+      });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: LogsView(control: control)),
+      ),
+    );
+    await tester.pump();
+    var rebuilds = 0;
+    debugOnRebuildDirtyWidget = (element, _) {
+      if (element.widget is LogsView) rebuilds++;
+    };
+    try {
+      await tester.pump(const Duration(seconds: 3));
+      expect(control.logReads.length, greaterThan(2));
+      expect(rebuilds, 0);
+    } finally {
+      debugOnRebuildDirtyWidget = null;
+    }
+    await tester.pumpWidget(const SizedBox());
+  });
+
   test('settings keep a known log level, warning by default', () {
     expect(const TunnelSettings().logLevel, 'warning');
     expect(TunnelSettings.fromMap({}).logLevel, 'warning');

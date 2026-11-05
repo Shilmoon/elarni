@@ -1812,6 +1812,59 @@ void main() {
     );
   });
 
+  // Windows and Linux reconnect until Stop by default, so the switch would do nothing.
+  testWidgets('Windows offers no On Demand switch', (tester) async {
+    final control = FakeTunnelControl();
+    await pumpApp(tester, control, windows: true);
+    await openSettings(tester);
+    await reveal(tester, find.text('Connect on untrusted Wi-Fi'));
+    expect(find.text('On Demand'), findsNothing);
+  });
+
+  // While minimized the window must stay idle between catalog changes.
+  testWidgets(
+    'the idle Windows window neither rebuilds for a growing health age nor polls servers',
+    (tester) async {
+      final control = FakeTunnelControl()
+        ..automation = {
+          'enabled': true,
+          'policySupported': true,
+          'status': 'healthy',
+          'healthNodeID': 'a',
+          'healthAgeSeconds': 1.0,
+        };
+      await pumpApp(tester, control, windows: true);
+      final reads = control.subscriptionReads;
+      var rebuilds = 0;
+      debugOnRebuildDirtyWidget = (element, _) {
+        if (element.widget is ElarniHome) rebuilds++;
+      };
+      try {
+        for (final age in [6.0, 11.0, 16.0]) {
+          control.automation = {...control.automation, 'healthAgeSeconds': age};
+          await tester.pump(const Duration(seconds: 5));
+        }
+        expect(rebuilds, 0);
+        expect(control.subscriptionReads, reads);
+        // Past 90 s the page says the check is stale.
+        control.automation = {...control.automation, 'healthAgeSeconds': 95.0};
+        await tester.pump(const Duration(seconds: 5));
+        await tester.pump();
+        expect(rebuilds, greaterThan(0));
+      } finally {
+        debugOnRebuildDirtyWidget = null;
+      }
+    },
+  );
+
+  testWidgets('macOS still polls servers', (tester) async {
+    final control = FakeTunnelControl();
+    await pumpApp(tester, control);
+    final reads = control.subscriptionReads;
+    await tester.pump(const Duration(seconds: 5));
+    expect(control.subscriptionReads, greaterThan(reads));
+  });
+
   testWidgets('Windows lets this account connect without the approval prompt', (
     tester,
   ) async {

@@ -714,7 +714,6 @@
   "untrustedWifiDesktopHelp": "Joining a Wi-Fi network that is not on your trusted list connects. Trusted networks, wired and mobile connections, and a connection you stopped stay as they are until the next network.",
   "connectOnUntrustedWifi": "Connect on untrusted Wi-Fi",
   "onDemandMacHelp": "On Demand controls automatic connection when network access resumes.",
-  "onDemandDesktopHelp": "On Demand reconnects after wake or a network interruption until you press Stop.",
   "onDemand": "On Demand",
   "recoveryBackupsSummary": "Use only your allowed backup servers.",
   "recoveryFixedSummary": "Reconnect to the selected server only.",

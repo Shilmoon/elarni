@@ -493,24 +493,24 @@ func (network linuxNetwork) cleanup() error {
 	var failures []error
 	// Remove interception before removing its DNS listener or tunnel.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	present := exec.CommandContext(ctx, linuxTool("nft"), "list", "table", "inet", network.Name).Run() == nil
+	listed := exec.CommandContext(ctx, linuxTool("nft"), "list", "table", "inet", network.Name).Run()
+	// A listing that timed out may hide the table.
+	present := listed == nil || errors.Is(ctx.Err(), context.DeadlineExceeded)
 	cancel()
+	redirect := false
 	if present {
 		if err := nft("delete table inet " + network.Name + "\n"); err != nil {
 			failures = append(failures, err)
+			redirect = true
 		}
 	}
 
 	for _, family := range network.families() {
-		// The mark names this network's rules whatever policy installed them.
 		rules, err := netlink.RuleList(family)
 		if err != nil {
 			failures = append(failures, err)
 		}
-		for _, rule := range rules {
-			if rule.Protocol != 186 || rule.Mark != network.Mark {
-				continue
-			}
+		for _, rule := range network.staleRules(rules, redirect) {
 			if err := netlink.RuleDel(&rule); err != nil && !errors.Is(err, unix.ENOENT) && !errors.Is(err, unix.ESRCH) {
 				failures = append(failures, err)
 			}
@@ -527,6 +527,19 @@ func (network linuxNetwork) cleanup() error {
 		}
 	}
 	return errors.Join(failures...)
+}
+
+// staleRules are this network's rules to delete; the mark names them whatever policy
+// installed them. While its DNS redirect may remain, the marker rule stays, so an
+// unprivileged linuxGuardLeft still reports the leftover and Repair can clear it.
+func (network linuxNetwork) staleRules(rules []netlink.Rule, redirect bool) []netlink.Rule {
+	var stale []netlink.Rule
+	for _, rule := range rules {
+		if rule.Protocol == 186 && rule.Mark == network.Mark && (!redirect || rule.IifName != network.markerRule(rule.Family).IifName) {
+			stale = append(stale, rule)
+		}
+	}
+	return stale
 }
 
 func linuxMarkControl(mark uint32) func(string, string, syscall.RawConn) error {

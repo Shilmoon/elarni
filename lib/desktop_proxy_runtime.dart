@@ -16,10 +16,18 @@ extension _ProxyRuntime on DesktopProxy {
       final candidate = _catalog!.copy();
       await _start(candidate, generation);
       candidate.recordSuccess(candidate.selected!);
-      await _save({'version': 1, 'committed': candidate.data});
+      // Only bookkeeping: a storage hiccup must not stop a working connection.
+      String? unsaved;
+      try {
+        await _save({'version': 1, 'committed': candidate.data});
+      } on Object catch (error) {
+        unsaved =
+            (error is PlatformException ? error.message : null) ??
+            desktopError('storage_unavailable').message;
+      }
       _checkGeneration(generation);
-      _catalog = candidate;
-      _listener?.call(null);
+      if (unsaved == null) _catalog = candidate;
+      _listener?.call(unsaved);
       await _syncSystemProxy();
       return {'state': _state};
     } on Object catch (error) {
@@ -76,7 +84,37 @@ extension _ProxyRuntime on DesktopProxy {
       await _native('clearVPNGuard', {}, timeout: const Duration(seconds: 90));
     } on PlatformException catch (error) {
       if (error.code == 'cancelled') rethrow;
-      throw desktopError('vpn_guard_stale');
+      // The cause tells a declined prompt from one nobody answered.
+      final stale = desktopError('vpn_guard_stale');
+      throw PlatformException(
+        code: stale.code,
+        message: stale.message,
+        details: error.code,
+      );
+    }
+  }
+
+  // A core whose server stopped passing traffic starts again on the same
+  // server. The catalog is unchanged, so nothing is saved.
+  Future<void> _restart() async {
+    if (_operation != null || _state != 'connected') throw desktopError('busy');
+    final done = _operation = Completer<void>(), generation = _generation;
+    try {
+      _state = 'reconnecting';
+      await _stopProcess();
+      _checkGeneration(generation);
+      await _start(_catalog!, generation);
+    } on Object catch (error) {
+      await _stopProcess();
+      if (generation == _generation ||
+          {'reconnecting', 'connecting', 'connected'}.contains(_state))
+        _state = 'failed';
+      _checkGeneration(generation);
+      if (error is PlatformException) rethrow;
+      throw desktopError('connection_failed');
+    } finally {
+      _operation = null;
+      done.complete();
     }
   }
 
@@ -152,6 +190,7 @@ extension _ProxyRuntime on DesktopProxy {
     _state = 'connected';
     _connectedAt = DateTime.now();
     _liveness = _livenessAt = null;
+    _livenessFailures = 0;
   }
 
   Future<CatalogMap> _native(
@@ -197,7 +236,10 @@ extension _ProxyRuntime on DesktopProxy {
       if (_vpnSession == launch) _vpnSession = null;
       throw desktopError('native_unavailable');
     }
-    if (lease) _leaseOutput = StreamIterator(process.stdout);
+    if (lease) {
+      _leaseOutput = StreamIterator(process.stdout);
+      _leaseExit = process.exitCode;
+    }
     if (!reused)
       unawaited(process.stderr.drain<void>().catchError((Object _) {}));
     if (cancellable) _workers.add(process);
@@ -209,29 +251,12 @@ extension _ProxyRuntime on DesktopProxy {
           if (runtime && _process == launch) {
             _process = null;
             // _stopProcess reaps on purpose; its caller reports the outcome.
-            if (_state == 'connected' && _stopping == null) {
-              _state = 'failed';
-              // The listener shows text; codes are for exceptions.
-              // Settings edits reconnect, so the catalog matches the running session.
-              _listener?.call(
-                !session
-                    ? 'Connection stopped unexpectedly. Reconnect to retry.'
-                    : _catalog?.settings.blockWithoutVPN == true
-                    ? 'Connection stopped unexpectedly. Block traffic without VPN keeps traffic blocked until you reconnect, or use Repair VPN setup to lift the block.'
-                    // A killed helper can leave its DNS guard; Repair VPN setup clears it.
-                    : 'Connection stopped unexpectedly. Reconnect to retry; if sites stay unreachable, use Repair VPN setup.',
-              );
-            }
+            if (_state == 'connected' && _stopping == null)
+              _reportUnexpectedStop(session: session);
           }
-          if (lease && retained && _lease == launch && !_disposed) {
-            _storageLost = true;
-            unawaited(
-              _disconnect().then((_) {
-                _state = 'failed';
-                _listener?.call(desktopError('storage_unavailable').message);
-              }),
-            );
-          }
+          // The next storage request takes the lease again; the connection
+          // stays up meanwhile.
+          if (lease) _detachLease(launch);
         }),
       );
     try {
@@ -241,7 +266,12 @@ extension _ProxyRuntime on DesktopProxy {
         _latestMetrics = {};
         _metricsAt = null;
       }
-      if (session) _vpnReplyProcess = process;
+      if (session) {
+        // A session whose output ended answers nothing more; its exit clears it.
+        if (reused && _vpnReplyProcess != process)
+          throw desktopError('native_unavailable');
+        _vpnReplyProcess = process;
+      }
       final response =
           (lease || leased
                   ? _readLine(_leaseOutput!)
@@ -260,14 +290,15 @@ extension _ProxyRuntime on DesktopProxy {
                         ? const Duration(seconds: 120)
                         : _replyTimeout),
               );
-      // A lease that missed a reply can no longer pair replies with requests;
-      // its exit reports the storage as lost.
+      // A lease that missed a reply can no longer pair replies with requests,
+      // so it ends; the next storage request takes a new one.
       if (leased)
         unawaited(
           response.then<void>(
             (_) {},
             onError: (Object _) {
               process.kill();
+              _detachLease(launch);
             },
           ),
         );
@@ -325,6 +356,9 @@ extension _ProxyRuntime on DesktopProxy {
             : runtime
             ? 'connection_failed'
             : 'operation_failed';
+        // The helper answered, so its elevated owner lives on for the next
+        // command; if it exits instead, its exit clears the session.
+        if (session) retained = true;
         throw PlatformException(
           code: failure,
           message: desktopError(
@@ -357,6 +391,12 @@ extension _ProxyRuntime on DesktopProxy {
         if (_vpnSession == launch) _vpnSession = null;
       }
     }
+  }
+
+  void _detachLease(Future<Process> launch) {
+    if (_lease != launch) return;
+    _lease = null;
+    _leaseOutput = null;
   }
 
   Future<CatalogMap> _readResponse(Process process) async {
@@ -400,6 +440,7 @@ extension _ProxyRuntime on DesktopProxy {
         _vpnReply!.completeError(desktopError('operation_failed'));
         _vpnReply = null;
       }
+      if (session && _vpnReplyProcess == process) _vpnReplyProcess = null;
       process.kill();
     }
 
@@ -419,7 +460,10 @@ extension _ProxyRuntime on DesktopProxy {
               jsonDecode(utf8.decode(bytes.takeBytes())),
             );
             final event = value['event'];
-            if (event != 'metrics' && event != 'logs' && session) {
+            if (event != 'metrics' &&
+                event != 'logs' &&
+                event != 'stopped' &&
+                session) {
               final pending = _vpnReply;
               if (_vpnReplyProcess != process ||
                   pending == null ||
@@ -429,6 +473,17 @@ extension _ProxyRuntime on DesktopProxy {
               pending.complete(value);
             } else if (!ready.isCompleted && !session) {
               ready.complete(value);
+            } else if (event == 'stopped' && session) {
+              // The tunnel ended by itself. Its elevated owner waits for the
+              // next connect, which then needs no new consent.
+              if (_vpnReplyProcess == process &&
+                  _process != null &&
+                  _process == _vpnSession) {
+                _process = null;
+                _metricsProcess = null;
+                if (_state == 'connected' && _stopping == null)
+                  _reportUnexpectedStop(session: true);
+              }
             } else if (event == 'logs' && value['data'] is Map) {
               _appendLogs(catalogMap(value['data']));
             } else {
@@ -451,6 +506,20 @@ extension _ProxyRuntime on DesktopProxy {
       cancelOnError: true,
     );
     return ready.future;
+  }
+
+  void _reportUnexpectedStop({required bool session}) {
+    _state = 'failed';
+    // The listener shows text; codes are for exceptions.
+    // Settings edits reconnect, so the catalog matches the running session.
+    _listener?.call(
+      !session
+          ? 'Connection stopped unexpectedly. Reconnect to retry.'
+          : _catalog?.settings.blockWithoutVPN == true
+          ? 'Connection stopped unexpectedly. Block traffic without VPN keeps traffic blocked until you reconnect, or use Repair VPN setup to lift the block.'
+          // A killed helper can leave its DNS guard; Repair VPN setup clears it.
+          : 'Connection stopped unexpectedly. Reconnect to retry; if sites stay unreachable, use Repair VPN setup.',
+    );
   }
 
   Future<void> _reap(Future<Process>? launch) async {
@@ -483,7 +552,12 @@ extension _ProxyRuntime on DesktopProxy {
         !_disposed &&
         !_storageLost) {
       try {
-        await _native('stopVPN', {});
+        final stopped = await _native('stopVPN', {});
+        // The helper keeps retrying the release; until it works, names may not resolve.
+        if (stopped['warning'] == 'vpn_dns_release_failed')
+          _listener?.call(
+            'Disconnected, but Windows DNS could not be restored yet. If sites stay unreachable, use Repair VPN setup.',
+          );
       } on Object {
         // The helper's routes and guards end with its broker. A failed stop
         // must not leave Stop, intent and reconnect stuck behind it.

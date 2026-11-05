@@ -208,6 +208,7 @@ class _ElarniHomeState extends State<ElarniHome> {
     profiles: <RoutingProfile>[],
     assignments: <String, String>{},
   );
+  bool _subscriptionsLoaded = false;
   TunnelSettings _settings = const TunnelSettings();
   // Saving sends the whole object, so defaults shown before a load must not.
   bool _settingsLoaded = false;
@@ -345,7 +346,10 @@ class _ElarniHomeState extends State<ElarniHome> {
         _refreshState(onlyWhenIdle: true);
       if (mounted && !_busy && timer.tick % 5 == 0) {
         unawaited(_refreshAutomation());
-        unawaited(_refreshSubscriptions());
+        // Windows and Linux report each catalog change, so they poll only
+        // until a snapshot loads.
+        if (!widget.desktopCore || !_subscriptionsLoaded)
+          unawaited(_refreshSubscriptions());
         if (!_settingsLoaded) unawaited(_refreshSettings());
         unawaited(widget.desktop.checkForUpdate());
       }
@@ -604,14 +608,14 @@ class _ElarniHomeState extends State<ElarniHome> {
           ),
           onPressed: _busy || _selectedNode == null ? null : _configureRecovery,
         ),
-        toggle(
-          l10n.onDemand,
-          _settings.onDemandEnabled,
-          (value) => _settings.copyWith(onDemandEnabled: value),
-          help: widget.desktopCore
-              ? l10n.onDemandDesktopHelp
-              : l10n.onDemandMacHelp,
-        ),
+        // Windows and Linux always reconnect until Stop, as On Demand did.
+        if (!widget.desktopCore)
+          toggle(
+            l10n.onDemand,
+            _settings.onDemandEnabled,
+            (value) => _settings.copyWith(onDemandEnabled: value),
+            help: l10n.onDemandMacHelp,
+          ),
         toggle(
           l10n.connectOnUntrustedWifi,
           _settings.connectOnUntrustedWiFi,

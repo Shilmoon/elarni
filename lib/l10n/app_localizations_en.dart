@@ -1589,10 +1589,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'On Demand controls automatic connection when network access resumes.';
 
   @override
-  String get onDemandDesktopHelp =>
-      'On Demand reconnects after wake or a network interruption until you press Stop.';
-
-  @override
   String get onDemand => 'On Demand';
 
   @override

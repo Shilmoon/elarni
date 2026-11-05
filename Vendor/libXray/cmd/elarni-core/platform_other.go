@@ -15,6 +15,7 @@ func recordingDirectories() []string { return []string{userRecordingDirectory()}
 
 func platformMain() (bool, int) { return false, 0 }
 func platformRunning() bool     { return false }
+func platformTunnelUp() bool    { return false }
 func platformStop() error       { return nil }
 func platformMetrics() (xray.RuntimeMetrics, error) {
 	return xray.RuntimeMetrics{}, errors.New("not_running")

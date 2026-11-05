@@ -22,6 +22,8 @@ final class DesktopAutomation {
   String status = 'disabled', path = '';
   double? episodeStarted, retryAt, healthAt, lastSwitch, lastOptimization;
   double? _unattendedRearmAt;
+  bool _pathKnown = false;
+  int _sleepTicks = 0;
   final Map<String, double> cooldown = {};
   final Set<String> invalid = {};
   final Map<String, ({double score, double at, int epoch, String reference})>
@@ -105,6 +107,8 @@ final class DesktopAutomation {
     'interrupted': retryAt != null || attempts > 0,
   };
 
+  bool get recovering => retryAt != null || attempts > 0 || exhausted;
+
   void invalidate() {
     epoch++;
     measurements.clear();
@@ -146,23 +150,36 @@ final class DesktopAutomation {
 
   void pathChanged(String signature, bool available, double now) {
     if (signature == path && available == online) return;
-    final initial = path.isEmpty;
+    final initial = !_pathKnown, returned = available && !online;
+    _pathKnown = true;
     path = signature;
     online = available;
     invalidate();
-    if (available && !exhausted) {
-      if (!initial && attempts == 0)
-        rearm(now);
-      else
-        healthAt = now;
+    if (!available) return;
+    // A network that comes back starts a new episode; an address change keeps
+    // a running one's budget, so a flapping link cannot repeat failover.
+    if (!initial && (attempts == 0 || returned)) {
+      rearm(now);
+    } else if (!exhausted) {
+      healthAt = now;
     }
   }
 
   void sleepChanged(bool value, double now) {
     if (sleeping == value) return;
     sleeping = value;
+    _sleepTicks = 0;
     invalidate();
     if (!value && !exhausted && attempts == 0) rearm(now);
+  }
+
+  // Ticks run only while the machine is awake, so a minute of them ends a
+  // sleep whose wake event never came.
+  bool stillSleeping(double now) {
+    if (!sleeping) return false;
+    if (++_sleepTicks < 60) return true;
+    sleepChanged(false, now);
+    return false;
   }
 
   void healthy(double now) {
@@ -171,6 +188,18 @@ final class DesktopAutomation {
     episodeStarted = retryAt = null;
     healthAt = now + 30;
     status = 'healthy';
+  }
+
+  static const recheckSeconds = 10;
+
+  // True when this failed check fails over: the third in a row, or a retry's.
+  // The next check comes sooner than after a pass, so a dead server is left
+  // within about 50 s of its first failed check, not 90 s.
+  bool checkFailed(double now, {required bool retrying, int? recheck}) {
+    if (++failures >= 3 || retrying) return true;
+    healthAt = now + (recheck ?? recheckSeconds);
+    status = 'healthFailure';
+    return false;
   }
 
   double? score(String id, String reference, double now) {
@@ -184,37 +213,33 @@ final class DesktopAutomation {
         : null;
   }
 
+  static const _delays = [1, 2, 4, 8, 16, 30];
+
+  // The selected server is retried while intent holds, then every minute.
+  // Exhausted ends only the failover budget: backups are tried in the first
+  // 120 s and six attempts of an episode.
   void scheduleRetry(double now) {
-    if (retryAt != null || exhausted || !online || sleeping || !intent) return;
+    if (retryAt != null || !online || sleeping || !intent) return;
     episodeStarted ??= now;
-    const delays = [1, 2, 4, 8, 16, 30];
-    if (attempts >= delays.length ||
-        now + delays[attempts] >= episodeStarted! + 120) {
-      exhausted = true;
-      healthAt = null;
-      status = 'exhausted';
-      return;
-    }
-    retryAt = now + delays[attempts];
+    final delay = attempts < _delays.length ? _delays[attempts] : 60;
+    if (attempts >= _delays.length || now + delay >= episodeStarted! + 120)
+      _exhaust();
+    retryAt = now + delay;
     healthAt = null;
   }
 
   bool beginRetry(double now) {
-    if (!intent ||
-        !online ||
-        sleeping ||
-        exhausted ||
-        retryAt == null ||
-        now < retryAt!)
+    if (!intent || !online || sleeping || retryAt == null || now < retryAt!)
       return false;
     retryAt = null;
-    if (attempts >= 6 || now >= episodeStarted! + 120) {
-      exhausted = true;
-      status = 'exhausted';
-      return false;
-    }
+    if (attempts >= _delays.length || now >= episodeStarted! + 120) _exhaust();
     attempts++;
     return true;
+  }
+
+  void _exhaust() {
+    exhausted = true;
+    status = 'exhausted';
   }
 
   List<String> round(List<String> nodes, String? current, double now) {

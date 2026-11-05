@@ -57,7 +57,7 @@ final class DesktopProxy {
        _replyTimeout = replyTimeout ?? const Duration(seconds: 20),
        _helperExitGrace = helperExitGrace ?? const Duration(seconds: 10),
        _automationProbeSeconds = automationProbeSeconds ?? 5,
-       _automationRetrySeconds = automationRetrySeconds ?? 30,
+       _automationRetrySeconds = automationRetrySeconds,
        _livenessTargets = livenessTargets ?? DesktopProxy.defaultHealthTargets,
        _livenessSeconds =
            (livenessInterval ?? const Duration(minutes: 1)).inMilliseconds /
@@ -95,10 +95,12 @@ final class DesktopProxy {
   Timer? _wifiTimer;
   // The network last acted on; null before the first reading.
   ({String? name})? _wifi;
-  String? _wifiStatus;
+  String? _wifiStatus, _wifiPath;
+  int _wifiSkips = 0;
   bool _wifiBusy = false;
-  // A failed health check is repeated after _automationRetrySeconds; the third failure fails over.
-  final int _automationProbeSeconds, _automationRetrySeconds;
+  final int _automationProbeSeconds;
+  // Replaces DesktopAutomation.recheckSeconds, the wait after a failed check.
+  final int? _automationRetrySeconds;
   static const defaultHealthTargets = <CatalogMap>[
     {
       'id': 'gstatic',
@@ -120,7 +122,11 @@ final class DesktopProxy {
   String? _liveness;
   double? _livenessAt;
   int? _livenessUplink;
+  int _livenessFailures = 0;
+  // The selected server and revision that last passed traffic.
+  String? _trafficServer;
   bool _livenessBusy = false;
+  double _pathReadAt = -1000;
   final DateTime Function() _refreshClock;
   static final _platform = MethodChannel(
     Platform.isLinux ? 'com.elarni/linux' : 'com.elarni/windows',
@@ -139,6 +145,7 @@ final class DesktopProxy {
   Future<CatalogMap>? _disconnecting;
   Future<Process>? _process, _lease;
   StreamIterator<List<int>>? _leaseOutput;
+  Future<int>? _leaseExit;
   Future<void> _storageQueue = Future<void>.value();
   Future<Process>? _vpnSession;
   Completer<CatalogMap>? _vpnReply;
@@ -280,8 +287,18 @@ final class DesktopProxy {
   // On Windows the lease core answers storage requests, one at a time.
   Future<CatalogMap> _storage(String method, CatalogMap payload) {
     if (_catalogIO != null) return _catalogIO(method, payload);
-    if (!Platform.isWindows) return _native(method, payload);
-    final reply = _storageQueue.then((_) => _native(method, payload));
+    final reply = _storageQueue.then((_) async {
+      // A lease that ended after loading (a missed reply ends it) is taken
+      // again once its core exited and released the lock.
+      if (_lease == null && _catalog != null && !_disposed) {
+        await _leaseExit?.timeout(
+          const Duration(seconds: 3),
+          onTimeout: () => -1,
+        );
+        await _native('acquireCatalog', {});
+      }
+      return _native(method, payload);
+    });
     _storageQueue = reply.then<void>((_) {}, onError: (Object _) {});
     return reply;
   }

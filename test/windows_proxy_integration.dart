@@ -169,6 +169,63 @@ final class FakeSystemProxy implements SystemProxy {
   bool pointsAt(ProxySettings settings, int port) => settings['port'] == port;
 }
 
+// A core that hands each request line to [record], so a test can count what
+// the backend asked of it (runtime starts, for one).
+final class RecordedProcess implements Process {
+  RecordedProcess(this._process, void Function(String) record)
+    : stdin = _RecordedSink(_process.stdin, record);
+  final Process _process;
+  @override
+  final IOSink stdin;
+  @override
+  int get pid => _process.pid;
+  @override
+  Future<int> get exitCode => _process.exitCode;
+  @override
+  Stream<List<int>> get stdout => _process.stdout;
+  @override
+  Stream<List<int>> get stderr => _process.stderr;
+  @override
+  bool kill([ProcessSignal signal = ProcessSignal.sigterm]) =>
+      _process.kill(signal);
+}
+
+final class _RecordedSink implements IOSink {
+  _RecordedSink(this._sink, this._record);
+  final IOSink _sink;
+  final void Function(String) _record;
+  @override
+  void writeln([Object? object = '']) {
+    _record('$object');
+    _sink.writeln(object);
+  }
+
+  @override
+  Encoding get encoding => _sink.encoding;
+  @override
+  set encoding(Encoding value) => _sink.encoding = value;
+  @override
+  void add(List<int> data) => _sink.add(data);
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) =>
+      _sink.addError(error, stackTrace);
+  @override
+  Future<void> addStream(Stream<List<int>> stream) => _sink.addStream(stream);
+  @override
+  Future<void> close() => _sink.close();
+  @override
+  Future<void> get done => _sink.done;
+  @override
+  Future<void> flush() => _sink.flush();
+  @override
+  void write(Object? object) => _sink.write(object);
+  @override
+  void writeAll(Iterable<Object?> objects, [String separator = '']) =>
+      _sink.writeAll(objects, separator);
+  @override
+  void writeCharCode(int charCode) => _sink.writeCharCode(charCode);
+}
+
 void main() {
   final corePath = Platform.environment['ELARNI_TEST_CORE']!;
   final domainPath = Platform.environment['ELARNI_TEST_DOMAIN']!;
@@ -186,6 +243,10 @@ void main() {
   Completer<void>? launchEntered;
   var targetRequests = 0;
   var launches = 0;
+  // The methods cores were asked to run, while a test sets this.
+  List<String>? coreMethods;
+  // Each saved catalog document, while a test sets this.
+  List<CatalogMap>? savedDocuments;
   CatalogMap? storedCatalog;
   var storageRevision = 0;
   var rejectNextCommit = false;
@@ -221,6 +282,7 @@ void main() {
       throw desktopError('storage_unavailable');
     }
     storedCatalog = copyCatalog(document);
+    savedDocuments?.add(storedCatalog!);
     storageRevision++;
     if (document['pending'] == null && commitGate != null) {
       commitEntered!.complete();
@@ -389,9 +451,18 @@ void main() {
         launches++;
         if (launchEntered?.isCompleted == false) launchEntered!.complete();
         await launchGate?.future;
-        return lastProcess = await (stub == null
+        final process = await (stub == null
             ? startCore(path)
             : Process.start(python, [stub!], environment: coreEnvironment));
+        final methods = coreMethods;
+        return lastProcess = methods == null
+            ? process
+            : RecordedProcess(
+                process,
+                (line) => methods.add(
+                  (jsonDecode(line) as Map)['method'] as String? ?? '',
+                ),
+              );
       },
     );
     return created;
@@ -409,6 +480,8 @@ void main() {
 
   setUp(() async {
     storedCatalog = null;
+    savedDocuments = null;
+    coreMethods = null;
     storageRevision = 0;
     rejectNextCommit = false;
     commitGate = null;
@@ -1350,6 +1423,10 @@ for line in sys.stdin:
       await expectClosed(settings.socksPort);
       expect((await backend.control.subscriptions()).selectedNodeId, id);
       await failStart.delete();
+      // The helper answered the failed start, so its elevated owner serves
+      // the next connect without a new consent prompt.
+      expect(await backend.control.connect(), 'connected');
+      expect((await owners.readAsLines()).toSet(), {owner.pid.toString()});
       await backend.control.disconnect();
       await backend.dispose();
       expect(await owner.exitCode.timeout(const Duration(seconds: 10)), 0);
@@ -1361,6 +1438,9 @@ for line in sys.stdin:
         'runVPN',
         'stopVPN',
         'runVPN',
+        'stopVPN',
+        'runVPN',
+        'stopVPN',
       ]);
     },
   );
@@ -2097,7 +2177,71 @@ rules:
         await second.dispose();
       }
     });
+
+    // A lease core that ended (a missed reply after a slow resume ends it)
+    // used to stop the VPN and refuse every command until a restart.
+    test('a lost storage lease is taken again; the VPN stays up', () async {
+      final cache = await temporary.createTemp('lost lease ');
+      final cores = <Process>[];
+      final settings = await backend.control.tunnelSettings();
+      await backend.dispose();
+      backend = DesktopProxy(
+        corePath: corePath,
+        domainPath: domainPath,
+        platformIO: (_, _) async => {},
+        startProcess: (path) async {
+          final core = await Process.start(
+            path,
+            const [],
+            environment: {'LOCALAPPDATA': cache.path},
+          );
+          cores.add(core);
+          return core;
+        },
+      );
+      await backend.control.updateTunnelSettings(settings);
+      await prepare();
+      await backend.control.connect();
+      await checkSocks(settings.socksPort, target.port);
+      // The first core took the lease when the catalog loaded.
+      cores.first.kill();
+      await cores.first.exitCode;
+      expect(await backend.control.state(), 'connected');
+      final node = (await backend.control.subscriptions()).selectedNodeId!;
+      await backend.control.setNodeFavorite(node, true);
+      expect(
+        (await backend.control.subscriptions())
+            .subscriptions
+            .single
+            .nodes
+            .single
+            .favorite,
+        isTrue,
+      );
+      expect(await backend.control.state(), 'connected');
+      await checkSocks(settings.socksPort, target.port);
+    });
   }
+
+  // Recording which server connected is bookkeeping; a storage hiccup there
+  // used to stop the connection it recorded.
+  test('a refused save after Connect keeps the connection up', () async {
+    await prepare();
+    final settings = await backend.control.tunnelSettings();
+    // Connect saves its intent first; the commit after the core starts
+    // records the server.
+    launchEntered = Completer<void>();
+    unawaited(launchEntered!.future.then((_) => rejectNextCommit = true));
+    expect(await backend.control.connect(), 'connected');
+    expect(rejectNextCommit, isFalse, reason: 'a commit was refused');
+    final node = catalogList(
+      catalogList(
+        catalogMap(storedCatalog!['committed'])['subscriptions'],
+      ).single['nodes'],
+    ).single;
+    expect(node['lastSuccessAt'], isNull, reason: 'the record was refused');
+    await checkSocks(settings.socksPort, target.port);
+  });
 
   test(
     'a fresh install refuses local programs without its generated login',
@@ -2409,6 +2553,74 @@ for line in sys.stdin:
       'Connection stopped unexpectedly. Block traffic without VPN keeps '
           'traffic blocked until you reconnect, or use Repair VPN setup to '
           'lift the block.',
+    ]);
+  });
+
+  // A tunnel that ends by itself (its core stopped) leaves the elevated helper
+  // waiting, so the reconnect needs no new consent prompt.
+  test('a VPN tunnel that ends by itself keeps its helper', () async {
+    await prepare();
+    final messages = <String>[];
+    backend.control.setImportListener((message) {
+      if (message != null) messages.add(message);
+    });
+    final settings = await backend.control.tunnelSettings();
+    await backend.control.updateTunnelSettings(
+      settings.copyWith(xrayTunEnabled: true),
+    );
+    final events = File.fromUri(temporary.uri.resolve('vpn-lost-events'));
+    final lose = File.fromUri(temporary.uri.resolve('vpn-lose-tunnel'));
+    await useStub('''
+import json, os, socket, sys, threading, time
+listeners = []
+output = threading.Lock()
+def send(value):
+    with output: print(json.dumps(value), flush=True)
+def lose():
+    while not os.path.exists(${jsonEncode(lose.path)}): time.sleep(0.01)
+    for listener in listeners: listener.close()
+    listeners.clear()
+    os.unlink(${jsonEncode(lose.path)})
+    send({'event': 'stopped'})
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request['method']
+    if method in ('runVPN', 'stopVPN'):
+        with open(${jsonEncode(events.path)}, 'a') as events: print(method, os.getpid(), file=events)
+    if method == 'runVPN':
+        for inbound in json.loads(request['payload']['configJSON'])['inbounds']:
+            if inbound['protocol'] in ('socks', 'http'):
+                listener = socket.socket()
+                listener.bind(('127.0.0.1', inbound['port']))
+                listener.listen(32)
+                listeners.append(listener)
+        threading.Thread(target=lose, daemon=True).start()
+    elif method == 'stopVPN':
+        for listener in listeners: listener.close()
+        listeners.clear()
+    send({'success': True, 'data': {}})
+''');
+    expect(await backend.control.connect(), 'connected');
+    final owner = lastProcess!;
+    await lose.writeAsString('end the tunnel');
+    for (var i = 0; i < 200; i++) {
+      if (await backend.control.state() == 'failed') break;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(await backend.control.state(), 'failed');
+    expect(messages, [
+      'Connection stopped unexpectedly. Reconnect to retry; if sites stay '
+          'unreachable, use Repair VPN setup.',
+    ]);
+    await expectClosed(settings.socksPort);
+    expect(await backend.control.connect(), 'connected');
+    await backend.control.disconnect();
+    await backend.dispose();
+    expect(await owner.exitCode.timeout(const Duration(seconds: 10)), 0);
+    expect(await events.readAsLines(), [
+      'runVPN ${owner.pid}',
+      'runVPN ${owner.pid}',
+      'stopVPN ${owner.pid}',
     ]);
   });
 
@@ -3722,6 +3934,105 @@ for line in sys.stdin:
     }
   });
 
+  // Decision D1: without failover, a server that passed traffic and then
+  // failed two checks in a row is started again; one that never passed is not.
+  test('a tunnel whose server stopped passing traffic restarts', () async {
+    await backend.dispose();
+    backend = createBackend(
+      automationProbeSeconds: 2,
+      livenessInterval: const Duration(seconds: 2),
+      livenessTargets: [
+        {
+          'id': 'fixture',
+          'url': 'http://127.0.0.1:${target.port}/fixture',
+          'expectedStatus': 200,
+          'expectedBody': body,
+        },
+      ],
+    );
+    final relay = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final peers = <Socket>{};
+    var reachable = false;
+    relay.listen((client) async {
+      peers.add(client);
+      if (!reachable) return;
+      final server = await Socket.connect('127.0.0.1', Uri.parse(profile).port);
+      peers.add(server);
+      unawaited(
+        client.cast<List<int>>().pipe(server).catchError((Object _) => server),
+      );
+      unawaited(
+        server.cast<List<int>>().pipe(client).catchError((Object _) => client),
+      );
+    });
+    Future<CatalogMap> metrics(bool Function(CatalogMap) done) async {
+      for (var i = 0; i < 120; i++) {
+        final value = await backend.control.runtimeMetrics();
+        if (done(value)) return value;
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+      return backend.control.runtimeMetrics();
+    }
+
+    try {
+      final imported = await backend.control.importClientProfiles(
+        content: Uri.parse(profile).replace(port: relay.port).toString(),
+      );
+      await backend.control.selectNode(
+        imported.snapshot.subscriptions.single.nodes.single.id,
+      );
+      expect(await backend.control.connect(), 'connected');
+      final first = await metrics((m) => m['liveness'] == 'noTraffic');
+      expect(first['liveness'], 'noTraffic');
+      // Never passed: its exit may refuse the check targets, so it stays.
+      await Future<void>.delayed(const Duration(seconds: 6));
+      final kept = await backend.control.runtimeMetrics();
+      expect(kept['connectedSince'], first['connectedSince']);
+      reachable = true;
+      expect((await metrics((m) => m['liveness'] == 'ok'))['liveness'], 'ok');
+      reachable = false;
+      for (final peer in peers) peer.destroy();
+      // Traffic that leaves makes liveness check again.
+      final client = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        (await backend.control.tunnelSettings()).socksPort,
+      );
+      peers.add(client);
+      client.add([
+        5,
+        1,
+        0,
+        5,
+        1,
+        0,
+        1,
+        127,
+        0,
+        0,
+        1,
+        target.port >> 8,
+        target.port & 255,
+        ...List.filled(4096, 0x16),
+      ]);
+      final restarted = await metrics(
+        (m) =>
+            m['connectedSince'] != null &&
+            m['connectedSince'] != first['connectedSince'],
+      );
+      expect(restarted['connectedSince'], isNot(first['connectedSince']));
+      expect(restarted['state'], 'connected');
+      reachable = true;
+      expect((await metrics((m) => m['liveness'] == 'ok'))['liveness'], 'ok');
+      await checkSocks(
+        (await backend.control.tunnelSettings()).socksPort,
+        target.port,
+      );
+    } finally {
+      for (final peer in peers) peer.destroy();
+      await relay.close();
+    }
+  });
+
   // TSPU freezes an SNI after more than 3 near-simultaneous handshakes; count
   // what one Connect opens to its server (all candidates share one here).
   for (final lowestLatency in [false, true])
@@ -4084,6 +4395,207 @@ for line in sys.stdin:
       }
     },
     timeout: const Timeout(Duration(seconds: 200)),
+  );
+
+  // Each failed backup cost a pending save, a rollback save and a restart of
+  // the dead primary before the next one was tried.
+  test(
+    'failover starts each backup once and saves once for the whole round',
+    () async {
+      await backend.dispose();
+      final check = {
+        'id': 'fixture',
+        'url': 'http://127.0.0.1:${target.port}/fixture',
+        'expectedStatus': 200,
+        'expectedBody': body,
+      };
+      backend = createBackend(
+        automationProbeSeconds: 2,
+        automationRetrySeconds: 1,
+        livenessInterval: const Duration(minutes: 5),
+        livenessTargets: [check],
+      );
+      // The primary accepts connections and passes nothing.
+      final relay = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final peers = <Socket>{};
+      relay.listen(peers.add);
+      try {
+        String server(int port, String name) =>
+            Uri.parse(profile).replace(port: port, fragment: name).toString();
+        // Nothing listens on ports 1 and 2.
+        final imported = await backend.control.importClientProfiles(
+          content: [
+            server(relay.port, 'Primary'),
+            server(1, 'Dead 1'),
+            server(2, 'Dead 2'),
+            profile,
+          ].join('\n'),
+        );
+        final group = imported.snapshot.subscriptions.single;
+        String id(String name) =>
+            group.nodes.singleWhere((node) => node.name == name).id;
+        await backend.control.selectNode(id('Primary'));
+        await backend.control.configureAutomation(
+          AutomationConfiguration(
+            enabled: true,
+            policy: AutomationSelectionPolicy.orderedFallback,
+            subscriptionId: group.id,
+            nodeIds: [
+              for (final name in ['Primary', 'Dead 1', 'Dead 2', 'Fixture'])
+                id(name),
+            ],
+            targets: [
+              AutomationTarget(
+                id: 'fixture',
+                url: check['url']! as String,
+                expectedStatus: 200,
+                expectedBody: body,
+              ),
+            ],
+          ),
+        );
+        expect(await backend.control.connect(), 'connected');
+        // From here only the failed checks and failover start cores or save.
+        coreMethods = [];
+        savedDocuments = [];
+        for (var i = 0; i < 600; i++) {
+          if ((await backend.control.subscriptions()).selectedNodeId ==
+                  id('Fixture') &&
+              await backend.control.state() == 'connected')
+            break;
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        expect(
+          (await backend.control.subscriptions()).selectedNodeId,
+          id('Fixture'),
+        );
+        expect(
+          coreMethods!.where((method) => method == 'runXrayFromJson'),
+          hasLength(3),
+          reason:
+              'each backup starts once; the dead primary does not between them',
+        );
+        expect(
+          [for (final saved in savedDocuments!) saved['pending'] == true],
+          [true, false],
+          reason: 'one marker and one commit, not two saves per failed backup',
+        );
+        expect(
+          catalogMap(storedCatalog!['committed'])['selectedNodeId'],
+          id('Fixture'),
+        );
+        await checkSocks(
+          (await backend.control.tunnelSettings()).socksPort,
+          target.port,
+        );
+      } finally {
+        await backend.control.disconnect();
+        await relay.close();
+        for (final peer in peers) {
+          peer.destroy();
+        }
+      }
+    },
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+
+  // When every backup fails, the round ends where it began: the primary is
+  // selected, saved and running again, started once rather than per backup.
+  test(
+    'failover that finds no working backup restores the primary once',
+    () async {
+      await backend.dispose();
+      final check = {
+        'id': 'fixture',
+        'url': 'http://127.0.0.1:${target.port}/fixture',
+        'expectedStatus': 200,
+        'expectedBody': body,
+      };
+      backend = createBackend(
+        automationProbeSeconds: 2,
+        automationRetrySeconds: 1,
+        livenessInterval: const Duration(minutes: 5),
+        livenessTargets: [check],
+      );
+      final relay = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final peers = <Socket>{};
+      relay.listen(peers.add);
+      try {
+        String server(int port, String name) =>
+            Uri.parse(profile).replace(port: port, fragment: name).toString();
+        final imported = await backend.control.importClientProfiles(
+          content: [
+            server(relay.port, 'Primary'),
+            server(1, 'Dead 1'),
+            server(2, 'Dead 2'),
+          ].join('\n'),
+        );
+        final group = imported.snapshot.subscriptions.single;
+        String id(String name) =>
+            group.nodes.singleWhere((node) => node.name == name).id;
+        await backend.control.selectNode(id('Primary'));
+        await backend.control.configureAutomation(
+          AutomationConfiguration(
+            enabled: true,
+            policy: AutomationSelectionPolicy.orderedFallback,
+            subscriptionId: group.id,
+            nodeIds: [
+              for (final name in ['Primary', 'Dead 1', 'Dead 2']) id(name),
+            ],
+            targets: [
+              AutomationTarget(
+                id: 'fixture',
+                url: check['url']! as String,
+                expectedStatus: 200,
+                expectedBody: body,
+              ),
+            ],
+          ),
+        );
+        expect(await backend.control.connect(), 'connected');
+        coreMethods = [];
+        savedDocuments = [];
+        // The round ends after its rollback with this status.
+        var status = await backend.control.automationStatus();
+        for (var i = 0; i < 600; i++) {
+          status = await backend.control.automationStatus();
+          if (status['status'] == 'exhaustedCandidates') break;
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        expect(status['status'], 'exhaustedCandidates');
+        expect(catalogMap(status['candidateFailures']!).keys, {
+          id('Dead 1'),
+          id('Dead 2'),
+        });
+        expect(await backend.control.state(), 'connected');
+        expect(
+          (await backend.control.subscriptions()).selectedNodeId,
+          id('Primary'),
+        );
+        expect(
+          catalogMap(storedCatalog!['committed'])['selectedNodeId'],
+          id('Primary'),
+        );
+        expect(storedCatalog!['pending'], isNull);
+        expect(
+          coreMethods!.where((method) => method == 'runXrayFromJson'),
+          hasLength(3),
+          reason: 'each backup once, then the primary once',
+        );
+        expect(
+          savedDocuments!.where((saved) => saved['pending'] == true),
+          hasLength(1),
+          reason: 'one marker for the round, not one per failed backup',
+        );
+      } finally {
+        await backend.control.disconnect();
+        await relay.close();
+        for (final peer in peers) {
+          peer.destroy();
+        }
+      }
+    },
+    timeout: const Timeout(Duration(seconds: 90)),
   );
 
   // An unresolvable server name is a failed connection, so failover moves on.

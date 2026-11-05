@@ -2828,12 +2828,6 @@ abstract class AppLocalizations {
   /// **'On Demand controls automatic connection when network access resumes.'**
   String get onDemandMacHelp;
 
-  /// No description provided for @onDemandDesktopHelp.
-  ///
-  /// In en, this message translates to:
-  /// **'On Demand reconnects after wake or a network interruption until you press Stop.'**
-  String get onDemandDesktopHelp;
-
   /// No description provided for @onDemand.
   ///
   /// In en, this message translates to:

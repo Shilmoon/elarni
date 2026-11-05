@@ -13,6 +13,17 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ### Changed
 
+- Windows and Linux: a dropped connection is retried on the selected server without
+  automation turned on: after 1, 2, 4, 8, 16 and 30 s, then every minute for as long as
+  you stay connected and online. Failover to other servers still needs automation. A
+  connection left on when Elarni quits comes back at the next start; Disconnect ends it.
+  The On Demand switch, which did nothing there, is gone.
+- Windows and Linux: the elevated helper outlives a tunnel that failed or ended by
+  itself, so reconnecting asks for administrator approval only once per session.
+- Windows and Linux: with automation on, a failed server check is repeated after 10 s
+  instead of 30 s, so failover leaves a dead server within about 80 s instead of 120 s.
+  Each backup is tried in turn without saving the catalog again or restarting the
+  failed server in between; the original comes back only if no backup works.
 - Android: apps that need no tunnel (bypassed apps going direct, and unlisted apps in
   Only listed mode) stay out of the VPN entirely while lockdown is off, and use the
   system's DNS.
@@ -41,6 +52,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - Android: in Only listed mode, a connection whose app Android cannot identify stays in
   the tunnel.
 - Android: the Quick Settings tile shows a VPN paused for sleep as off.
+- Linux: a failed nft cleanup keeps the marker, so Repair VPN setup still finds the
+  leftover redirect.
+- Windows: a DNS setting that could not be restored on disconnect is reported, and
+  retried.
 
 ### Performance
 
@@ -55,6 +70,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   again for the same route, and logs are capped at 200 lines a second.
 - The core returns memory after light traffic at most once a minute instead of every
   5 s, and still at once after a large download or when many connections close.
+- Desktop: no window rebuilds or catalog saves on unchanged state, direct TCP tests use
+  sockets instead of a core per server, and the helper returns memory after each start.
+- Windows: reconnecting with unchanged routing data no longer sends and checks the
+  geofiles again (80 ms and about 100 MB of copies for 18 MiB of geodata).
 - Linux: per-app routing looks up the owners of a burst of new connections in one
   pass (64 connections: 9 ms instead of 36 ms).
 - Windows: an idle direct UDP flow no longer holds a 64 KiB read buffer.

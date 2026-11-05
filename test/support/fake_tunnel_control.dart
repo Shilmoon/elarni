@@ -254,8 +254,13 @@ class FakeTunnelControl implements TunnelControl {
 
   @override
   Future<String> state() async => onState == null ? phase : await onState!();
+  int subscriptionReads = 0;
   @override
-  Future<SubscriptionSnapshot> subscriptions() async => snapshot;
+  Future<SubscriptionSnapshot> subscriptions() async {
+    subscriptionReads++;
+    return snapshot;
+  }
+
   @override
   Future<RoutingSnapshot> routingProfiles() async {
     routingReads++;

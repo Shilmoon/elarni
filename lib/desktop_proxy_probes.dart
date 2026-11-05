@@ -33,6 +33,8 @@ extension _ProxyProbes on DesktopProxy {
           throw desktopError('icmp_restore_failed');
         }
       }
+      // This probe stopped and restarted the connection.
+      _listener?.call(null);
     }
   }
 
@@ -49,8 +51,9 @@ extension _ProxyProbes on DesktopProxy {
       throw desktopError('invalid_profile');
     final timeout = args['timeout']! as int;
     if (automatic) {
-      // TSPU counts handshakes to one server under ~50 ms apart, and the core
-      // finishes a probe of a near server sooner than that.
+      // TSPU freezes an SNI after more than 3 handshakes under ~50 ms apart.
+      // A near server's probe can end sooner, so starts 40 ms apart keep any
+      // 50 ms window to two.
       final wait = _lastAutomaticProbe + 40 - _clock.elapsedMilliseconds;
       if (wait > 0) await Future<void>.delayed(Duration(milliseconds: wait));
       _lastAutomaticProbe = _clock.elapsedMilliseconds;
@@ -72,7 +75,6 @@ extension _ProxyProbes on DesktopProxy {
         _state == 'connected' &&
         catalog.settings.xrayTunEnabled)
       throw desktopError('unavailableProbePath');
-    var failed = false;
     try {
       int latency;
       Object? exit;
@@ -102,7 +104,11 @@ extension _ProxyProbes on DesktopProxy {
         );
         _checkGeneration(generation);
         if (protocol == 'tcp') {
-          if (Platform.isWindows || Platform.isLinux) {
+          // Only a running VPN captures this app's own connections. Elsewhere
+          // a core per probe (about 33 MiB while it waits) measures the same.
+          if ((Platform.isWindows || Platform.isLinux) &&
+              catalog.settings.xrayTunEnabled &&
+              !{'disconnected', 'prepared'}.contains(_state)) {
             final result = await _native('pingEndpoint', {
               'address': addresses.first.address,
               'port': endpoint['port'],
@@ -198,10 +204,12 @@ extension _ProxyProbes on DesktopProxy {
           payload['proxy'] = 'socks5://$username:$password@127.0.0.1:$port';
         }
         _checkGeneration(generation);
+        // Automatic probes keep their whole timeout for the core, which ends
+        // them itself; the margin only bounds a hung core.
         final response = await _native(
           'ping',
           payload,
-          timeout: automatic ? null : timeLeft(),
+          timeout: automatic ? Duration(seconds: timeout + 5) : timeLeft(),
         );
         latency = response['delay']! as int;
         if (latency < 0) throw desktopError('ping_failed');
@@ -224,7 +232,6 @@ extension _ProxyProbes on DesktopProxy {
         _checkGeneration(generation);
         rethrow;
       }
-      failed = true;
       _checkGeneration(generation);
       const code = 'ping_failed';
       throw PlatformException(
@@ -232,8 +239,6 @@ extension _ProxyProbes on DesktopProxy {
         message: desktopError(code).message,
         details: error is PlatformException ? error.details : null,
       );
-    } finally {
-      if (failed) _listener?.call(null);
     }
   }
 

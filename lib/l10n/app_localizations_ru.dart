@@ -1606,10 +1606,6 @@ class AppLocalizationsRu extends AppLocalizations {
       '«По требованию» управляет автоматическим подключением, когда сеть снова доступна.';
 
   @override
-  String get onDemandDesktopHelp =>
-      '«По требованию» переподключает после пробуждения или обрыва сети, пока вы не нажмёте «Стоп».';
-
-  @override
   String get onDemand => 'По требованию';
 
   @override
