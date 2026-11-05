@@ -229,6 +229,10 @@ func (s *Server) handleUDPPayload(ctx context.Context, conn stat.Connection, dis
 	var dest *net.Destination
 
 	reader := buf.NewPacketReader(conn)
+	if counted, ok := conn.(*stat.CounterConnection); ok {
+		// Read through TempUDPConn's own ReadMultiBuffer, which keeps no 64 KiB buffer per association.
+		reader = &buf.TimeoutWrapperReader{Reader: buf.NewPacketReader(counted.Connection), Counter: counted.ReadCounter}
+	}
 	var changeRemote sync.Once
 	for {
 		mpayload, err := reader.ReadMultiBuffer()

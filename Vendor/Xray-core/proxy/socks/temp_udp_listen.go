@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/signal"
 )
@@ -28,6 +29,7 @@ type TempUDPConn struct {
 	AssociatedTCPConn net.Conn
 	ExpectedRemote    atomic.Pointer[net.UDPAddr]
 	Timer             *signal.ActivityTimer
+	scratch           []byte
 }
 
 func (c *TempUDPConn) Read(b []byte) (n int, err error) {
@@ -37,20 +39,45 @@ func (c *TempUDPConn) Read(b []byte) (n int, err error) {
 		if err != nil {
 			return
 		}
-		remote := remote.(*net.UDPAddr)
-		expected := c.ExpectedRemote.Load()
-		if remote.IP.Equal(expected.IP) {
-			if remote.Port == expected.Port {
-				c.Timer.Update()
-				return
-			}
-			if expected.Port == 0 {
-				c.ExpectedRemote.Store(remote)
-				c.Timer.Update()
-				return
-			}
+		if c.fromClient(remote) {
+			return
 		}
 	}
+}
+
+// ReadMultiBuffer reads the client's next datagram (Elarni): on Unix and Windows a pooled buffer is borrowed only
+// while one is ready, where a reader over Read kept 64 KiB for each association.
+func (c *TempUDPConn) ReadMultiBuffer() (buf.MultiBuffer, error) {
+	for {
+		b, remote, err := buf.ReadPacketFrom(c.PacketConn, &c.scratch)
+		if err != nil {
+			return nil, err
+		}
+		if c.fromClient(remote) {
+			return buf.MultiBuffer{b}, nil
+		}
+		b.Release()
+	}
+}
+
+// fromClient reports whether a datagram came from the associated client, learning its port if unknown.
+func (c *TempUDPConn) fromClient(addr net.Addr) bool {
+	remote, ok := addr.(*net.UDPAddr)
+	if !ok {
+		return false
+	}
+	expected := c.ExpectedRemote.Load()
+	if !remote.IP.Equal(expected.IP) {
+		return false
+	}
+	if remote.Port != expected.Port {
+		if expected.Port != 0 {
+			return false
+		}
+		c.ExpectedRemote.Store(remote)
+	}
+	c.Timer.Update()
+	return true
 }
 
 func (c *TempUDPConn) Write(b []byte) (n int, err error) {

@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/net"
 	"gvisor.dev/gvisor/pkg/buffer"
@@ -112,59 +113,49 @@ func (t *stackGVisor) Start() error {
 		return err
 	}
 
+	// The forwarder already runs each request in its own goroutine.
 	tcpForwarder := tcp.NewForwarder(ipStack, 0, 65535, func(r *tcp.ForwarderRequest) {
-		go func(r *tcp.ForwarderRequest) {
-			var wq waiter.Queue
-			id := r.ID()
+		id := r.ID()
+		// Admission comes before the handshake (Elarni): a refused SYN gets a RST instead of a connection
+		// that takes the app's request and then resets.
+		tracked := newActiveConn(nil)
+		tracked.touch()
+		admitted := t.handler.tcpAdmission.acquire(&tracked.activity, nil)
+		if admitted == nil {
+			r.Complete(true)
+			return
+		}
 
-			// Perform a TCP three-way handshake.
-			ep, err := r.CreateEndpoint(&wq)
-			if err != nil {
-				errors.LogError(t.ctx, err.String())
-				r.Complete(true)
-				return
-			}
+		// Perform a TCP three-way handshake.
+		var wq waiter.Queue
+		ep, err := r.CreateEndpoint(&wq)
+		// The endpoint now owns the connection: free the SYN and the forwarder's in-flight entry (Elarni).
+		r.Complete(err != nil)
+		if err != nil {
+			admitted.release()
+			errors.LogError(t.ctx, err.String())
+			return
+		}
 
-			options := ep.SocketOptions()
-			options.SetKeepAlive(false)
-			options.SetReuseAddress(true)
-			options.SetReusePort(true)
+		options := ep.SocketOptions()
+		options.SetKeepAlive(false)
+		options.SetReuseAddress(true)
+		options.SetReusePort(true)
 
-			t.handler.HandleConnection(
-				&tcpConn{TCPConn: gonet.NewTCPConn(&wq, ep), ep: ep},
-				// local address on the gVisor side is connection destination
-				net.TCPDestination(net.IPAddress(id.LocalAddress.AsSlice()), net.Port(id.LocalPort)),
-			)
+		tracked.Conn = &tcpConn{TCPConn: gonet.NewTCPConn(&wq, ep), ep: ep, wq: &wq}
+		t.handler.serve(tracked,
+			// local address on the gVisor side is connection destination
+			net.TCPDestination(net.IPAddress(id.LocalAddress.AsSlice()), net.Port(id.LocalPort)),
+			admitted)
 
-			// close the socket
-			ep.Close()
-			// send connection complete upstream
-			r.Complete(false)
-		}(r)
+		// close the socket
+		ep.Close()
 	})
 	ipStack.SetTransportProtocolHandler(tcp.ProtocolNumber, tcpForwarder.HandlePacket)
 
 	// Use custom UDP packet handler, instead of strict gVisor forwarder, for FullCone NAT support
-	udpForwarder := newUdpConnectionHandler(t.handler.HandleConnection, t.writeRawUDPPacket)
-	t.udpHandler = udpForwarder
-	ipStack.SetTransportProtocolHandler(udp.ProtocolNumber, func(id stack.TransportEndpointID, pkt *stack.PacketBuffer) bool {
-		data := pkt.Data().AsRange().ToSlice()
-		// if len(data) == 0 {
-		// 	return false
-		// }
-		// source/destination of the packet we process as incoming, on gVisor side are Remote/Local
-		// in other terms, src is the side behind tun, dst is the side behind gVisor
-		// this function handle packets passing from the tun to the gVisor, therefore the src/dst assignement
-		srcIP := net.IPAddress(id.RemoteAddress.AsSlice())
-		dstIP := net.IPAddress(id.LocalAddress.AsSlice())
-		if srcIP == nil || dstIP == nil {
-			panic(id)
-		}
-		src := net.UDPDestination(srcIP, net.Port(id.RemotePort))
-		dst := net.UDPDestination(dstIP, net.Port(id.LocalPort))
-		udpForwarder.HandlePacket(src, dst, data)
-		return true
-	})
+	t.udpHandler = newUdpConnectionHandler(t.handler.HandleConnection, t.writeRawUDPPacket)
+	ipStack.SetTransportProtocolHandler(udp.ProtocolNumber, t.handleUDPPacket)
 	ipStack.SetTransportProtocolHandler(icmp.ProtocolNumber4, t.handleICMPv4Packet)
 	ipStack.SetTransportProtocolHandler(icmp.ProtocolNumber6, t.handleICMPv6Packet)
 
@@ -178,6 +169,26 @@ func (t *stackGVisor) Start() error {
 	return nil
 }
 
+// handleUDPPacket passes a datagram from tun to its flow, copied once into a pooled buffer (Elarni).
+func (t *stackGVisor) handleUDPPacket(id stack.TransportEndpointID, pkt *stack.PacketBuffer) bool {
+	data := pkt.Data()
+	b := buf.NewWithSize(int32(data.Size()))
+	data.ReadTo(b, true)
+	// source/destination of the packet we process as incoming, on gVisor side are Remote/Local
+	// in other terms, src is the side behind tun, dst is the side behind gVisor
+	// this function handle packets passing from the tun to the gVisor, therefore the src/dst assignement
+	srcIP := net.IPAddress(id.RemoteAddress.AsSlice())
+	dstIP := net.IPAddress(id.LocalAddress.AsSlice())
+	if srcIP == nil || dstIP == nil {
+		panic(id)
+	}
+	src := net.UDPDestination(srcIP, net.Port(id.RemotePort))
+	dst := net.UDPDestination(dstIP, net.Port(id.LocalPort))
+	t.udpHandler.HandlePacket(src, dst, b)
+	return true
+}
+
+// writeRawUDPPacket builds the reply in one view of its final size, so the payload is copied once (Elarni).
 func (t *stackGVisor) writeRawUDPPacket(payload []byte, src net.Destination, dst net.Destination) error {
 	udpLen := header.UDPMinimumSize + len(payload)
 	srcIP := tcpip.AddrFromSlice(src.Address.IP())
@@ -192,27 +203,28 @@ func (t *stackGVisor) writeRawUDPPacket(payload []byte, src net.Destination, dst
 		ipProtocol = header.IPv4ProtocolNumber
 	}
 
-	pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{
-		ReserveHeaderBytes: ipHdrSize + header.UDPMinimumSize,
-		Payload:            buffer.MakeWithData(payload),
-	})
-	defer pkt.DecRef()
+	view := buffer.NewViewSize(ipHdrSize + udpLen)
+	packet := view.AsSlice()
+	copy(packet[ipHdrSize+header.UDPMinimumSize:], payload)
 
 	// Build UDP header
-	udpHdr := header.UDP(pkt.TransportHeader().Push(header.UDPMinimumSize))
+	udpHdr := header.UDP(packet[ipHdrSize:])
 	udpHdr.Encode(&header.UDPFields{
 		SrcPort: uint16(src.Port),
 		DstPort: uint16(dst.Port),
 		Length:  uint16(udpLen),
 	})
 
-	// Calculate and set UDP checksum
+	// Calculate and set UDP checksum; a computed zero goes out as all ones, since zero means none (RFC 768)
 	xsum := header.PseudoHeaderChecksum(header.UDPProtocolNumber, srcIP, dstIP, uint16(udpLen))
-	udpHdr.SetChecksum(^udpHdr.CalculateChecksum(checksum.Checksum(payload, xsum)))
+	if xsum = ^udpHdr.CalculateChecksum(checksum.Checksum(payload, xsum)); xsum == 0 {
+		xsum = 0xffff
+	}
+	udpHdr.SetChecksum(xsum)
 
 	// Build IP header
 	if isIPv4 {
-		ipHdr := header.IPv4(pkt.NetworkHeader().Push(header.IPv4MinimumSize))
+		ipHdr := header.IPv4(packet)
 		ipHdr.Encode(&header.IPv4Fields{
 			TotalLength: uint16(header.IPv4MinimumSize + udpLen),
 			TTL:         64,
@@ -222,7 +234,7 @@ func (t *stackGVisor) writeRawUDPPacket(payload []byte, src net.Destination, dst
 		})
 		ipHdr.SetChecksum(^ipHdr.CalculateChecksum())
 	} else {
-		ipHdr := header.IPv6(pkt.NetworkHeader().Push(header.IPv6MinimumSize))
+		ipHdr := header.IPv6(packet)
 		ipHdr.Encode(&header.IPv6Fields{
 			PayloadLength:     uint16(udpLen),
 			TransportProtocol: header.UDPProtocolNumber,
@@ -233,7 +245,7 @@ func (t *stackGVisor) writeRawUDPPacket(payload []byte, src net.Destination, dst
 	}
 
 	// dispatch the packet
-	err := t.stack.WriteRawPacket(defaultNIC, ipProtocol, buffer.MakeWithView(pkt.ToView()))
+	err := t.stack.WriteRawPacket(defaultNIC, ipProtocol, buffer.MakeWithView(view))
 	if err != nil {
 		return errors.New("failed to write raw udp packet back to stack", err)
 	}

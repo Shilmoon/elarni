@@ -31,6 +31,11 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ### Performance
 
+- Fewer copies and allocations per UDP datagram in the TUN stack, Hysteria, TUIC and
+  WireGuard; TUIC uses batched reads and GSO.
+- Idle UDP flows in the TUN stack end after 2 minutes instead of 5; a full table refuses
+  new connections before their handshake; near the memory limit, idle sessions are
+  replaced first.
 - Hysteria keeps its connection alive (10 s keepalive) and shares one dial between
   flows; XHTTP gives new flows a connection that is already up.
 

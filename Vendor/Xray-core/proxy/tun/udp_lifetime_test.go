@@ -8,6 +8,7 @@ import (
 	"time"
 
 	appstats "github.com/xtls/xray-core/app/stats"
+	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/session"
 	featuredns "github.com/xtls/xray-core/features/dns"
@@ -112,7 +113,7 @@ func TestUDPIdleOutboundsReleaseAdmission(t *testing.T) {
 			})
 			t.Cleanup(udp.Close)
 			for i := range 3 {
-				udp.HandlePacket(net.UDPDestination(net.ParseAddress("198.18.0.2"), net.Port(40000+i)), dest, payload)
+				udp.HandlePacket(net.UDPDestination(net.ParseAddress("198.18.0.2"), net.Port(40000+i)), dest, buf.FromBytes(payload))
 				select {
 				case reply := <-replies:
 					if protocol == "dns" {
