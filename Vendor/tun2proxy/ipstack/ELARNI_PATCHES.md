@@ -19,13 +19,23 @@ admission, expiry and restart cleanup.
 Local TCP repairs (`src/stream/tcp.rs`, `src/stream/tcb.rs`, tests in
 `src/stream/tcp_tests.rs`):
 - The SYN-ACK announces the MSS the MTU allows, segments respect the client's
-  MSS, and the send and receive limits are 64 KiB (16 KiB capped one stream at
-  16 KiB per TUN round trip).
+  MSS, and the send limit is 128 KiB, the receive limit 64 KiB (16 KiB capped one
+  stream at 16 KiB per TUN round trip). The SYN-ACK answers a client's window
+  scale option (RFC 7323) with shift 0, so the client's window, kept as a u32
+  scaled by its shift, can pass 64 KiB; ours stays unscaled. A segment copies
+  only its own bytes: each segment of an 8 KiB write held its own copy of the
+  rest of the write (3.3 times the data) while it waited in the output queue.
+- A repeated SYN while the SYN-ACK is unanswered gets the SYN-ACK again; a lost
+  one left the client waiting for its connect timeout.
 - Bytes queued for the application but not yet read close the receive window,
   and a read that reopens half of it sends a window update. Before, every upload
   byte was ACKed into an unbounded queue while the proxy side did not read.
-- Every data segment is ACKed, so a gap produces duplicate ACKs; out-of-order and
-  partly overlapping segments are kept or trimmed instead of dropped.
+- In-order data is ACKed every second segment (RFC 1122): the first one waits
+  only while another segment of the flow is already queued, and the stream's task
+  sends it before it waits for input, so no timer delays an ACK. Out-of-order,
+  gap-filling, duplicate and window-limited segments are ACKed at once, so a gap
+  still produces duplicate ACKs; out-of-order and partly overlapping segments are
+  kept or trimmed instead of dropped.
   While a gap holds the ACK still, those ACKs repeat the last window: without SACK,
   macOS counts an ACK as a duplicate only if its window is unchanged.
 - A timer retransmits the oldest unacknowledged segment (RTO 200 ms, doubling,
@@ -47,6 +57,16 @@ Local TCP repairs (`src/stream/tcp.rs`, `src/stream/tcb.rs`, tests in
 - A read takes every queued segment that fits, not one, so the proxy writes an
   upload in up to 8 KiB instead of one system call per segment. Per-packet log
   lines format their sequence numbers only when the line is logged.
+- Dropping a stream whose task still runs signals the task and returns; it used
+  to wait in place (`block_in_place`), which moved a runtime worker to a new
+  thread for every stream dropped early, as in a reconnect storm.
+
+Local session repairs (`src/lib.rs`, `src/stream/udp.rs`, tests in
+`src/stream/tcp_tests.rs` and `src/stream/udp.rs`): a packet for a session that
+ended while its removal is still queued starts a new session, and the queued
+removal leaves that new session alone; the packet used to be dropped, so a DNS
+query sent from the port of the previous one right after its answer was lost. A
+UDP datagram's size is computed instead of serialized for the MTU check.
 
 Local device repair (`src/lib.rs`, test in `src/stream/tcp_tests.rs`): packets go
 to the device from their own task over `tokio::io::split`, so a device write

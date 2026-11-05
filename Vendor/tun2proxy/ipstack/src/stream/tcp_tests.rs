@@ -1,6 +1,6 @@
 // Elarni: the TCP behaviour a TUN client needs from this stack, driven with raw packets.
 use crate::{
-    IpStack, IpStackConfig, IpStackStream, IpStackTcpStream,
+    IpStack, IpStackConfig, IpStackStream, IpStackTcpStream, TcpConfig,
     packet::{NetworkPacket, TransportHeader},
 };
 use etherparse::{PacketBuilder, SlicedPacket, TcpOptionElement, TransportSlice};
@@ -63,6 +63,7 @@ struct Segment {
     fin: bool,
     len: usize,
     mss: Option<u16>,
+    wscale: Option<u8>,
     payload: Vec<u8>,
 }
 
@@ -112,6 +113,10 @@ fn parse(packet: &[u8]) -> Option<Segment> {
         Ok(TcpOptionElement::MaximumSegmentSize(value)) => Some(value),
         _ => None,
     });
+    let wscale = tcp.options_iterator().find_map(|option| match option {
+        Ok(TcpOptionElement::WindowScale(shift)) => Some(shift),
+        _ => None,
+    });
     Some(Segment {
         seq: tcp.sequence_number(),
         ack: tcp.acknowledgment_number(),
@@ -120,6 +125,7 @@ fn parse(packet: &[u8]) -> Option<Segment> {
         fin: tcp.fin(),
         len: tcp.payload().len(),
         mss,
+        wscale,
         payload: tcp.payload().to_vec(),
     })
 }
@@ -178,10 +184,14 @@ impl Peer {
 }
 
 async fn connect(window: u16, options: &[TcpOptionElement]) -> (Peer, IpStackTcpStream) {
+    connect_with(TcpConfig::default(), window, options).await
+}
+
+async fn connect_with(tcp: TcpConfig, window: u16, options: &[TcpOptionElement]) -> (Peer, IpStackTcpStream) {
     let (input, device_input) = unbounded_channel();
     let (device_output, mut output) = unbounded_channel();
     let mut config = IpStackConfig::default();
-    config.mtu(1500).unwrap();
+    config.mtu(1500).unwrap().with_tcp_config(tcp);
     let mut stack = IpStack::new(
         config,
         Device {
@@ -435,9 +445,7 @@ async fn data_written_before_the_handshake_waits_for_it() {
         panic!("not TCP")
     };
     let (client, server) = ((CLIENT, 41000).into(), (SERVER, 443).into());
-    // Dropping a live stream blocks in place, which a current-thread runtime does not allow.
-    let mut stream =
-        std::mem::ManuallyDrop::new(IpStackTcpStream::new(client, server, header, up, 1500, None, Default::default()).unwrap());
+    let mut stream = IpStackTcpStream::new(client, server, header, up, 1500, None, Default::default()).unwrap();
     let early = tokio::time::timeout(Duration::ZERO, stream.write(b"banner")).await;
     let mut next = async || parse(&output.recv().await.unwrap().to_bytes().unwrap()).unwrap();
     let syn_ack = next().await;
@@ -713,4 +721,234 @@ fn a_waiting_device_queue_drops_datagrams_past_its_bound_but_keeps_tcp() {
     assert_eq!(queue.len(), crate::UPSTREAM_BACKLOG);
     crate::enqueue_upstream(&mut queue, packet(true));
     assert!(matches!(queue.back().unwrap().transport, TransportHeader::Tcp(_)));
+}
+
+/// A stream driven without the stack's device task; the receiver gets every packet it sends.
+fn direct_stream(destroyed: Option<tokio::sync::oneshot::Sender<()>>) -> (IpStackTcpStream, UnboundedReceiver<NetworkPacket>) {
+    let (up, output) = unbounded_channel::<NetworkPacket>();
+    let syn = client_packet(
+        ISN,
+        None,
+        Flags {
+            syn: true,
+            ..Flags::default()
+        },
+        65535,
+        &[],
+        &[],
+    );
+    let TransportHeader::Tcp(header) = NetworkPacket::parse(&syn).unwrap().transport_header().clone() else {
+        panic!("not TCP")
+    };
+    let (client, server) = ((CLIENT, 41000).into(), (SERVER, 443).into());
+    let stream = IpStackTcpStream::new(client, server, header, up, 1500, destroyed, Default::default()).unwrap();
+    (stream, output)
+}
+
+// Each segment of an 8 KiB write copied the rest of the write: 27 KiB of buffers, kept while queued, for 8 KiB.
+#[tokio::test(flavor = "current_thread")]
+async fn each_segment_copies_only_its_own_bytes() {
+    let (mut stream, mut output) = direct_stream(None);
+    let syn_ack = parse(&output.recv().await.unwrap().to_bytes().unwrap()).unwrap();
+    let ack = client_packet(ISN + 1, Some(syn_ack.seq.wrapping_add(1)), Flags::default(), 65535, &[], &[]);
+    stream.stream_sender().send(NetworkPacket::parse(&ack).unwrap()).unwrap();
+    stream.write_all(&[3u8; 8192]).await.unwrap();
+    let (mut bytes, mut capacity) = (0, 0);
+    while bytes < 8192 {
+        let packet = output.recv().await.unwrap();
+        let payload = packet.payload.as_ref().unwrap();
+        assert!(payload.len() <= MSS, "a {}-byte segment", payload.len());
+        bytes += payload.len();
+        capacity += payload.capacity();
+    }
+    assert_eq!(capacity, 8192, "{capacity} bytes of segment buffers for 8192 bytes of data");
+}
+
+// Dropping a live stream waited for its task in place, which moved a runtime worker to a new thread
+// (and panicked on a current-thread runtime).
+#[tokio::test(flavor = "current_thread")]
+async fn dropping_a_live_stream_ends_its_task_without_waiting_in_place() {
+    let (destroyed, ended) = tokio::sync::oneshot::channel();
+    let (stream, _output) = direct_stream(Some(destroyed));
+    tokio::task::yield_now().await; // the task sends its SYN-ACK and waits for packets
+    drop(stream);
+    tokio::time::timeout(Duration::from_secs(1), ended)
+        .await
+        .expect("the stream's task did not end")
+        .unwrap();
+}
+
+// The SYN-ACK went out once, so after losing it the client waited for its connect timeout.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_repeated_syn_gets_the_syn_ack_again() {
+    let (input, device_input) = unbounded_channel();
+    let (device_output, mut output) = unbounded_channel();
+    let mut config = IpStackConfig::default();
+    config.mtu(1500).unwrap();
+    let mut stack = IpStack::new(
+        config,
+        Device {
+            input: device_input,
+            output: device_output,
+        },
+    );
+    let syn = client_packet(
+        ISN,
+        None,
+        Flags {
+            syn: true,
+            ..Flags::default()
+        },
+        65535,
+        &[],
+        &[],
+    );
+    input.send(syn.clone()).unwrap();
+    let IpStackStream::Tcp(mut stream) = stack.accept().await.unwrap() else {
+        panic!("not TCP")
+    };
+    let first = parse(&output.recv().await.unwrap()).unwrap();
+    input.send(syn).unwrap(); // the first SYN-ACK was lost
+    let mut next = async || {
+        let packet = tokio::time::timeout(Duration::from_secs(1), output.recv()).await;
+        parse(&packet.expect("no reply").unwrap()).unwrap()
+    };
+    let again = next().await;
+    assert!(
+        again.syn && (again.seq, again.ack, again.mss) == (first.seq, ISN + 1, Some(MSS as u16)),
+        "not the same SYN-ACK: {again:?} after {first:?}"
+    );
+    let server_seq = first.seq.wrapping_add(1);
+    input
+        .send(client_packet(ISN + 1, Some(server_seq), Flags::default(), 65535, &[], &[]))
+        .unwrap();
+    stream.write_all(b"hi").await.unwrap();
+    let data = next().await;
+    assert_eq!((data.seq, data.payload.as_slice()), (server_seq, &b"hi"[..]));
+}
+
+// Every upload segment got its own ACK; RFC 1122 asks for one for at least every second segment.
+// One thread, so the whole burst is queued before the stream's task reads it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_burst_of_upload_segments_is_acked_every_second_segment() {
+    let (mut peer, _stream) = connect(65535, &[]).await;
+    for index in 0..20u32 {
+        peer.send(index * MSS as u32, peer.server_seq, Flags::default(), 65535, &[index as u8; MSS]);
+    }
+    let end = ISN + 1 + 20 * MSS as u32;
+    let acks = peer.collect_until(Duration::from_secs(1), |s| s.ack == end).await;
+    assert_eq!(
+        acks.last().map(|(_, s)| s.ack),
+        Some(end),
+        "the burst was not acknowledged: {acks:?}"
+    );
+    assert!(acks.len() <= 11, "{} ACKs for 20 segments: {acks:?}", acks.len());
+    // A lone segment, like a small request, is acknowledged at once.
+    let flags = Flags {
+        psh: true,
+        ..Flags::default()
+    };
+    peer.send(20 * MSS as u32, peer.server_seq, flags, 65535, b"ping");
+    let lone = peer.collect_until(Duration::from_millis(500), |s| s.ack == end + 4).await;
+    assert!(
+        lone.iter().any(|(at, s)| s.ack == end + 4 && *at < Duration::from_millis(50)),
+        "a lone segment waited for its ACK: {lone:?}"
+    );
+}
+
+// Without window scaling a client window stopped at 64 KiB, so one flow carried 64 KiB per local round trip.
+#[tokio::test(flavor = "multi_thread")]
+async fn window_scaling_is_answered_only_when_the_client_offers_it() {
+    let (plain, _plain) = connect(65535, &[]).await;
+    assert_eq!(plain.syn_ack.wscale, None, "scaling answered without an offer");
+    let (scaled, _scaled) = connect(65535, &[TcpOptionElement::WindowScale(7)]).await;
+    assert_eq!((scaled.syn_ack.wscale, scaled.syn_ack.mss), (Some(0), Some(MSS as u16)));
+}
+
+/// Bytes the stack sends within 150 ms to a client that never acknowledges, while the app writes without end.
+async fn bytes_in_flight(window: u16, shift: u8) -> usize {
+    let (mut peer, mut stream) = connect(window, &[TcpOptionElement::WindowScale(shift)]).await;
+    tokio::spawn(async move {
+        let chunk = vec![1u8; 8192];
+        while stream.write_all(&chunk).await.is_ok() {}
+    });
+    peer.collect(Duration::from_millis(150)).await.iter().map(|(_, s)| s.len).sum()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scaled_client_window_is_filled_past_64_kib_up_to_the_send_limit() {
+    let sent = bytes_in_flight(2048, 7).await; // a 256 KiB client window
+    let limit = 128 * 1024;
+    assert!(
+        (limit - MSS..=limit).contains(&sent),
+        "{sent} bytes in flight against a 256 KiB window and a 128 KiB limit"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_client_window_is_scaled_by_its_shift() {
+    let sent = bytes_in_flight(1000, 4).await; // 1000 << 4
+    assert!(
+        (16000 - MSS..=16000).contains(&sent),
+        "{sent} bytes in flight against a 16000-byte window"
+    );
+}
+
+// Fast retransmit needs the duplicate ACK's window to equal the stored one, so both must be scaled alike.
+#[tokio::test(flavor = "multi_thread")]
+async fn duplicate_acks_with_a_scaled_window_trigger_a_fast_retransmit() {
+    let mut tcp = TcpConfig::default();
+    tcp.rto = Duration::from_secs(5); // only a fast retransmit resends within the test
+    let (mut peer, mut stream) = connect_with(tcp, 4096, &[TcpOptionElement::WindowScale(4)]).await;
+    stream.write_all(&[5u8; 4 * MSS]).await.unwrap();
+    let sent = peer.collect(Duration::from_millis(100)).await;
+    assert_eq!(sent.iter().map(|(_, s)| s.len).sum::<usize>(), 4 * MSS, "{sent:?}");
+    let lost = peer.server_seq.wrapping_add(MSS as u32);
+    for _ in 0..4 {
+        peer.send(0, lost, Flags::default(), 4096, &[]);
+    }
+    let resent = peer.collect_until(Duration::from_secs(1), |s| s.seq == lost && s.len > 0).await;
+    assert!(
+        resent.iter().any(|(_, s)| s.seq == lost && s.len == MSS),
+        "no fast retransmit of {lost}: {resent:?}"
+    );
+}
+
+// A session that ended while its removal was still queued swallowed the next packet on its tuple, so a DNS
+// query sent from the same port right after the previous answer was lost.
+#[tokio::test(flavor = "current_thread")]
+async fn a_packet_for_an_ended_session_starts_a_new_one() {
+    let datagram = |payload: &[u8]| {
+        let mut bytes = Vec::new();
+        PacketBuilder::ipv4(CLIENT, SERVER, 64)
+            .udp(41000, 53)
+            .write(&mut bytes, payload)
+            .unwrap();
+        bytes
+    };
+    let (mut sessions, mut fragments) = (crate::SessionCollection::new(), crate::packet::FragmentReassembler::new());
+    let (remove, mut removed) = unbounded_channel();
+    let (up, _up) = unbounded_channel();
+    let (accept, mut accepted) = unbounded_channel();
+    let config = IpStackConfig::default();
+    let mut read = async |bytes: Vec<u8>| {
+        crate::process_device_read(&bytes, &mut fragments, &mut sessions, &remove, &up, &config, &accept)
+            .await
+            .expect("the packet was not taken");
+        match accepted.try_recv() {
+            Ok(IpStackStream::Udp(stream)) => stream,
+            _ => panic!("no new session"),
+        }
+    };
+    drop(read(datagram(b"one")).await); // the session ends; its removal is still queued
+    let mut second = read(datagram(b"two")).await;
+    let mut buffer = [0u8; 8];
+    let n = second.read(&mut buffer).await.unwrap();
+    assert_eq!(&buffer[..n], b"two");
+    let tuple = removed.recv().await.unwrap();
+    crate::remove_session(&mut sessions, tuple);
+    assert!(sessions.contains_key(&tuple), "the old session's removal took the new one");
+    drop(second);
+    crate::remove_session(&mut sessions, removed.recv().await.unwrap());
+    assert!(sessions.is_empty(), "an ended session stayed");
 }

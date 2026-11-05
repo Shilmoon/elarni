@@ -539,7 +539,8 @@ struct LiveTunnelChecks {
   }
 
   static func packetRoundTrip(socksPort: UInt16, echo: (fd: Int32, port: UInt16), cycle: Int) throws {
-    guard let bridge = elarni_packet_bridge_new(socksPort, 1500, 1, 1, 64, 65535) else {
+    // 10 s UDP idle timeout, not the production 60 s, so the idle check below ends within its 12 s.
+    guard let bridge = elarni_packet_bridge_new_with_udp_timeout(socksPort, 1500, 1, 1, 64, 65535, 10) else {
       throw Failure(message: "packet bridge creation")
     }
     defer { elarni_packet_bridge_free(bridge) }

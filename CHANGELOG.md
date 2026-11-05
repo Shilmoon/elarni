@@ -59,6 +59,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ### Performance
 
+- iOS and macOS: faster downloads through the packet tunnel (TCP window scaling, one copy
+  per segment, half the ACKs); a burst of packets waits up to 10 ms instead of being
+  dropped; DNS sessions end with their answers.
 - Fewer copies and allocations per UDP datagram in the TUN stack, Hysteria, TUIC and
   WireGuard; TUIC uses batched reads and GSO.
 - Idle UDP flows in the TUN stack end after 2 minutes instead of 5; a full table refuses

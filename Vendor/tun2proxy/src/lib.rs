@@ -29,7 +29,6 @@ use tokio::{
     task::JoinSet,
 };
 pub use tokio_util::sync::CancellationToken;
-use tproxy_config::is_private_ip;
 pub use tun::DEFAULT_MTU;
 #[cfg(feature = "udpgw")]
 use udpgw::{UDPGW_KEEPALIVE_TIME, UDPGW_MAX_CONNECTIONS, UdpGwClientStream, UdpGwResponse};
@@ -66,6 +65,25 @@ mod virtual_dns;
 pub mod win_svc;
 
 const DNS_PORT: u16 = 53;
+/// Elarni: a DNS session still waiting for an answer ends after this long without traffic, as before the UDP timeout rose.
+const DNS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Elarni: `tproxy_config::is_private_ip` with std checks instead of nine regexes compiled per call,
+/// which every IPv6 or public IPv4 DNS session paid.
+fn is_private_ip(ip: IpAddr) -> bool {
+    let private = |v4: std::net::Ipv4Addr| v4.is_private() || v4.is_loopback() || v4.is_link_local();
+    match ip {
+        IpAddr::V4(v4) => private(v4) || (v4.octets()[0] == 198 && v4.octets()[1] & 0xfe == 18),
+        IpAddr::V6(v6) => {
+            let first = v6.segments()[0];
+            v6.to_ipv4_mapped().is_some_and(private)
+                || first & 0xfe00 == 0xfc00
+                || first == 0xfe80
+                || v6.is_loopback()
+                || v6.is_unspecified()
+        }
+    }
+}
 
 #[allow(unused)]
 #[derive(Hash, Copy, Clone, Eq, PartialEq, Debug)]
@@ -824,9 +842,14 @@ async fn handle_dns_over_tcp_session(
     let mut buf1 = datagram_buffer();
     let mut buf2 = [0_u8; 4096];
     let mut pending = Vec::new();
+    // Elarni: the session ends with the answer to its last query; it held a proxy connection for the whole UDP timeout.
+    let mut unanswered = 0_usize;
+    let idle = tokio::time::sleep(DNS_TIMEOUT);
+    tokio::pin!(idle);
     loop {
         buf1.clear();
         tokio::select! {
+            _ = &mut idle => break,
             len = udp_stack.read_buf(&mut buf1) => {
                 let len = len?;
                 if len == 0 {
@@ -843,6 +866,8 @@ async fn handle_dns_over_tcp_session(
                 buf.extend_from_slice(buf1);
 
                 server.write_all(&buf).await?;
+                unanswered += 1;
+                idle.as_mut().reset(tokio::time::Instant::now() + DNS_TIMEOUT);
 
                 crate::traffic_status::traffic_status_update(buf.len(), 0)?;
             }
@@ -884,7 +909,12 @@ async fn handle_dns_over_tcp_session(
 
                 while let Some(packet) = to_send.pop_front() {
                     udp_stack.write_all(&packet).await?;
+                    unanswered = unanswered.saturating_sub(1);
                 }
+                if unanswered == 0 {
+                    break;
+                }
+                idle.as_mut().reset(tokio::time::Instant::now() + DNS_TIMEOUT);
             }
         }
     }
@@ -943,4 +973,51 @@ async fn handle_proxy_session(server: &mut TcpStream, proxy_handler: Arc<Mutex<d
     }
     crate::traffic_status::traffic_status_update(tx, rx)?;
     Ok(proxy_handler.get_udp_associate())
+}
+
+#[cfg(test)]
+mod tests {
+    // The std checks answer like tproxy-config's regexes for every kind of address a DNS query can target.
+    #[test]
+    fn private_ip_matches_tproxy_config() {
+        for ip in [
+            "10.1.2.3",
+            "172.16.0.1",
+            "172.31.255.255",
+            "172.32.0.1",
+            "192.168.1.1",
+            "127.0.0.1",
+            "169.254.1.1",
+            "198.18.0.1",
+            "198.19.255.255",
+            "198.20.0.1",
+            "8.8.8.8",
+            "1.1.1.1",
+            "100.64.0.1",
+            "0.0.0.0",
+            "::",
+            "::1",
+            "fc00::1",
+            "fd12:3456::1",
+            "fe80::1",
+            "fe80:1::1",
+            "fec0::1",
+            "fbff::1",
+            "2001:2::1",
+            "2001:db8::1",
+            "2606:4700::1111",
+            "::ffff:10.0.0.1",
+            "::ffff:192.168.0.1",
+            "::ffff:172.20.0.1",
+            "::ffff:127.0.0.1",
+            "::ffff:169.254.0.1",
+            "::ffff:198.18.0.1",
+            "::ffff:8.8.8.8",
+            "::10.0.0.1",
+            "64:ff9b::a00:1",
+        ] {
+            let ip: std::net::IpAddr = ip.parse().unwrap();
+            assert_eq!(super::is_private_ip(ip), tproxy_config::is_private_ip(ip), "{ip}");
+        }
+    }
 }

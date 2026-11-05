@@ -2,8 +2,10 @@ use super::seqnum::SeqNum;
 use etherparse::TcpHeader;
 use std::{collections::BTreeMap, time::Duration};
 
-// Elarni: 16 KiB capped a stream at 16 KiB per TUN round trip; 64 KiB fits the unscaled window.
-pub(super) const MAX_UNACK: u32 = 1024 * 64; // 64KB
+// Elarni: 16 KiB capped a stream at 16 KiB per TUN round trip, the unscaled 64 KiB window at 64 KiB. A queued
+// segment now holds only its own bytes (3.3 times that before), so 128 KiB in flight and queued is still less
+// memory per flow than 64 KiB took.
+pub(super) const MAX_UNACK: u32 = 1024 * 128; // 128KB
 pub(super) const READ_BUFFER_SIZE: usize = 1024 * 64; // 64KB
 pub(super) const MAX_COUNT_FOR_DUP_ACK: usize = 3; // Maximum number of duplicate ACKs before retransmission
 
@@ -50,7 +52,10 @@ pub(crate) struct Tcb {
     ack: SeqNum,
     mtu: u16,
     last_received_ack: SeqNum,
-    send_window: u16,
+    /// The client's window in bytes, scaled by its window scale shift.
+    send_window: u32,
+    /// The client's window scale shift (RFC 7323), when its SYN offered one.
+    send_window_shift: Option<u8>,
     state: TcpState,
     inflight_packets: BTreeMap<SeqNum, InflightPacket>,
     unordered_packets: BTreeMap<SeqNum, Vec<u8>>,
@@ -91,7 +96,8 @@ impl Tcb {
             ack,
             mtu,
             last_received_ack: seq.into(),
-            send_window: u16::MAX,
+            send_window: u16::MAX.into(),
+            send_window_shift: None,
             state: TcpState::Listen,
             inflight_packets: BTreeMap::new(),
             unordered_packets: BTreeMap::new(),
@@ -112,6 +118,19 @@ impl Tcb {
 
     pub(super) fn set_peer_mss(&mut self, mss: u16) {
         self.peer_mss = mss;
+    }
+
+    /// Records the shift from the client's SYN; RFC 7323 caps it at 14.
+    pub(super) fn set_send_window_shift(&mut self, shift: u8) {
+        self.send_window_shift = Some(shift.min(14));
+    }
+    /// Whether the client offered window scaling, so the SYN-ACK answers it.
+    pub(super) fn window_scaling(&self) -> bool {
+        self.send_window_shift.is_some()
+    }
+    /// The window a client's non-SYN segment announces, in bytes.
+    pub(super) fn scale_window(&self, window: u16) -> u32 {
+        u32::from(window) << self.send_window_shift.unwrap_or(0)
     }
 
     /// The largest segment payload; the send window is applied to new data in `send_room`.
@@ -230,10 +249,10 @@ impl Tcb {
     pub(super) fn get_state(&self) -> TcpState {
         self.state
     }
-    pub(super) fn update_send_window(&mut self, window: u16) {
+    pub(super) fn update_send_window(&mut self, window: u32) {
         self.send_window = window;
     }
-    pub(super) fn get_send_window(&self) -> u16 {
+    pub(super) fn get_send_window(&self) -> u32 {
         self.send_window
     }
     pub(super) fn get_recv_window(&self) -> u16 {
@@ -246,6 +265,13 @@ impl Tcb {
         }
         self.advertised.set((self.ack, window));
         window
+    }
+    /// Whether the last segment we sent acknowledged less than we received.
+    pub(super) fn ack_owed(&self) -> bool {
+        self.advertised.get().0 != self.ack
+    }
+    pub(super) fn has_gap(&self) -> bool {
+        !self.unordered_packets.is_empty()
     }
     pub(super) fn request_fin(&mut self) {
         self.fin_requested = true;
@@ -276,7 +302,7 @@ impl Tcb {
     pub(super) fn check_pkt_type(&self, tcp_header: &TcpHeader, payload: &[u8]) -> PacketType {
         let rcvd_ack = SeqNum(tcp_header.acknowledgment_number);
         let rcvd_seq = SeqNum(tcp_header.sequence_number);
-        let rcvd_window = tcp_header.window_size;
+        let rcvd_window = self.scale_window(tcp_header.window_size);
         let len = payload.len();
         let res = if rcvd_ack > self.seq {
             PacketType::Invalid
@@ -379,7 +405,7 @@ impl Tcb {
 
     /// New bytes that fit in min(cwnd, rwnd) beside the unacknowledged ones.
     pub(super) fn send_room(&self) -> usize {
-        let limit = self.max_unacked_bytes.min(self.get_send_window() as u32);
+        let limit = self.max_unacked_bytes.min(self.get_send_window());
         limit.saturating_sub(self.seq.distance(self.get_last_received_ack())) as usize
     }
 }

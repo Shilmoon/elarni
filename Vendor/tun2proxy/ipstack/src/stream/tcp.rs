@@ -62,6 +62,8 @@ pub struct TcpConfig {
 pub enum TcpOptions {
     /// Maximum segment size (MSS) for TCP connections.
     MaximumSegmentSize(u16),
+    /// Window scale shift (RFC 7323), sent in a SYN-ACK only when the SYN carried one.
+    WindowScale(u8),
 }
 
 impl Default for TcpConfig {
@@ -185,8 +187,10 @@ impl IpStackTcpStream {
             config.max_retransmit_count,
         );
         for option in tcp.options_iterator() {
-            if let Ok(TcpOptionElement::MaximumSegmentSize(mss)) = option {
-                tcb.set_peer_mss(mss);
+            match option {
+                Ok(TcpOptionElement::MaximumSegmentSize(mss)) => tcb.set_peer_mss(mss),
+                Ok(TcpOptionElement::WindowScale(shift)) => tcb.set_send_window_shift(shift),
+                _ => {}
             }
         }
         let tuple = NetworkTuple::new(src_addr, dst_addr, true);
@@ -374,7 +378,9 @@ impl AsyncWrite for IpStackTcpStream {
         }
 
         let sender = &self.up_packet_sender;
-        let payload = buf[..buf.len().min(room)].to_vec();
+        // Elarni: copy one segment, not the whole write: each segment of an 8 KiB write held its own 8 KiB copy.
+        let segment = tcb.calculate_payload_max_len(if nt.src.is_ipv4() { 20 } else { 40 }, 20);
+        let payload = buf[..buf.len().min(room).min(segment)].to_vec();
         let payload_len = write_packet_to_device(sender, nt, &tcb, None, ACK | PSH, None, Some(payload))?;
         tcb.add_inflight_packet(buf[..payload_len].to_vec())?;
 
@@ -522,11 +528,11 @@ impl Drop for IpStackTcpStream {
         log::trace!("{nt} {state:?}: [drop] session dropping, ========================= ");
         if let Some(task_handle) = self.task_handle.take() {
             if !task_handle.is_finished() {
+                // Elarni: signal the task and let it end on its own; waiting here in place moved a runtime
+                // worker to a new thread for every stream dropped early. A full queue already holds an exit.
                 if let Some(notifier) = self.exit_notifier.take() {
-                    _ = tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(notifier.send(())));
+                    _ = notifier.try_send(());
                 }
-                // synchronously wait for the task to finish
-                _ = tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(task_handle));
             } else {
                 log::trace!("{nt} {state:?}: [drop] task already finished, no need to wait exiting");
             }
@@ -613,11 +619,7 @@ async fn tcp_main_logic_loop(
         let (seq, ack) = (tcb.get_seq().0, tcb.get_ack().0);
         let l_info = format!("local {{ seq: {seq}, ack: {ack} }}");
         log::trace!("{network_tuple} {state:?}: {l_info} session begins");
-        // Elarni: announce the MSS the MTU allows, so the client does not fall back to 536 bytes.
-        let ip_and_tcp_headers = if network_tuple.src.is_ipv4() { 40 } else { 60 };
-        let default_options = vec![TcpOptions::MaximumSegmentSize(tcb.get_mtu().saturating_sub(ip_and_tcp_headers))];
-        let options = Some(config.options.as_ref().unwrap_or(&default_options));
-        write_packet_to_device(&up_packet_sender, network_tuple, &tcb, options, ACK | SYN, None, None)?;
+        send_syn_ack(&up_packet_sender, network_tuple, &tcb, &config, None)?;
         tcb.increase_seq();
         tcb.change_state(TcpState::SynReceived);
         let state = tcb.get_state();
@@ -640,8 +642,15 @@ async fn tcp_main_logic_loop(
     loop {
         let exit_notifier = exit_notifier.clone();
 
-        // Elarni: retransmit on a timer; it only ran when the client sent another packet, so a lost tail hung.
-        let deadline = tcb.lock().unwrap().next_retransmit_deadline();
+        let deadline = {
+            let tcb = tcb.lock().unwrap();
+            // Elarni: an ACK deferred for a queued segment goes out before the task waits for more.
+            if tcb.ack_owed() && stream_receiver.is_empty() && tcb.get_state() != TcpState::Closed {
+                write_packet_to_device(&up_packet_sender, network_tuple, &tcb, None, ACK, None, None)?;
+            }
+            // Elarni: retransmit on a timer; it only ran when the client sent another packet, so a lost tail hung.
+            tcb.next_retransmit_deadline()
+        };
         let retransmit_timer = async move {
             match deadline {
                 Some(deadline) => tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await,
@@ -704,6 +713,12 @@ async fn tcp_main_logic_loop(
             break;
         }
 
+        // Elarni: a repeated SYN means our SYN-ACK was lost; without a resend the client waited for its connect timeout.
+        if state == TcpState::SynReceived && flags & (SYN | ACK) == SYN && incoming_seq + 1 == tcb.get_ack() {
+            send_syn_ack(&up_packet_sender, network_tuple, &tcb, &config, Some(tcb.get_seq() - 1))?;
+            continue;
+        }
+
         tcb.update_duplicate_ack_count(incoming_ack);
 
         tcb.update_inflight_packet_queue(incoming_ack);
@@ -717,7 +732,7 @@ async fn tcp_main_logic_loop(
         let pkt_type = tcb.check_pkt_type(tcp_header, &payload);
 
         let (state, seq, ack) = { (tcb.get_state(), tcb.get_seq(), tcb.get_ack()) };
-        let (l_info, len) = (Local(seq, ack), payload.len());
+        let (l_info, len, more) = (Local(seq, ack), payload.len(), !stream_receiver.is_empty());
         log::trace!(
             "{network_tuple} {state:?}: {l_info} {}, {pkt_type:?}, len = {len}",
             tcp_header_fmt(tcp_header)
@@ -730,7 +745,7 @@ async fn tcp_main_logic_loop(
             TcpState::SynReceived if flags & ACK == ACK => {
                 if len > 0 {
                     tcb.add_unordered_packet(incoming_seq, payload);
-                    extract_data_n_write_upstream(&up_packet_sender, &mut tcb, network_tuple, &data_tx, &read_notify)?;
+                    extract_data_n_write_upstream(&up_packet_sender, &mut tcb, network_tuple, &data_tx, &read_notify, len, more)?;
                 }
                 tcb.change_state(TcpState::Established);
                 wake(&write_notify);
@@ -739,9 +754,9 @@ async fn tcp_main_logic_loop(
                 if pkt_type == PacketType::KeepAlive {
                     write_packet_to_device(&up_packet_sender, network_tuple, &tcb, None, ACK, None, None)?;
                 } else if len > 0 {
-                    // Elarni: keep out-of-order data and ACK every segment, so the client sees duplicate ACKs.
+                    // Elarni: keep out-of-order data; a gap is ACKed at once, so the client sees duplicate ACKs.
                     tcb.add_unordered_packet(incoming_seq, payload);
-                    extract_data_n_write_upstream(&up_packet_sender, &mut tcb, network_tuple, &data_tx, &read_notify)?;
+                    extract_data_n_write_upstream(&up_packet_sender, &mut tcb, network_tuple, &data_tx, &read_notify, len, more)?;
                     wake(&write_notify);
                 } else {
                     match pkt_type {
@@ -809,7 +824,7 @@ async fn tcp_main_logic_loop(
                     if len > 0 {
                         // if the other side is still sending data, we need to deal with it like PacketStatus::NewPacket
                         tcb.add_unordered_packet(incoming_seq, payload);
-                        extract_data_n_write_upstream(&up_packet_sender, &mut tcb, network_tuple, &data_tx, &read_notify)?;
+                        extract_data_n_write_upstream(&up_packet_sender, &mut tcb, network_tuple, &data_tx, &read_notify, len, more)?;
                         write_notify.lock().unwrap().take().map(|w| w.wake_by_ref()).unwrap_or(());
                     }
                     let new_state = tcb.get_state();
@@ -825,7 +840,7 @@ async fn tcp_main_logic_loop(
                 } else if len > 0 {
                     // if the other side is still sending data, we need to deal with it like PacketStatus::NewPacket
                     tcb.add_unordered_packet(incoming_seq, payload);
-                    extract_data_n_write_upstream(&up_packet_sender, &mut tcb, network_tuple, &data_tx, &read_notify)?;
+                    extract_data_n_write_upstream(&up_packet_sender, &mut tcb, network_tuple, &data_tx, &read_notify, len, more)?;
                     write_notify.lock().unwrap().take().map(|w| w.wake_by_ref()).unwrap_or(());
                 }
                 // Elarni: acknowledge an in-order FIN, also one carrying data, and end the application's read.
@@ -862,17 +877,21 @@ async fn tcp_main_logic_loop(
         )?;
 
         tcb.update_last_received_ack(incoming_ack);
-        tcb.update_send_window(incoming_win);
+        let window = tcb.scale_window(incoming_win);
+        tcb.update_send_window(window);
     } // end of loop
     Ok::<(), std::io::Error>(())
 }
 
+/// Queues the in-order data for the application and ACKs `segment_len` received bytes.
 fn extract_data_n_write_upstream(
     up_packet_sender: &PacketSender,
     tcb: &mut Tcb,
     network_tuple: NetworkTuple,
     data_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     read_notify: &std::sync::Arc<std::sync::Mutex<Option<Waker>>>,
+    segment_len: usize,
+    more_queued: bool,
 ) -> std::io::Result<()> {
     let (state, seq, ack) = (tcb.get_state(), tcb.get_seq(), tcb.get_ack());
     let l_info = Local(seq, ack);
@@ -881,16 +900,38 @@ fn extract_data_n_write_upstream(
         return Ok(());
     }
 
+    let owed = tcb.ack_owed();
+    let mut taken = 0;
     if let Some(data) = tcb.consume_unordered_packets(usize::MAX) {
         let hint = if state == TcpState::Established { "normally" } else { "still" };
         log::trace!("{network_tuple} {state:?}: {l_info} {hint} receiving data, len = {}", data.len());
+        taken = data.len();
         // Elarni: unread bytes close the receive window, which bounds this queue.
         tcb.add_unread(data.len());
         data_tx.send(data).map_err(|e| std::io::Error::new(BrokenPipe, e))?;
         read_notify.lock().unwrap().take().map(|w| w.wake_by_ref()).unwrap_or(());
     }
-    // Also for a gap or a full window: the duplicate ACK tells the client what is missing.
-    write_packet_to_device(up_packet_sender, network_tuple, tcb, None, ACK, None, None)?;
+    // Elarni: ACK every second segment (RFC 1122 4.2.3.2). The first in-order one waits only while another
+    // segment is queued; the loop sends it before it waits for input. Anything else is ACKed at once: a gap
+    // or a filled gap (the duplicate ACK tells the client what is missing), a full window, a duplicate.
+    if owed || !more_queued || taken != segment_len || tcb.has_gap() {
+        write_packet_to_device(up_packet_sender, network_tuple, tcb, None, ACK, None, None)?;
+    }
+    Ok(())
+}
+
+/// Sends the SYN-ACK, or resends it at `seq` when the client repeats its SYN.
+fn send_syn_ack(sender: &PacketSender, nt: NetworkTuple, tcb: &Tcb, config: &TcpConfig, seq: Option<SeqNum>) -> std::io::Result<()> {
+    // Elarni: announce the MSS the MTU allows, so the client does not fall back to 536 bytes.
+    let ip_and_tcp_headers = if nt.src.is_ipv4() { 40 } else { 60 };
+    let mss = TcpOptions::MaximumSegmentSize(tcb.get_mtu().saturating_sub(ip_and_tcp_headers));
+    let mut options = config.options.clone().unwrap_or_else(|| vec![mss]);
+    // Elarni: answering the client's window scale lets its window pass 64 KiB. Ours stays unscaled (shift 0),
+    // since the receive buffer is 64 KiB.
+    if tcb.window_scaling() {
+        options.push(TcpOptions::WindowScale(0));
+    }
+    write_packet_to_device(sender, nt, tcb, Some(&options), ACK | SYN, seq, None)?;
     Ok(())
 }
 
@@ -953,6 +994,7 @@ pub(crate) fn create_raw_packet(
         for opt in opts {
             match opt {
                 TcpOptions::MaximumSegmentSize(mss) => tcp_options.push(TcpOptionElement::MaximumSegmentSize(*mss)),
+                TcpOptions::WindowScale(shift) => tcp_options.push(TcpOptionElement::WindowScale(*shift)),
             }
         }
         tcp_header

@@ -113,7 +113,7 @@ impl Wake for WakeCounter {
 fn device_wakes_on_input_preserves_partial_reads_and_reports_eof() {
     let (sender, receiver) = mpsc::channel(1);
     let output = Arc::new(Mutex::new(FrameAssembler::new(1280, 2)));
-    let mut device = PacketDevice::new(receiver, output, Arc::default());
+    let mut device = PacketDevice::new(receiver, Arc::default(), output, Arc::default());
     let counter = Arc::new(WakeCounter::default());
     let waker = Waker::from(counter.clone());
     let mut context = Context::from_waker(&waker);
@@ -160,7 +160,7 @@ impl Wake for CountingWaker {
 fn device_waits_for_room_instead_of_dropping_and_propagates_framing_errors() {
     let (_sender, receiver) = mpsc::channel(1);
     let output = Arc::new(Mutex::new(FrameAssembler::new(1280, 1)));
-    let mut device = PacketDevice::new(receiver, output.clone(), Arc::default());
+    let mut device = PacketDevice::new(receiver, Arc::default(), output.clone(), Arc::default());
     let wakes = Arc::new(CountingWaker(AtomicUsize::new(0)));
     let waker = Waker::from(wakes.clone());
     let mut context = Context::from_waker(&waker);
@@ -190,6 +190,7 @@ fn device_waits_for_room_instead_of_dropping_and_propagates_framing_errors() {
     let (_sender, receiver) = mpsc::channel(1);
     let mut device = PacketDevice::new(
         receiver,
+        Arc::default(),
         Arc::new(Mutex::new(FrameAssembler::new(1280, 1))),
         Arc::default(),
     );
@@ -204,6 +205,8 @@ fn ingress_overflow_drops_the_packet_and_keeps_the_bridge_running() {
     let (input, mut receiver) = mpsc::channel(1);
     let mut bridge = ElarniPacketBridge {
         input,
+        input_room: Arc::default(),
+        submit_wait: SUBMIT_WAIT,
         output: Arc::new(Mutex::new(FrameAssembler::new(1280, 1))),
         output_ready: Arc::default(),
         cancellation: CancellationToken::new(),
@@ -256,6 +259,8 @@ fn stop_joins_worker_even_after_it_publishes_stopped() {
     let worker = thread::spawn(move || wait.recv().unwrap());
     let mut bridge = ElarniPacketBridge {
         input,
+        input_room: Arc::default(),
+        submit_wait: SUBMIT_WAIT,
         output: Arc::new(Mutex::new(FrameAssembler::new(1280, 1))),
         output_ready: Arc::default(),
         cancellation: CancellationToken::new(),
@@ -420,6 +425,17 @@ fn tcp_syn(source: [u8; 4], destination: [u8; 4], source_port: u16, port: u16) -
 }
 
 #[test]
+fn udp_timeout_outside_one_to_600_seconds_is_rejected() {
+    for seconds in [0, 601] {
+        let bridge = elarni_packet_bridge_new_with_udp_timeout(10809, 1500, 1, 1, 1, 1500, seconds);
+        assert!(bridge.is_null(), "accepted a {seconds} s UDP timeout");
+    }
+    let bridge = elarni_packet_bridge_new_with_udp_timeout(10809, 1500, 1, 1, 1, 1500, 600);
+    assert!(!bridge.is_null());
+    unsafe { elarni_packet_bridge_free(bridge) };
+}
+
+#[test]
 fn authenticated_bridge_rejects_unusable_credentials() {
     let long = [b'a'; 256];
     for (user, pass) in [
@@ -544,7 +560,16 @@ fn authenticated_bridge_logs_in_and_returns_the_reply() {
 }
 
 fn udp_datagram(source: [u8; 4], destination: [u8; 4], source_port: u16, port: u16) -> Vec<u8> {
-    let payload = b"elarni";
+    udp_datagram_with(source, destination, source_port, port, b"elarni")
+}
+
+fn udp_datagram_with(
+    source: [u8; 4],
+    destination: [u8; 4],
+    source_port: u16,
+    port: u16,
+    payload: &[u8],
+) -> Vec<u8> {
     let length = (8 + payload.len()) as u16;
     let mut udp = [
         &source_port.to_be_bytes()[..],
@@ -727,4 +752,223 @@ fn large_udp_relay_replies_arrive_whole() {
             reply.len()
         );
     }
+}
+
+/// A running bridge whose input queue the test holds instead of a native worker.
+fn held_bridge(
+    input: mpsc::Sender<Vec<u8>>,
+    input_room: Arc<InputRoom>,
+    submit_wait: Duration,
+) -> *mut ElarniPacketBridge {
+    Box::into_raw(Box::new(ElarniPacketBridge {
+        input,
+        input_room,
+        submit_wait,
+        output: Arc::new(Mutex::new(FrameAssembler::new(1280, 1))),
+        output_ready: Arc::default(),
+        cancellation: CancellationToken::new(),
+        state: Arc::new(AtomicU8::new(ElarniPacketState::Running as u8)),
+        counters: Arc::new(Counters::default()),
+        thread: Mutex::new(None),
+        max_packet_bytes: 1280,
+        virtual_dns_metrics: Arc::new(VirtualDnsMetrics::default()),
+        session_metrics: Arc::new(tun2proxy::SessionMetrics::default()),
+    }))
+}
+
+fn submit_in_thread(
+    bridge: *mut ElarniPacketBridge,
+    bytes: Vec<u8>,
+) -> JoinHandle<(ElarniPacketStatus, Duration)> {
+    // Raw pointers are not Send; the bridge outlives the thread that submits to it.
+    let address = bridge as usize;
+    thread::spawn(move || {
+        let started = Instant::now();
+        let status = unsafe {
+            elarni_packet_bridge_submit(
+                address as *mut ElarniPacketBridge,
+                bytes.as_ptr(),
+                bytes.len(),
+            )
+        };
+        (status, started.elapsed())
+    })
+}
+
+// A full input queue dropped the packet, so a burst of uploads or new connections cost the client a
+// retransmission (one second for a connection request); the submit now waits for the stack to take one.
+#[test]
+fn a_full_input_queue_waits_for_room_instead_of_dropping() {
+    let (input, receiver) = mpsc::channel(1);
+    let room = Arc::new(InputRoom::default());
+    let output = Arc::new(Mutex::new(FrameAssembler::new(1280, 1)));
+    let mut device = PacketDevice::new(receiver, room.clone(), output, Arc::default());
+    let bridge = held_bridge(input, room, Duration::from_secs(10));
+    let bytes = packet(6, 8);
+    unsafe {
+        assert_eq!(
+            elarni_packet_bridge_submit(bridge, bytes.as_ptr(), bytes.len()),
+            ElarniPacketStatus::Ok
+        );
+    }
+    let waiting = submit_in_thread(bridge, bytes.clone());
+    thread::sleep(Duration::from_millis(50));
+    let mut storage = [0; 64];
+    let mut buffer = ReadBuf::new(&mut storage);
+    let mut context = Context::from_waker(Waker::noop());
+    assert!(
+        Pin::new(&mut device)
+            .poll_read(&mut context, &mut buffer)
+            .is_ready()
+    );
+    let (status, waited) = waiting.join().unwrap();
+    assert_eq!(
+        status,
+        ElarniPacketStatus::Ok,
+        "the full queue dropped the packet"
+    );
+    assert!(
+        waited >= Duration::from_millis(40) && waited < Duration::from_secs(5),
+        "waited {waited:?}"
+    );
+    let mut counters = ElarniPacketCounters::default();
+    unsafe {
+        elarni_packet_bridge_counters(bridge, &mut counters);
+        drop(Box::from_raw(bridge));
+    }
+    assert_eq!((counters.packets_in, counters.overflows), (2, 0));
+}
+
+#[test]
+fn stop_ends_a_submit_waiting_for_room() {
+    let (input, _receiver) = mpsc::channel(1);
+    let bridge = held_bridge(input, Arc::default(), Duration::from_secs(10));
+    let bytes = packet(6, 8);
+    unsafe {
+        assert_eq!(
+            elarni_packet_bridge_submit(bridge, bytes.as_ptr(), bytes.len()),
+            ElarniPacketStatus::Ok
+        );
+    }
+    let waiting = submit_in_thread(bridge, bytes);
+    thread::sleep(Duration::from_millis(50));
+    unsafe {
+        assert_eq!(elarni_packet_bridge_stop(bridge), ElarniPacketStatus::Ok);
+    }
+    let (status, waited) = waiting.join().unwrap();
+    unsafe { drop(Box::from_raw(bridge)) };
+    assert_eq!(status, ElarniPacketStatus::Stopped);
+    assert!(
+        waited < Duration::from_secs(5),
+        "stop left the submit waiting {waited:?}"
+    );
+}
+
+fn dns_message(id: u16, flags: u16) -> Vec<u8> {
+    let mut message = [
+        id.to_be_bytes(),
+        flags.to_be_bytes(),
+        [0, 1],
+        [0, 0],
+        [0, 0],
+        [0, 0],
+    ]
+    .concat();
+    message.extend_from_slice(b"\x01a\x04test\x00\x00\x01\x00\x01"); // a.test, A, IN
+    message
+}
+
+// Every DNS query held its own proxy connection until the UDP timeout (then 10 s, a slot in the UDP cap
+// too); a page load opens about a hundred. The session now ends with the answer to its last query.
+#[test]
+fn a_dns_session_ends_once_every_query_is_answered() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || -> std::io::Result<(bool, Duration)> {
+        let (mut control, _) = listener.accept()?;
+        control.set_read_timeout(Some(Duration::from_secs(5)))?;
+        let mut header = [0; 2];
+        control.read_exact(&mut header)?;
+        control.read_exact(&mut vec![0; usize::from(header[1])])?;
+        control.write_all(&[5, 0])?;
+        let mut request = [0; 10]; // an IPv4 CONNECT
+        control.read_exact(&mut request)?;
+        assert_eq!(
+            &request[4..],
+            &[198, 18, 0, 1, 0, 53],
+            "not the DNS listener"
+        );
+        control.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0])?;
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let mut length = [0; 2];
+            control.read_exact(&mut length)?;
+            let mut query = vec![0; usize::from(u16::from_be_bytes(length))];
+            control.read_exact(&mut query)?;
+            ids.push(u16::from_be_bytes([query[0], query[1]]));
+        }
+        let answer = |id| {
+            let message = dns_message(id, 0x8180);
+            [&(message.len() as u16).to_be_bytes()[..], &message].concat()
+        };
+        control.write_all(&answer(ids[0]))?;
+        // One query is still unanswered, so the session stays.
+        control.set_read_timeout(Some(Duration::from_millis(300)))?;
+        let early_close = matches!(control.read(&mut [0; 1]), Ok(0));
+        control.write_all(&answer(ids[1]))?;
+        control.set_read_timeout(Some(Duration::from_secs(5)))?;
+        let answered = Instant::now();
+        assert_eq!(control.read(&mut [0; 1])?, 0, "data instead of the close");
+        Ok((early_close, answered.elapsed()))
+    });
+    let bridge = elarni_packet_bridge_new(port, 1500, 4, 4, 64, 1500);
+    assert!(!bridge.is_null());
+    let mut answers = Vec::new();
+    let mut counters = ElarniPacketCounters::default();
+    unsafe {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while elarni_packet_bridge_state(bridge) == ElarniPacketState::Starting
+            && Instant::now() < deadline
+        {
+            thread::sleep(Duration::from_millis(1));
+        }
+        for id in [1, 2] {
+            let datagram = udp_datagram_with(
+                [10, 0, 0, 2],
+                [198, 18, 0, 1],
+                40_000,
+                53,
+                &dns_message(id, 0x0100),
+            );
+            assert_eq!(
+                elarni_packet_bridge_submit(bridge, datagram.as_ptr(), datagram.len()),
+                ElarniPacketStatus::Ok
+            );
+        }
+        for _ in 0..2 {
+            answers.push(receive_udp_payload(bridge, Duration::from_secs(5)).unwrap_or_default());
+        }
+        elarni_packet_bridge_counters(bridge, &mut counters);
+        while counters.active_udp_sessions > 0 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+            elarni_packet_bridge_counters(bridge, &mut counters);
+        }
+        elarni_packet_bridge_free(bridge);
+    }
+    let (early_close, closed_after) = server.join().unwrap().unwrap();
+    assert!(!early_close, "the session ended with a query unanswered");
+    assert!(
+        closed_after < Duration::from_secs(2),
+        "the proxy connection stayed {closed_after:?} after the last answer"
+    );
+    let ids: Vec<u16> = answers
+        .iter()
+        .map(|answer| u16::from_be_bytes([answer[0], answer[1]]))
+        .collect();
+    assert_eq!(ids, [1, 2], "answers: {answers:?}");
+    assert_eq!(
+        counters.active_udp_sessions, 0,
+        "the DNS session still counts"
+    );
 }
