@@ -399,8 +399,10 @@ struct LiveTunnelChecks {
       backend: .nativeTun2Proxy, settings: nil)
     let core = NativeXrayCore()
     func prepare(port: Int) async throws -> PreparedXray {
+      // Sorted keys: two equal dictionaries can serialize in different orders, and the stored endpoint
+      // a real restart reuses has fixed bytes.
       var endpoint = SecretValue(bytes: try JSONSerialization.data(withJSONObject: ["protocol": "socks",
-        "settings": ["servers": [["address": "localhost", "port": port]]]]))
+        "settings": ["servers": [["address": "localhost", "port": port]]]], options: [.sortedKeys]))
       defer { endpoint.clear() }
       return try await core.prepare(plan: plan, endpoint: &endpoint, servers: [:], inboundCredentials: nil, attempt: attempt)
     }
