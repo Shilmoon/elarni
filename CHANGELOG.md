@@ -22,6 +22,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   refresh. A DoH server that stalls while connecting gives up after 16 s instead of
   holding every lookup. A plain-UDP remote resolver now goes through the proxy, and
   `+local` resolvers in imported profiles, which bypassed the tunnel, are dropped.
+- XHTTP/3: a failed dial no longer leaks its socket, more than 100 sessions no longer
+  stall for 16 s, and closing the first app no longer aborts the shared dial.
 - Routing with IP rules uses the connection's own address instead of looking its domain
   up again.
 - Android: in Only listed mode, a connection whose app Android cannot identify stays in

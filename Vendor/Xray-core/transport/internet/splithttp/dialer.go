@@ -2,6 +2,7 @@ package splithttp
 
 import (
 	"context"
+	"crypto/rand"
 	gotls "crypto/tls"
 	"fmt"
 	"io"
@@ -81,9 +82,14 @@ func getHTTPClient(ctx context.Context, dest net.Destination, streamSettings *in
 		}
 
 		releaseCtx, release := context.WithCancel(context.Background())
-		dialer = xmuxDialer{NewXmuxManager(xmuxConfig, func() XmuxConn {
+		manager := NewXmuxManager(xmuxConfig, func() XmuxConn {
 			return createHTTPClient(releaseCtx, dest, streamSettings)
-		}), release}
+		})
+		manager.preDial = preDial
+		if decideHTTPVersion(tls.ConfigFromStreamSettings(streamSettings), realityConfig) == "3" {
+			manager.sessionLimit = h3SessionLimit
+		}
+		dialer = xmuxDialer{manager, release}
 		globalDialerMap[key] = dialer
 	}
 
@@ -108,6 +114,90 @@ func releaseDialers(streamSettings *internet.MemoryStreamConfig) {
 		for _, xmuxClient := range dialer.xmuxClients {
 			common.Close(xmuxClient.XmuxConn) // HTTP/3 transports
 		}
+	}
+}
+
+// A request that waits for a free HTTP/3 stream runs into its 16 s response bound, which
+// retires the whole connection. quic-go servers, Xray's included, allow 100 streams per
+// connection unless configured; a stream-up session takes two, and posts need free ones.
+const h3SessionLimit = 50
+
+// After the device's network changes, a connection that does not answer within
+// pathCheckBound is closed; changes within pathChangeWindow of a handled one are handled
+// once at its end, so a burst of them does not redial every time.
+var (
+	pathCheckBound   = 5 * time.Second
+	pathChangeWindow = 2 * time.Second
+)
+
+var pathChange struct {
+	sync.Mutex
+	timer *time.Timer // set while changes are coalesced
+	again bool
+}
+
+// socketPathChanged moves new sessions to connections dialed on the new path and closes
+// the old connections that no longer answer; the others finish their sessions.
+func socketPathChanged() {
+	pathChange.Lock()
+	defer pathChange.Unlock()
+	if pathChange.timer != nil {
+		pathChange.again = true
+		return
+	}
+	retireForNewPath()
+	pathChange.timer = time.AfterFunc(pathChangeWindow, func() {
+		pathChange.Lock()
+		defer pathChange.Unlock()
+		if !pathChange.again {
+			pathChange.timer = nil
+			return
+		}
+		pathChange.again = false
+		retireForNewPath()
+		pathChange.timer.Reset(pathChangeWindow)
+	})
+}
+
+func retireForNewPath() {
+	globalDialerAccess.Lock()
+	for _, dialer := range globalDialerMap {
+		dialer.retire()
+	}
+	globalDialerAccess.Unlock()
+	// Connections retired earlier still carry sessions, so they are checked again.
+	livePaths.check(pathCheckBound)
+}
+
+// livePaths holds every open XHTTP/2 and XHTTP/3 connection.
+var livePaths pathConns
+
+// pathConns are HTTP/2 and HTTP/3 connections, each with how to check it.
+type pathConns struct {
+	mu  sync.Mutex
+	all map[any]func(bound time.Duration)
+}
+
+func (p *pathConns) add(conn any, check func(bound time.Duration)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.all == nil {
+		p.all = map[any]func(time.Duration){}
+	}
+	p.all[conn] = check
+}
+
+func (p *pathConns) remove(conn any) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.all, conn)
+}
+
+func (p *pathConns) check(bound time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, check := range p.all {
+		check(bound)
 	}
 }
 
@@ -281,6 +371,7 @@ func createHTTPClient(releaseCtx context.Context, dest net.Destination, streamSe
 
 	var transport http.RoundTripper
 	var pre *preconnect
+	open := new(atomic.Int32) // connections up
 
 	if httpVersion == "3" {
 		quicParams := streamSettings.QuicParams
@@ -322,6 +413,9 @@ func createHTTPClient(releaseCtx context.Context, dest net.Destination, streamSe
 			QUICConfig:      quicConfig,
 			TLSClientConfig: gotlsConfig,
 			Dial: func(ctx context.Context, addr string, tlsCfg *gotls.Config, cfg *quic.Config) (*quic.Conn, error) {
+				// Other requests wait on this dial, so it outlives the request that started it, within the setup bound.
+				ctx, cancel := context.WithTimeout(ctx, setupTimeout)
+				defer cancel()
 				var pktConn net.PacketConn
 				var udpAddr net.Addr
 				if streamSettings.FinalMask != nil {
@@ -357,9 +451,21 @@ func createHTTPClient(releaseCtx context.Context, dest net.Destination, streamSe
 
 				conn, err := tr.DialEarly(ctx, udpAddr, tlsCfg, cfg)
 				if err != nil {
+					tr.Close()
+					pktConn.Close()
 					return nil, err
 				}
-				context.AfterFunc(conn.Context(), func() { tr.Close(); pktConn.Close() })
+				open.Add(1)
+				livePaths.add(conn, func(bound time.Duration) {
+					received := conn.ConnectionStats().PacketsReceived
+					conn.Ping()
+					time.AfterFunc(bound, func() {
+						if conn.ConnectionStats().PacketsReceived == received {
+							conn.CloseWithError(0, "")
+						}
+					})
+				})
+				context.AfterFunc(conn.Context(), func() { open.Add(-1); livePaths.remove(conn); tr.Close(); pktConn.Close() })
 
 				switch quicParams.Congestion {
 				case "reno":
@@ -384,7 +490,7 @@ func createHTTPClient(releaseCtx context.Context, dest net.Destination, streamSe
 		pre = &preconnect{dial: func(ctxInner context.Context) (net.Conn, error) {
 			return hedgedDial(ctxInner, dialContext)
 		}}
-		transport = h2Transport(pre.transportDial, keepAlivePeriod)
+		transport = h2Transport(pre.transportDial, keepAlivePeriod, open)
 	} else {
 		httpDialContext := func(ctxInner context.Context, network string, addr string) (net.Conn, error) {
 			return dialContext(ctxInner)
@@ -411,6 +517,7 @@ func createHTTPClient(releaseCtx context.Context, dest net.Destination, streamSe
 		httpVersion:    httpVersion,
 		dialUploadConn: dialContext,
 		preconnect:     pre,
+		open:           open,
 	}
 
 	return client
@@ -428,40 +535,155 @@ const preconnectTTL = 2 * time.Second
 // preconnect dials an HTTP/2 client's first connection ahead of its first
 // request, so a session can move its uploads to the client once the handshake
 // is done. The transport's first dial takes that connection over.
-// h2Transport is XHTTP's HTTP/2 client over dial's (already secured) connections.
-func h2Transport(dial func(context.Context) (net.Conn, error), keepAlivePeriod time.Duration) *http2.Transport {
-	// Go's 4 MiB default per stream stayed full for each download the app stopped reading.
-	// 2 MiB still carries 130 Mbit/s per stream at 120 ms, like the WireGuard tunnel's cap.
-	transport, err := http2.ConfigureTransports(&http.Transport{HTTP2: &http.HTTP2Config{MaxReceiveBufferPerStream: 2 << 20}})
+// h2Transport is XHTTP's HTTP/2 client over dial's (already secured) connections, which
+// it counts in open when that is set.
+func h2Transport(dial func(context.Context) (net.Conn, error), keepAlivePeriod time.Duration, open *atomic.Int32) *http2.Transport {
+	transport, err := http2.ConfigureTransports(&http.Transport{HTTP2: &http.HTTP2Config{MaxReceiveBufferPerStream: h2StreamWindow(runtime.GOOS)}})
 	common.Must(err)
 	transport.DialTLSContext = func(ctxInner context.Context, network string, addr string, cfg *gotls.Config) (net.Conn, error) {
 		conn, err := dial(ctxInner)
 		if err != nil {
 			return nil, err
 		}
-		return &maxFrameClamp{Conn: conn}, nil
+		clamped := &maxFrameClamp{Conn: conn, open: open}
+		if open != nil {
+			open.Add(1)
+		}
+		livePaths.add(clamped, func(bound time.Duration) {
+			// The PING draws an answer from an idle connection; on a slow busy link the
+			// answer queues behind data, which arriving shows the path works as well.
+			received := clamped.received.Load()
+			go clamped.writePing()
+			time.AfterFunc(bound, func() {
+				if clamped.received.Load() == received {
+					clamped.Close()
+				}
+			})
+		})
+		return clamped, nil
 	}
 	transport.IdleConnTimeout = net.ConnIdleTimeout
 	transport.ReadIdleTimeout = keepAlivePeriod
 	return transport
 }
 
+// Go's 4 MiB default per stream stayed full for each download the app stopped reading.
+// 2 MiB still carries 130 Mbit/s per stream at 120 ms, like the WireGuard tunnel's cap;
+// iOS kills the packet tunnel above about 50 MB, so there it is 1 MiB, as in the tunnel.
+func h2StreamWindow(goos string) int {
+	if goos == "ios" {
+		return 1 << 20
+	}
+	return 2 << 20
+}
+
 // maxFrameClamp shows the HTTP/2 client every SETTINGS_MAX_FRAME_SIZE as the spec minimum,
 // 16 KiB. Go sizes each upload stream's buffer by it, up to 512 KiB, and Go servers advertise
 // 1 MB, so iOS extensions crossed their 50 MB limit (Xray-core #6663). The minimum is always
 // valid and frames only get smaller; nothing else in the server's stream changes.
+// It also sends the PING that checks the connection after a network change.
 type maxFrameClamp struct {
 	net.Conn
+	open     *atomic.Int32
+	closed   atomic.Bool
+	received atomic.Int64
 	header   [9]byte
 	seen     int    // header bytes read so far
 	left     int    // payload bytes left in the current frame
 	settings bool   // the current frame is a SETTINGS frame (not an ack)
 	offset   int    // position in the current 6-byte setting
 	id       uint16 // the current setting's identifier
+
+	// The client's frame boundaries, where a PING may go.
+	wmu     sync.Mutex
+	wskip   int     // preface bytes written
+	wheader [5]byte // length, type and flags of the frame being written
+	wseen   int     // header bytes written so far, 0 again once its payload is
+	wleft   int     // payload bytes left in it
+	wframes bool    // the SETTINGS frame that must follow the preface was written
+	wblock  bool    // inside a header block, which CONTINUATION frames must finish
+	pingDue bool
+}
+
+func (c *maxFrameClamp) Close() error {
+	if !c.closed.Swap(true) {
+		livePaths.remove(c)
+		if c.open != nil {
+			c.open.Add(-1)
+		}
+	}
+	return c.Conn.Close()
+}
+
+// writePing writes the PING now if the client is between frames, or else after its frame.
+func (c *maxFrameClamp) writePing() {
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	if c.betweenFrames() {
+		c.sendPing()
+	} else {
+		c.pingDue = true
+	}
+}
+
+func (c *maxFrameClamp) betweenFrames() bool {
+	return c.wframes && !c.wblock && c.wseen == 0
+}
+
+// sendPing needs wmu.
+func (c *maxFrameClamp) sendPing() error {
+	c.pingDue = false
+	frame := make([]byte, 9+8)
+	frame[2], frame[3] = 8, 0x6 // length, PING
+	rand.Read(frame[9:])
+	_, err := c.Conn.Write(frame)
+	return err
+}
+
+func (c *maxFrameClamp) Write(p []byte) (int, error) {
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	n, err := c.Conn.Write(p)
+	for i := 0; i < n; {
+		if c.wskip < len(http2.ClientPreface) {
+			step := min(len(http2.ClientPreface)-c.wskip, n-i)
+			c.wskip += step
+			i += step
+			continue
+		}
+		if c.wseen < len(c.header) {
+			if c.wseen < len(c.wheader) {
+				c.wheader[c.wseen] = p[i]
+			}
+			c.wseen++
+			i++
+			if c.wseen == len(c.header) {
+				c.wleft = int(c.wheader[0])<<16 | int(c.wheader[1])<<8 | int(c.wheader[2])
+				if t := c.wheader[3]; t == 0x1 || t == 0x9 { // HEADERS, CONTINUATION
+					c.wblock = c.wheader[4]&0x4 == 0 // until END_HEADERS
+				}
+				c.wframes = true
+			}
+		} else {
+			step := min(c.wleft, n-i)
+			i += step
+			c.wleft -= step
+		}
+		if c.wseen == len(c.header) && c.wleft == 0 {
+			c.wseen = 0
+		}
+	}
+	if err == nil && c.pingDue && c.betweenFrames() {
+		err = c.sendPing()
+	}
+	return n, err
 }
 
 func (c *maxFrameClamp) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.received.Add(int64(n))
+	}
 	for i := 0; i < n; {
 		if c.seen < len(c.header) {
 			c.header[c.seen] = p[i]
@@ -529,6 +751,13 @@ func (p *preconnect) start(ctx context.Context) *done.Instance {
 	return p.done
 }
 
+// waiting reports whether an early connection waits for the transport.
+func (p *preconnect) waiting() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.conn != nil
+}
+
 func (p *preconnect) take() net.Conn {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -565,12 +794,21 @@ func (p *preconnect) transportDial(ctx context.Context) (net.Conn, error) {
 // connectAhead starts the client's handshake without a request where the
 // transport allows it, and returns what closes once its requests need none.
 func connectAhead(ctx context.Context, client DialerClient) *done.Instance {
-	if c, ok := client.(*DefaultDialerClient); ok && c.preconnect != nil {
-		return c.preconnect.start(probe.RequestContext(ctx))
+	if ready := preDial(ctx, client); ready != nil {
+		return ready
 	}
 	ready := done.New()
 	ready.Close()
 	return ready
+}
+
+// preDial starts an HTTP/2 client's first handshake without a request; other
+// transports cannot, and get nil.
+func preDial(ctx context.Context, conn XmuxConn) *done.Instance {
+	if c, ok := conn.(*DefaultDialerClient); ok && c.preconnect != nil {
+		return c.preconnect.start(probe.RequestContext(ctx))
+	}
+	return nil
 }
 
 // HTTP/2 makes every request on a client wait for that client's single in-flight
@@ -621,6 +859,8 @@ func hedgedDial(ctx context.Context, dial func(context.Context) (net.Conn, error
 func init() {
 	common.Must(internet.RegisterTransportDialer(protocolName, Dial))
 	common.Must(internet.RegisterTransportReleaser(protocolName, releaseDialers))
+	// One listener for the process: it walks the dialers of whichever core is running.
+	internet.OnSocketPathChange(socketPathChanged)
 }
 
 func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (stat.Connection, error) {

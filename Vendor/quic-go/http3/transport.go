@@ -306,7 +306,8 @@ func (t *Transport) getClient(ctx context.Context, hostname string, onlyCached b
 		if onlyCached {
 			return nil, false, ErrNoCachedConn
 		}
-		ctx, cancel := context.WithCancel(ctx)
+		// Elarni: every waiter shares this dial, so the first request's cancellation must not end it.
+		ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 		cl = &roundTripperWithCount{
 			dialing: make(chan struct{}),
 			cancel:  cancel,

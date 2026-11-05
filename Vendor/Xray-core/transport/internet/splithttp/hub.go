@@ -491,6 +491,10 @@ func ListenXH(ctx context.Context, address net.Address, port net.Port, streamSet
 			MaxIncomingStreams:             quicParams.MaxIncomingStreams,
 			DisablePathMTUDiscovery:        quicParams.DisablePathMtuDiscovery || (runtime.GOOS != "linux" && runtime.GOOS != "android" && runtime.GOOS != "windows" && runtime.GOOS != "darwin"),
 		}
+		if quicParams.MaxIncomingStreams == 0 {
+			// quic-go's 100 made a client's 101st request wait into its timeout; Hysteria's server allows 1024 too.
+			quicConfig.MaxIncomingStreams = 1024
+		}
 
 		var k *quic.StatelessResetKey
 		if !quicParams.DisableStatelessReset {

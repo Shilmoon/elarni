@@ -12,6 +12,7 @@ import (
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/session"
+	"github.com/xtls/xray-core/common/signal/done"
 )
 
 type XmuxConn interface {
@@ -34,6 +35,13 @@ type XmuxClient struct {
 	busyUntil   atomic.Int64
 
 	realtime bool // carries UDP flows only
+}
+
+// warm reports whether the connection is up, or dialed ahead and waiting, where the
+// transport can tell.
+func (c *XmuxClient) warm() bool {
+	w, ok := c.XmuxConn.(interface{ warm() bool })
+	return !ok || w.warm()
 }
 
 const (
@@ -95,6 +103,13 @@ type XmuxManager struct {
 	connections int32
 	newConnFunc func() XmuxConn
 	xmuxClients []*XmuxClient
+
+	// sessionLimit caps the sessions per connection when the transport has a stream
+	// limit that waiting requests would run into (HTTP/3); 0 means none.
+	sessionLimit int32
+	// preDial starts a connection's handshake without a request, or returns nil
+	// where the transport cannot.
+	preDial func(context.Context, XmuxConn) *done.Instance
 }
 
 func NewXmuxManager(xmuxConfig *XmuxConfig, newConnFunc func() XmuxConn) *XmuxManager {
@@ -202,20 +217,35 @@ func (m *XmuxManager) getXmuxClient(ctx context.Context, create bool) *XmuxClien
 		return m.newXmuxClient(realtime)
 	}
 
-	if create && connections > 0 && len(pool) < int(connections) {
-		errors.LogDebug(ctx, "XMUX: creating xmuxClient because maxConnections was not hit, xmuxClients = ", len(pool), ", realtime = ", realtime)
-		return m.newXmuxClient(realtime)
+	limit := m.concurrency
+	if m.sessionLimit > 0 && (limit <= 0 || limit > m.sessionLimit) {
+		limit = m.sessionLimit
 	}
-
 	xmuxClients := make([]*XmuxClient, 0)
-	if m.concurrency > 0 {
+	if limit > 0 {
 		for _, xmuxClient := range pool {
-			if xmuxClient.Running.Load() < m.concurrency {
+			if xmuxClient.Running.Load() < limit {
 				xmuxClients = append(xmuxClients, xmuxClient)
 			}
 		}
 	} else {
 		xmuxClients = pool
+	}
+
+	// Keep new streams off connections that are busy downloading, if any other is
+	// free, then off ones that still need a handshake.
+	now := time.Now()
+	quiet := func(c *XmuxClient) bool { return !c.busy(now) }
+	candidates := preferred(preferred(xmuxClients, quiet), (*XmuxClient).warm)
+
+	if create && connections > 0 && len(pool) < int(connections) {
+		errors.LogDebug(ctx, "XMUX: creating xmuxClient because maxConnections was not hit, xmuxClients = ", len(pool), ", realtime = ", realtime)
+		fresh := m.newXmuxClient(realtime)
+		// The flow takes a warm connection, if one is free, while the new one does its handshake.
+		if len(candidates) > 0 && quiet(candidates[0]) && candidates[0].warm() && m.preDial != nil && m.preDial(ctx, fresh.XmuxConn) != nil {
+			return pick(candidates)
+		}
+		return fresh
 	}
 
 	if len(xmuxClients) == 0 {
@@ -225,23 +255,38 @@ func (m *XmuxManager) getXmuxClient(ctx context.Context, create bool) *XmuxClien
 		errors.LogDebug(ctx, "XMUX: creating xmuxClient because maxConcurrency was hit, xmuxClients = ", len(pool), ", realtime = ", realtime)
 		return m.newXmuxClient(realtime)
 	}
+	return pick(candidates)
+}
 
-	// Keep new streams off connections that are busy downloading, if any other is free.
-	now := time.Now()
-	var quiet []*XmuxClient
-	for _, xmuxClient := range xmuxClients {
-		if !xmuxClient.busy(now) {
-			quiet = append(quiet, xmuxClient)
+// preferred returns the clients that pass keep, or all of them if none does.
+func preferred(clients []*XmuxClient, keep func(*XmuxClient) bool) []*XmuxClient {
+	var kept []*XmuxClient
+	for _, c := range clients {
+		if keep(c) {
+			kept = append(kept, c)
 		}
 	}
-	if len(quiet) > 0 {
-		xmuxClients = quiet
+	if len(kept) == 0 {
+		return clients
 	}
+	return kept
+}
 
+func pick(xmuxClients []*XmuxClient) *XmuxClient {
 	i, _ := rand.Int(rand.Reader, big.NewInt(int64(len(xmuxClients))))
 	xmuxClient := xmuxClients[i.Int64()]
 	if xmuxClient.leftUsage > 0 {
 		xmuxClient.leftUsage -= 1
 	}
 	return xmuxClient
+}
+
+// retire takes every connection out of use for new sessions; the ones carrying
+// none close now.
+func (m *XmuxManager) retire() {
+	for _, xmuxClient := range m.xmuxClients {
+		xmuxClient.NotUsed.Store(true)
+		xmuxClient.maybeClose()
+	}
+	m.xmuxClients = nil
 }

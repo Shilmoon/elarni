@@ -233,6 +233,13 @@ func freeUDPPort(t *testing.T) net.Port {
 
 // udpDelayRelay forwards datagrams to target and delays both directions by oneWay.
 func udpDelayRelay(t *testing.T, target string, oneWay time.Duration) string {
+	addr, _ := udpRelay(t, target, oneWay, nil)
+	return addr
+}
+
+// udpRelay is udpDelayRelay that counts the client sockets it saw and, while drop
+// is set, swallows datagrams both ways, as a dead network path does.
+func udpRelay(t *testing.T, target string, oneWay time.Duration, drop *atomic.Bool) (string, func() int) {
 	pc, err := gonet.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -251,12 +258,16 @@ func udpDelayRelay(t *testing.T, target string, oneWay time.Duration) string {
 			up.Close()
 		}
 	})
+	dropping := func() bool { return drop != nil && drop.Load() }
 	go func() {
 		b := make([]byte, 65536)
 		for {
 			n, from, err := pc.ReadFrom(b)
 			if err != nil {
 				return
+			}
+			if dropping() {
+				continue
 			}
 			mu.Lock()
 			up, ok := upstreams[from.String()]
@@ -273,6 +284,9 @@ func udpDelayRelay(t *testing.T, target string, oneWay time.Duration) string {
 						if err != nil {
 							return
 						}
+						if dropping() {
+							continue
+						}
 						data := append([]byte(nil), b[:n]...)
 						time.AfterFunc(oneWay, func() { pc.WriteTo(data, from) })
 					}
@@ -283,7 +297,11 @@ func udpDelayRelay(t *testing.T, target string, oneWay time.Duration) string {
 			time.AfterFunc(oneWay, func() { up.Write(data) })
 		}
 	}()
-	return pc.LocalAddr().String()
+	return pc.LocalAddr().String(), func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(upstreams)
+	}
 }
 
 // A front server (nginx at keepalive_requests or on reload, a CDN) retires its
@@ -372,6 +390,31 @@ func TestPacketUpSurvivesFrontServerGoAway(t *testing.T) {
 	for deadline := time.Now().Add(5 * time.Second); received.Load() < int64(sent); time.Sleep(10 * time.Millisecond) {
 		if time.Now().After(deadline) {
 			t.Fatalf("received %d of %d packets", received.Load(), sent)
+		}
+	}
+}
+
+// While XMUX has fewer connections than it may (after it retired one, or at the start),
+// the flow that found one missing paid for a new TCP and TLS handshake, three round trips
+// here, although a warm connection was free. It takes the warm one; the new one is dialed ahead.
+func TestXHTTPNewFlowTakesAWarmConnection(t *testing.T) {
+	const oneWay = 50 * time.Millisecond
+	relay, accepted := delayRelay(t, echoServer(t, false, nil), oneWay)
+	client := xhttpClient(t, false, `{"path":"/x","mode":"stream-one"}`) // two TCP connections
+	dest := destination(t, relay)
+	if err := echo(dialXHTTP(t, context.Background(), dest, client), 1); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	if err := echo(dialXHTTP(t, context.Background(), dest, client), 2); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed >= 4*oneWay {
+		t.Fatalf("the second flow took %v; one round trip is %v", elapsed, 2*oneWay)
+	}
+	for deadline := time.Now().Add(2 * time.Second); accepted.Load() < 2; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the second connection was not dialed ahead")
 		}
 	}
 }
