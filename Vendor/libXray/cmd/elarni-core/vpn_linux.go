@@ -576,22 +576,18 @@ func linuxSupervisor(ctx context.Context, input io.Reader, output io.Writer) (co
 		}
 		probeServer()
 	}()
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
 	for {
+		var exited <-chan struct{} // nil, so never ready, until a worker runs
+		if worker != nil {
+			exited = worker.done
+		}
 		select {
 		case <-ctx.Done():
 			return 0
 		case <-closed:
 			return 0
-		case <-ticker.C:
-			if worker != nil {
-				select {
-				case <-worker.done:
-					return 1
-				default:
-				}
-			}
+		case <-exited:
+			return 1
 		case command := <-commands:
 			if command.Action == "stop" {
 				block = false
@@ -741,6 +737,7 @@ func linuxWorker(ctx context.Context, input io.Reader, output io.Writer) (code i
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var gate metricsGate
 	for {
 		select {
 		case <-ctx.Done():
@@ -749,7 +746,7 @@ func linuxWorker(ctx context.Context, input io.Reader, output io.Writer) (code i
 			return 0
 		case <-commands:
 			return 0
-		case <-ticker.C:
+		case now := <-ticker.C:
 			if !xray.GetXrayState() {
 				return 1
 			}
@@ -758,7 +755,7 @@ func linuxWorker(ctx context.Context, input io.Reader, output io.Writer) (code i
 				if len(logs) > 0 {
 					logCursor = logs[len(logs)-1].Seq
 				}
-				if linuxWriteFrame(output, linuxReply{Metrics: &metrics, Logs: logs}) != nil {
+				if gate.due(metrics, len(logs) > 0, now) && linuxWriteFrame(output, linuxReply{Metrics: &metrics, Logs: logs}) != nil {
 					return 1
 				}
 			}

@@ -20,6 +20,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   CPU renderer instead of Mesa's software OpenGL: 80 MB less memory and a quarter of the CPU
   while it repaints. Set `FLUTTER_LINUX_RENDERER=opengl` to keep OpenGL.
 - The window no longer redraws every second while the connection status is unavailable.
+- Windows and Linux: a connected but idle VPN uses about 40% less CPU (Linux test namespace: 65 instead of 112 ms
+  per minute across the app and its core processes). The core passes its traffic counters on only when they change,
+  or every 10 s, instead of every second through each process; it reads its heap size without pausing the program;
+  and the Linux network check reads link state without a thread handoff.
 - Android: the 2-second status refresh no longer reloads every settings title, and the screen's clock stops while
   the app is in the background. Idle CPU in the minute after heavy traffic drops by about a fifth (1020 vs 1260 ms
   per minute on the test phone); settled idle is unchanged.

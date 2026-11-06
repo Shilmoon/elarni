@@ -213,26 +213,28 @@ func serve(input io.Reader, output io.Writer, invoke func(string) response, stop
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var gate metricsGate
 	for {
 		select {
 		case <-closed:
 			return 0
-		case <-ticker.C:
+		case now := <-ticker.C:
 			if result.run && !running() {
 				return 1
 			}
 			var events []any
+			logs := logEvent(&logCursor)
 			if result.run && options.Payload.StreamMetrics {
 				metrics, err := platformMetrics()
 				if err != nil {
 					metrics, err = xray.GetRuntimeMetrics()
 				}
-				if err == nil {
+				if err == nil && gate.due(metrics, logs != nil, now) {
 					events = append(events, map[string]any{"event": "metrics", "data": metrics})
 				}
 			}
-			if event := logEvent(&logCursor); event != nil {
-				events = append(events, event)
+			if logs != nil {
+				events = append(events, logs)
 			}
 			for _, event := range events {
 				go func() { written <- json.NewEncoder(output).Encode(event) }()
@@ -255,6 +257,7 @@ func serveVPNSession(requests <-chan string, closed <-chan struct{}, output io.W
 	active := true
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var gate metricsGate
 	write := func(value any) bool {
 		done := make(chan error, 1)
 		go func() { done <- json.NewEncoder(output).Encode(value) }()
@@ -301,23 +304,48 @@ func serveVPNSession(requests <-chan string, closed <-chan struct{}, output io.W
 				}
 				active = result.run
 				streamMetrics = request.Payload.StreamMetrics
+				gate = metricsGate{} // a new tunnel reports at once
 			case <-closed:
 				return 0
 			}
-		case <-ticker.C:
+		case now := <-ticker.C:
 			if !running() {
 				return 1
 			}
+			logs := logEvent(&logCursor)
 			if active && streamMetrics {
-				if metrics, err := platformMetrics(); err == nil && !write(map[string]any{"event": "metrics", "data": metrics}) {
+				if metrics, err := platformMetrics(); err == nil && gate.due(metrics, logs != nil, now) &&
+					!write(map[string]any{"event": "metrics", "data": metrics}) {
 					return 1
 				}
 			}
-			if event := logEvent(&logCursor); active && event != nil && !write(event) {
+			if active && logs != nil && !write(logs) {
 				return 1
 			}
 		}
 	}
+}
+
+// metricsHeartbeat is how long an unchanged metrics frame is held back. The desktop app counts metrics older
+// than 25 s as unavailable (runtimeMetrics in lib/desktop_proxy_commands.dart), so that bound must stay above
+// two heartbeats: the worker's gate and the session's gate each add up to one.
+const metricsHeartbeat = 10 * time.Second
+
+// metricsGate passes a frame when traffic or sessions changed, logs came, or a heartbeat passed. An idle tunnel then
+// wakes the supervisor, the session and the app every 10 s instead of every second; heap sizes ride along.
+type metricsGate struct {
+	last xray.RuntimeMetrics
+	at   time.Time
+	sent bool
+}
+
+func (gate *metricsGate) due(metrics xray.RuntimeMetrics, logs bool, now time.Time) bool {
+	metrics.HeapAllocBytes, metrics.HeapSysBytes = 0, 0
+	if gate.sent && !logs && metrics == gate.last && now.Sub(gate.at) < metricsHeartbeat {
+		return false
+	}
+	gate.last, gate.at, gate.sent = metrics, now, true
+	return true
 }
 
 // logEvent carries the lines recorded after the cursor and moves it past them.

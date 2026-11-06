@@ -814,7 +814,9 @@ extension _ProxyCommands on DesktopProxy {
     'metricsAvailable':
         _state == 'connected' &&
         _metricsAt != null &&
-        DateTime.now().difference(_metricsAt!).inSeconds < 5,
+        // The core holds back unchanged metrics for up to 10 s at each of its two
+        // relays (metricsHeartbeat in Vendor/libXray/cmd/elarni-core/main.go).
+        DateTime.now().difference(_metricsAt!).inSeconds < 25,
     'connectedSince': _state == 'connected'
         ? _connectedAt?.millisecondsSinceEpoch
         : null,
