@@ -1487,7 +1487,7 @@ final class DesktopCatalog {
 
   // Each list refreshes on its own: a failed one keeps its last download, and
   // the route records the first error and retries on the shared schedule.
-  Future<void> refreshManaged(String id) async {
+  Future<void> refreshManaged(String id, {String? proxy}) async {
     final item = route(id), profile = catalogMap(item['profile']);
     final sources = catalogList(profile['ManagedSources']);
     final previous = catalogMap(item['lists'] ?? {});
@@ -1499,7 +1499,10 @@ final class DesktopCatalog {
     String? error;
     for (final source in sources) {
       try {
-        final feed = await native('fetchSubscription', {'url': source['url']});
+        final feed = await native('fetchSubscription', {
+          'url': source['url'],
+          if (proxy != null) 'proxy': proxy,
+        });
         if (feed['warning'] != null) throw desktopError('approval_required');
         lists[source['id']! as String] = domain('parseManagedDomains', {
           'text': feed['body'],

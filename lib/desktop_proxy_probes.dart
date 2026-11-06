@@ -141,20 +141,7 @@ extension _ProxyProbes on DesktopProxy {
             catalog.settings.perAppMode != 'proxyOnly') {
           payload['packetPath'] = true;
         } else if (active) {
-          final credentials = catalog.settings.inboundAuthEnabled
-              ? catalogMap(catalog.data['inboundCredentials'] ?? {})
-              : catalog.settings.xrayTunEnabled
-              ? _vpnLogin
-              : null;
-          final userInfo = credentials != null
-              ? '${Uri.encodeComponent(credentials['username']! as String)}:${Uri.encodeComponent(credentials['password']! as String)}'
-              : '';
-          payload['proxy'] = Uri(
-            scheme: 'socks5',
-            host: '127.0.0.1',
-            port: catalog.settings.socksPort,
-            userInfo: userInfo,
-          ).toString();
+          payload['proxy'] = _listenerProxy(catalog);
           payload['configJSON'] = jsonEncode({
             'inbounds': [],
             'outbounds': [

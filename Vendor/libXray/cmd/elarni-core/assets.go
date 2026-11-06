@@ -29,6 +29,8 @@ type assetRequest struct {
 	Reduce   bool     `json:"reduce"`
 	Refresh  bool     `json:"refresh"`
 	File     string   `json:"file"`
+	// The running VPN's SOCKS listener, which downloads then resolve and travel through.
+	Proxy string `json:"proxy"`
 }
 
 // assetValidators are the ETag and Last-Modified a server sent with a stored original.
@@ -360,19 +362,21 @@ func installAssets(assets map[string][]byte) error {
 	return nil
 }
 
-func downloadAsset(url string, stored assetValidators, destination string) (bool, assetValidators, error) {
-	result, err := share.FetchResourceToFile(context.Background(), share.SubscriptionFetchRequest{URL: url, ETag: stored.ETag, LastModified: stored.LastModified}, geo.MaxSourceBytes, 180*time.Second, destination)
-	if err != nil {
-		return false, assetValidators{}, err
+func downloadAsset(proxy string) assetFetch {
+	return func(url string, stored assetValidators, destination string) (bool, assetValidators, error) {
+		result, err := share.FetchResourceToFile(context.Background(), share.SubscriptionFetchRequest{URL: url, ETag: stored.ETag, LastModified: stored.LastModified, Proxy: proxy}, geo.MaxSourceBytes, 180*time.Second, destination)
+		if err != nil {
+			return false, assetValidators{}, err
+		}
+		value := result.(map[string]any)
+		if value["warning"] != nil {
+			return false, assetValidators{}, errors.New("approval_required")
+		}
+		if value["notModified"] == true {
+			return false, stored, nil
+		}
+		etag, _ := value["etag"].(string)
+		modified, _ := value["lastModified"].(string)
+		return true, assetValidators{ETag: etag, LastModified: modified}, nil
 	}
-	value := result.(map[string]any)
-	if value["warning"] != nil {
-		return false, assetValidators{}, errors.New("approval_required")
-	}
-	if value["notModified"] == true {
-		return false, stored, nil
-	}
-	etag, _ := value["etag"].(string)
-	modified, _ := value["lastModified"].(string)
-	return true, assetValidators{ETag: etag, LastModified: modified}, nil
 }

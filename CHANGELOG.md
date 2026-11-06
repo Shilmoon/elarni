@@ -4,6 +4,13 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Fixed
+
+- Windows and Linux: importing a subscription or routing profile while the VPN is
+  connected with FakeDNS no longer fails with "This source needs approval before it
+  can be contacted." Geofile and managed-list downloads now resolve and connect
+  through the VPN's SOCKS listener, as on Android.
+
 ## 0.4.1 - 2026-11-04
 
 ### Changed

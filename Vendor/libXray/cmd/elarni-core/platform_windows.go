@@ -129,7 +129,7 @@ func platformRequest(method string, payload json.RawMessage) (any, error, bool) 
 		if err != nil {
 			return nil, errors.New("assets_unavailable"), true
 		}
-		data, err := prepareAssets(filepath.Join(root, "Elarni", "assets"), request, downloadAsset)
+		data, err := prepareAssets(filepath.Join(root, "Elarni", "assets"), request, downloadAsset(request.Proxy))
 		return data, err, true
 	case "acquireCatalog", "loadCatalog", "saveCatalog":
 		root, err := os.UserCacheDir()
