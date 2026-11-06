@@ -296,6 +296,15 @@ extension _ProxyProbes on DesktopProxy {
         ? hints.map(InternetAddress.new).toList()
         : literal != null
         ? [literal]
+        // The VPN answers this app's lookups, with Fake DNS addresses that lead
+        // nowhere outside it; the core asks a real resolver instead.
+        : _state == 'connected' && _catalog?.settings.xrayTunEnabled == true
+        ? [
+            for (final address
+                in (await _native('lookupHost', {'host': host}))['addresses']!
+                    as List)
+              InternetAddress(address as String),
+          ]
         : await InternetAddress.lookup(
             host,
           ).timeout(const Duration(seconds: 5));

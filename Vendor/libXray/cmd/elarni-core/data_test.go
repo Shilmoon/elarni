@@ -2,8 +2,11 @@ package main
 
 import (
 	"encoding/base64"
-	"github.com/xtls/libxray/share"
+	"net/netip"
+	"slices"
 	"testing"
+
+	"github.com/xtls/libxray/share"
 )
 
 // These generated masks previously confused the camera-oriented finder scan.
@@ -28,5 +31,16 @@ func TestGeneratedQRSubscriptionRoundTrip(t *testing.T) {
 				t.Fatalf("QR round trip = %q, %v; want %q", decoded, err, text)
 			}
 		})
+	}
+}
+
+// Server tests while connected resolve through here; see the fetcher's systemLookup.
+func TestLookupHostAnswersAddresses(t *testing.T) {
+	data, err, handled := dataRequest("lookupHost", []byte(`{"host":"localhost"}`))
+	if !handled || err != nil || !slices.Contains(data.(map[string]any)["addresses"].([]netip.Addr), netip.MustParseAddr("127.0.0.1")) {
+		t.Fatalf("lookupHost localhost = %v, %v", data, err)
+	}
+	if _, err, _ := dataRequest("lookupHost", []byte(`{"host":""}`)); err == nil || err.Error() != "invalid_request" {
+		t.Fatalf("empty host: %v", err)
 	}
 }
