@@ -953,6 +953,7 @@ pub(crate) fn compile_owned_config(
         "statsInboundUplink": true,
         "statsInboundDownlink": true
     });
+    close_with_app(&mut config);
     apply_per_app_routing(&mut config, runtime, "elarni-")?;
     serde_json::to_vec(&config).map_err(|_| CompileError::InvalidRoute)
 }
@@ -1018,6 +1019,31 @@ fn per_app_server_outbound(server: &Value) -> Result<Value, CompileError> {
     }
     normalize_client_outbound(&mut outbound)?;
     Ok(outbound)
+}
+
+/// Xray keeps a proxied connection up to `downlinkOnly` (1 s) after the app closes its side, so a burst of short
+/// connections holds hundreds of TLS sessions. Close with the app, as the mihomo clients do, unless the profile sets
+/// its own value. The cost: an app that half-closes and then waits for the reply loses it.
+pub(crate) fn close_with_app(config: &mut Value) {
+    let Some(policy) = config
+        .as_object_mut()
+        .map(|root| root.entry("policy").or_insert_with(|| json!({})))
+    else {
+        return;
+    };
+    let Some(levels) = policy
+        .as_object_mut()
+        .map(|policy| policy.entry("levels").or_insert_with(|| json!({})))
+    else {
+        return;
+    };
+    if let Some(level) = levels
+        .as_object_mut()
+        .map(|levels| levels.entry("0").or_insert_with(|| json!({})))
+        .and_then(Value::as_object_mut)
+    {
+        level.entry("downlinkOnly").or_insert(json!(0));
+    }
 }
 
 /// `prefix` names this config's own direct and block outbounds.

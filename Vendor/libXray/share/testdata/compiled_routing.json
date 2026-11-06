@@ -110,7 +110,8 @@
     "policy": {
       "levels": {
         "0": {
-          "connIdle": 300
+          "connIdle": 300,
+          "downlinkOnly": 0
         }
       },
       "system": {
@@ -262,7 +263,8 @@
     "policy": {
       "levels": {
         "0": {
-          "connIdle": 300
+          "connIdle": 300,
+          "downlinkOnly": 0
         }
       },
       "system": {
@@ -423,7 +425,8 @@
     "policy": {
       "levels": {
         "0": {
-          "connIdle": 300
+          "connIdle": 300,
+          "downlinkOnly": 0
         }
       },
       "system": {

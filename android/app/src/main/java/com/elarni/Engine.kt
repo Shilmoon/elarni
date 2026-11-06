@@ -81,15 +81,6 @@ class Engine(private val app: ElarniApplication, private val assets: RoutingAsse
         return values
     }
     private fun mappings(config: JSONObject, endpoints: List<JSONObject>) = Native.call("profileHostMappings", obj("configJSON" to config.toString(), "hosts" to JSONArray(endpoints.map { it.getString("host") }.distinct())))
-    // Xray keeps a connection up to 1 s after the app closes its side, so a burst of short connections holds hundreds
-    // of TLS sessions (+130 MB at 600 conn/s). Close with the app, as the mihomo clients do; a profile's own value wins.
-    // The cost: an app that half-closes and then waits for a reply loses the reply.
-    private fun closeWithApp(config: JSONObject) {
-        val policy = config.optJSONObject("policy") ?: JSONObject().also { config.put("policy", it) }
-        val levels = policy.optJSONObject("levels") ?: JSONObject().also { policy.put("levels", it) }
-        val level = levels.optJSONObject("0") ?: JSONObject().also { levels.put("0", it) }
-        if (!level.has("downlinkOnly")) level.put("downlinkOnly", 0)
-    }
     fun prepare(catalog: Catalog, id: String, inboundAuth: JSONObject? = null): JSONObject {
         val config = catalog.compile(id, app, inboundAuth = inboundAuth)
         val endpoints = Native.domain("profileEndpoints", obj("config" to config)).objects("endpoints").filter { it.optBoolean("physical") }
@@ -103,7 +94,6 @@ class Engine(private val app: ElarniApplication, private val assets: RoutingAsse
         return try {
             Native.domain("prepareConfig", obj("config" to config, "resolved" to resolved, "unavailable" to unavailable,
                 "pin" to settings.getBoolean("resolveServer"), "pinHosts" to JSONArray(mappings.keys().asSequence().toList()))).getJSONObject("config")
-                .also { closeWithApp(it) }
         } catch (error: AppFailure) {
             // The profile compiled above; with servers left out, a failure means none could be reached.
             throw if (unavailable.length() > 0) AppFailure("connection_failed") else error

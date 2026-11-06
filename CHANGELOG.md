@@ -6,7 +6,7 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ### Performance
 
-- Android: a connection closes as soon as the app closes it, instead of up to a second later (Xray's default
+- A connection closes as soon as the app closes it, instead of up to a second later (Xray's default
   `downlinkOnly`). A burst of short connections no longer holds hundreds of TLS sessions: on the test phone the app
   peaked at 88 instead of 231 MB during 2000 short connections and opened 739 instead of 633 per second. An app that
   half-closes a connection and then waits for the reply loses the reply, as with the mihomo-based clients; a profile's
