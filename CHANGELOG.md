@@ -40,6 +40,11 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   TUN fixes (starting with IPv6 disabled, reusing an adapter by name), MPTCP off on listeners
   by default, and fixes for QUIC sniffing and HTTP 100-continue.
 
+### Security
+
+- The core's brotli and zstd decoders are updated (brotli 1.2.7, klauspost/compress 1.20.2): a crafted brotli stream
+  could allocate excessive memory (GO-2026-6888) and a crafted zstd frame could crash the core (GO-2026-6865).
+
 ## 0.4.1 - 2026-11-04
 
 ### Changed
