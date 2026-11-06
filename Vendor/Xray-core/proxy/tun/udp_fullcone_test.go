@@ -89,3 +89,48 @@ func TestPacketQueueDropsDrainedStorage(t *testing.T) {
 		t.Fatalf("drained queue still holds %d slots", cap(q.items))
 	}
 }
+
+// A flow's reader takes every queued datagram at once, so the outbound can write them in one go.
+func TestPacketQueuePopAllTakesTheBacklogInOrder(t *testing.T) {
+	q := newPacketQueue(udpQueueLimit)
+	for i := 0; i < udpQueueLimit; i++ {
+		b := buf.New()
+		b.WriteByte(byte(i))
+		q.push(b)
+	}
+	mb, ok := q.popAll()
+	if !ok || len(mb) != udpQueueLimit {
+		t.Fatalf("popAll: %d packets, %v", len(mb), ok)
+	}
+	for i, b := range mb {
+		if b.Byte(0) != byte(i) {
+			t.Fatalf("packet %d out of order: %d", i, b.Byte(0))
+		}
+	}
+	buf.ReleaseMulti(mb)
+	if !q.push(&buf.Buffer{}) {
+		t.Fatal("a drained queue rejected a packet")
+	}
+	if mb, ok := q.popAll(); !ok || len(mb) != 1 {
+		t.Fatalf("popAll after refill: %d packets, %v", len(mb), ok)
+	}
+	done := make(chan bool)
+	go func() {
+		_, ok := q.popAll()
+		done <- ok
+	}()
+	select {
+	case <-done:
+		t.Fatal("popAll on an empty queue did not wait")
+	case <-time.After(50 * time.Millisecond):
+	}
+	q.close()
+	select {
+	case ok := <-done:
+		if ok {
+			t.Fatal("popAll returned packets after close")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("close did not wake popAll")
+	}
+}

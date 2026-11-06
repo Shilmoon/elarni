@@ -378,6 +378,25 @@ func read(t *testing.T, conn net.Conn, expected string) {
 	buf.ReleaseMulti(mb)
 }
 
+// readDatagrams reads until it has len(expected) datagrams, each its own buffer, and compares them in order.
+func readDatagrams(t *testing.T, conn net.Conn, expected ...string) {
+	t.Helper()
+	var got []string
+	for len(got) < len(expected) {
+		mb, err := conn.(buf.Reader).ReadMultiBuffer()
+		if err != nil {
+			t.Fatal("read after ", got, ": ", err)
+		}
+		for _, b := range mb {
+			got = append(got, b.String())
+		}
+		buf.ReleaseMulti(mb)
+	}
+	if strings.Join(got, "|") != strings.Join(expected, "|") {
+		t.Fatal("read ", got, ", expected ", expected)
+	}
+}
+
 // The options of the SYN decide what the answer has, and both ends close the connection in turn.
 func TestTCPHandshakeAndClose(t *testing.T) {
 	for _, test := range []struct {
@@ -2113,9 +2132,7 @@ func TestChecksumsAndLoopback(t *testing.T) {
 		setIPLength(padded[:len(padded)-4-3-udpHeaderSize], len(padded))
 		l.in <- padded
 		a := take(t, conns)
-		for _, expected := range test.read {
-			read(t, a.conn, expected)
-		}
+		readDatagrams(t, a.conn, test.read...)
 
 		proto, request := byte(protoICMPv4), byte(8)
 		if p.src.Addr().Is6() {

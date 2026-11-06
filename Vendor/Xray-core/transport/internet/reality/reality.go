@@ -26,6 +26,7 @@ import (
 
 	utls "github.com/refraction-networking/utls"
 	"github.com/xtls/reality"
+	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/crypto"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/net"
@@ -86,6 +87,15 @@ func (c *UConn) Close() error {
 		return c.NetConn().Close()
 	}
 	return c.UConn.Close()
+}
+
+// WriteMultiBuffer packs small buffers (XUDP frames, one per datagram) into full ones first, as tls.Conn does:
+// each Write is a TLS record and a syscall.
+func (c *UConn) WriteMultiBuffer(mb buf.MultiBuffer) error {
+	mb = buf.Compact(mb)
+	mb, err := buf.WriteMultiBuffer(c, mb)
+	buf.ReleaseMulti(mb)
+	return err
 }
 
 func (c *UConn) HandshakeAddress() net.Address {

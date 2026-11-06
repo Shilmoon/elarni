@@ -10,6 +10,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   read the CPU features in a release build, so TLS ran on software AES. On a Snapdragon 8 Gen 3 test phone one
   download now runs at 136 instead of 37 MB/s and eight at 907 instead of 201, at a third to a seventh of the CPU
   per MB; uploads and new connections per second gain too.
+- UDP in VPN (TUN) mode: datagrams waiting on a flow go to the server together, packed into
+  full TLS records, instead of one record and one write each. On the test phone UDP bulk
+  rises from 4.5 to 10.7 MB/s at half the CPU per MB; on desktops by 8-12%.
 - The VPN (TUN) mode on Windows, Linux and Android runs on Xray's own TCP/IP stack instead
   of gVisor. One connection downloads up to 2.5x faster (VLESS: 2.75 vs 1.08 GB/s on the
   test host) at less than half the CPU per MB, now level with upstream Xray on every protocol.

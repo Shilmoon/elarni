@@ -165,13 +165,14 @@ func (c *udpConn) enqueue(b *buf.Buffer) (queued, retired bool) {
 	return false, false
 }
 
+// ReadMultiBuffer takes the whole backlog: the outbound then frames and encrypts it in one write.
 func (c *udpConn) ReadMultiBuffer() (buf.MultiBuffer, error) {
-	b, ok := c.queue.pop()
+	mb, ok := c.queue.popAll()
 	if !ok {
 		return nil, io.EOF
 	}
 	c.touch()
-	return buf.MultiBuffer{b}, nil
+	return mb, nil
 }
 
 // Read packets from the connection
@@ -296,6 +297,25 @@ func (q *packetQueue) pop() (*buf.Buffer, bool) {
 			}
 			q.mu.Unlock()
 			return b, true
+		}
+		if q.closed {
+			q.mu.Unlock()
+			return nil, false
+		}
+		q.mu.Unlock()
+		<-q.notify
+	}
+}
+
+// popAll waits like pop, then takes every queued packet in order.
+func (q *packetQueue) popAll() (buf.MultiBuffer, bool) {
+	for {
+		q.mu.Lock()
+		if len(q.items) > 0 {
+			mb := buf.MultiBuffer(q.items)
+			q.items = nil
+			q.mu.Unlock()
+			return mb, true
 		}
 		if q.closed {
 			q.mu.Unlock()

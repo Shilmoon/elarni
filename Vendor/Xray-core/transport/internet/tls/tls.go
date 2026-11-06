@@ -104,6 +104,14 @@ func (c *UConn) Close() error {
 	return c.Conn.Close()
 }
 
+// WriteMultiBuffer packs small buffers into full ones first, as Conn does: each Write is a TLS record and a syscall.
+func (c *UConn) WriteMultiBuffer(mb buf.MultiBuffer) error {
+	mb = buf.Compact(mb)
+	mb, err := buf.WriteMultiBuffer(c, mb)
+	buf.ReleaseMulti(mb)
+	return err
+}
+
 func (c *UConn) HandshakeContextServerName(ctx context.Context) string {
 	if err := c.HandshakeContext(ctx); err != nil {
 		return ""
