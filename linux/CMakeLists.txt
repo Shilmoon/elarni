@@ -55,6 +55,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
 pkg_check_modules(INDICATOR REQUIRED IMPORTED_TARGET ayatana-appindicator3-0.1)
 pkg_check_modules(GSTREAMER REQUIRED IMPORTED_TARGET gstreamer-app-1.0)
+pkg_check_modules(EPOXY REQUIRED IMPORTED_TARGET epoxy)
 
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")

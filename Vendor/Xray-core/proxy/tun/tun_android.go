@@ -3,29 +3,33 @@
 package tun
 
 import (
+	"context"
 	"net"
+	"strconv"
 	"sync"
 
 	"github.com/xtls/xray-core/common/errors"
+	"github.com/xtls/xray-core/common/platform"
 	"golang.org/x/sys/unix"
-	"gvisor.dev/gvisor/pkg/tcpip/link/fdbased"
-	"gvisor.dev/gvisor/pkg/tcpip/stack"
 )
 
 type AndroidTun struct {
-	tunFd     int
+	*fdTun
 	options   *Config
 	closeOnce sync.Once
 	closeErr  error
 }
+
+// DefaultTun implements Tun
+var _ Tun = (*AndroidTun)(nil)
 
 var androidTunInput = struct {
 	sync.Mutex
 	fd int
 }{fd: -1}
 
-// SetAndroidTunFD borrows a VpnService descriptor and duplicates it immediately.
-// NewTun consumes the duplicate once. -1 discards an unconsumed duplicate.
+// SetAndroidTunFD borrows a VpnService descriptor and duplicates it immediately (Elarni), so the service may close
+// its own copy at any time. NewTun consumes the duplicate once. -1 discards an unconsumed duplicate.
 func SetAndroidTunFD(fd int) error {
 	androidTunInput.Lock()
 	defer androidTunInput.Unlock()
@@ -47,26 +51,42 @@ func SetAndroidTunFD(fd int) error {
 	return nil
 }
 
-// DefaultTun implements Tun
-var _ Tun = (*AndroidTun)(nil)
-
 // NewTun builds new tun interface handler
 func NewTun(options *Config) (Tun, error) {
 	androidTunInput.Lock()
-	fd := androidTunInput.fd
+	owned := androidTunInput.fd
 	androidTunInput.fd = -1
 	androidTunInput.Unlock()
-	if fd < 0 {
+	if owned >= 0 {
+		if err := unix.SetNonblock(owned, true); err != nil {
+			_ = unix.Close(owned)
+			return nil, err
+		}
+		return &AndroidTun{fdTun: newFdTun(owned, 0), options: options}, nil
+	}
+
+	// Without a descriptor set or named, fd 0 would be taken for the TUN (Elarni).
+	value := platform.NewEnvFlag(platform.TunFdKey).GetValue(func() string { return "" })
+	if value == "" {
 		return nil, errors.New("Android TUN descriptor is missing")
 	}
-	err := unix.SetNonblock(fd, true)
+	fd, err := strconv.Atoi(value)
+	errors.LogInfo(context.Background(), "read Android Tun Fd ", fd, err)
+
+	err = unix.SetNonblock(fd, true)
 	if err != nil {
 		_ = unix.Close(fd)
 		return nil, err
 	}
 
+	// the descriptor stays with the application, Close ends the reading of a duplicate
+	fd, err = unix.FcntlInt(uintptr(fd), unix.F_DUPFD_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+
 	return &AndroidTun{
-		tunFd:   fd,
+		fdTun:   newFdTun(fd, 0),
 		options: options,
 	}, nil
 }
@@ -75,8 +95,9 @@ func (t *AndroidTun) Start() error {
 	return nil
 }
 
+// Close closes the descriptor once: a second Close must not touch a number the system has handed out again.
 func (t *AndroidTun) Close() error {
-	t.closeOnce.Do(func() { t.closeErr = unix.Close(t.tunFd) })
+	t.closeOnce.Do(func() { t.closeErr = t.closeFile() })
 	return t.closeErr
 }
 
@@ -85,7 +106,7 @@ func (t *AndroidTun) Name() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err = unix.IoctlIfreq(t.tunFd, unix.TUNGETIFF, ifr); err != nil {
+	if err = unix.IoctlIfreq(t.fd, unix.TUNGETIFF, ifr); err != nil {
 		return "", err
 	}
 	return ifr.Name(), nil
@@ -101,18 +122,6 @@ func (t *AndroidTun) Index() (int, error) {
 		return 0, err
 	}
 	return iface.Index, nil
-}
-
-func (t *AndroidTun) newEndpoint() (stack.LinkEndpoint, error) {
-	endpoint, err := fdbased.New(&fdbased.Options{
-		FDs:               []int{t.tunFd},
-		MTU:               t.options.MTU,
-		RXChecksumOffload: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &stopEventfdEndpoint{LinkEndpoint: endpoint}, nil
 }
 
 func setinterface(network, address string, fd uintptr, iface *net.Interface) error {

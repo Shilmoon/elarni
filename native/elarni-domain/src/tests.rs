@@ -1050,6 +1050,7 @@ fn runtime_listener_authentication_and_idle_limits_are_enforced() {
     }
     assert_eq!(tagged(&config, "inbounds", "elarni-http")["port"], 18080);
     assert_eq!(config["policy"]["levels"]["0"]["connIdle"], 600);
+    assert_eq!(config["policy"]["levels"]["0"]["downlinkOnly"], 0);
     request.runtime.http_port = Some(request.socks_port);
     assert_eq!(
         compile_xray_config(&request).unwrap_err(),

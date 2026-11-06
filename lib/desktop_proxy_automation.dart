@@ -145,10 +145,12 @@ extension _ProxyAutomation on DesktopProxy {
       if (Platform.isLinux) {
         // Addresses survive an unplugged/admin-down link. Linux considers
         // UP and UNKNOWN usable; the latter supports virtual/older drivers.
+        // Sync: sysfs answers from memory; an async read would hop through
+        // the IO thread pool for every interface, every second.
         try {
-          final state = (await File(
+          final state = File(
             '/sys/class/net/${interface.name}/operstate',
-          ).readAsString()).trim();
+          ).readAsStringSync().trim();
           if (state != 'up' && state != 'unknown') continue;
         } on FileSystemException {
           continue; // The interface may disappear during enumeration.

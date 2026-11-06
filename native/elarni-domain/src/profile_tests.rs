@@ -1078,17 +1078,20 @@ fn provider_policy_keeps_the_user_idle_timeout() {
     for (policy, level) in [
         (
             json!({"levels": {"0": {"handshake": 4, "connIdle": 30}, "8": {"connIdle": 5}}}),
-            json!({"handshake": 4, "connIdle": 600}),
+            json!({"handshake": 4, "connIdle": 600, "downlinkOnly": 0}),
         ),
         (
             json!({"levels": {"8": {"connIdle": 5}}}),
-            json!({"connIdle": 600}),
+            json!({"connIdle": 600, "downlinkOnly": 0}),
         ),
         (
             json!({"system": {"statsOutboundUplink": true}}),
-            json!({"connIdle": 600}),
+            json!({"connIdle": 600, "downlinkOnly": 0}),
         ),
-        (json!({"levels": null}), json!({"connIdle": 600})),
+        (
+            json!({"levels": null}),
+            json!({"connIdle": 600, "downlinkOnly": 0}),
+        ),
     ] {
         let result = compile_profile(
             json!({"outbounds": [node("server", "one.example.com")], "policy": policy.clone()}),
@@ -1106,6 +1109,39 @@ fn provider_policy_keeps_the_user_idle_timeout() {
             assert_eq!(config["policy"]["levels"]["8"], *other, "{policy}");
         }
     }
+}
+
+// A connection closes with the app (Xray keeps it 1 s by default); a profile's own downlinkOnly wins.
+#[test]
+fn connections_close_with_the_app_unless_the_profile_says_otherwise() {
+    let compile = |profile: Value| -> Value {
+        let result = compile_profile(
+            profile,
+            None,
+            1080,
+            PacketBackend::XrayTun,
+            1500,
+            &RuntimeOptions::default(),
+            None,
+        )
+        .unwrap();
+        serde_json::from_slice(&result.config).unwrap()
+    };
+    let plain = compile(json!({"outbounds": [node("elarni-proxy", "one.example.com")]}));
+    assert_eq!(plain["policy"]["levels"]["0"]["downlinkOnly"], 0);
+    let provider = compile(
+        json!({"outbounds": [node("elarni-proxy", "one.example.com")],
+        "policy": {"levels": {"0": {"handshake": 6}}}}),
+    );
+    assert_eq!(
+        provider["policy"]["levels"]["0"],
+        json!({"handshake": 6, "connIdle": RuntimeOptions::default().connection_idle_seconds, "downlinkOnly": 0})
+    );
+    let own = compile(
+        json!({"outbounds": [node("elarni-proxy", "one.example.com")],
+        "policy": {"levels": {"0": {"downlinkOnly": 5}}}}),
+    );
+    assert_eq!(own["policy"]["levels"]["0"]["downlinkOnly"], 5);
 }
 
 #[test]

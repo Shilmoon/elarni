@@ -856,6 +856,7 @@ func linuxWorker(ctx context.Context, input io.Reader, output io.Writer) (code i
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var gate metricsGate
 	for {
 		select {
 		case <-ctx.Done():
@@ -864,7 +865,7 @@ func linuxWorker(ctx context.Context, input io.Reader, output io.Writer) (code i
 			return 0
 		case <-commands:
 			return 0
-		case <-ticker.C:
+		case now := <-ticker.C:
 			if !xray.GetXrayState() {
 				return 1
 			}
@@ -873,14 +874,14 @@ func linuxWorker(ctx context.Context, input io.Reader, output io.Writer) (code i
 				notify()
 			}
 			var reply linuxReply
-			if command.Request.StreamMetrics {
-				if metrics, err := xray.GetRuntimeMetrics(); err == nil {
-					reply.Metrics = &metrics
-				}
-			}
 			if logs := xray.ReadLogs(logCursor).Entries; len(logs) > 0 {
 				logCursor = logs[len(logs)-1].Seq
 				reply.Logs = logs
+			}
+			if command.Request.StreamMetrics {
+				if metrics, err := xray.GetRuntimeMetrics(); err == nil && gate.due(metrics, reply.Logs != nil, now) {
+					reply.Metrics = &metrics
+				}
 			}
 			if (reply.Metrics != nil || reply.Logs != nil) && linuxWriteFrame(output, reply) != nil {
 				return 1

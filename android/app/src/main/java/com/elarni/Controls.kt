@@ -123,8 +123,11 @@ class RemoteControl : BroadcastReceiver() {
 class ConnectionWidget : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
         val result = goAsync(); val app = context.applicationContext as ElarniApplication
+        Widgets.present = true
         app.repository.scope.launch { try { app.repository.awaitReady(); Widgets.refresh(app, app.repository.state.value) } finally { result.finish() } }
     }
+    override fun onDeleted(context: Context, ids: IntArray) { Widgets.present = null }
+    override fun onDisabled(context: Context) { Widgets.present = false }
 }
 
 /** The widget's button; the widget opens the app itself when it knows connecting needs it. */
@@ -143,8 +146,11 @@ object Widgets {
     private var sample: LongArray? = null
     private var speed: String? = null
     private fun ids(context: Context) = AppWidgetManager.getInstance(context).getAppWidgetIds(ComponentName(context, ConnectionWidget::class.java))
-    /** Whether a widget may be in view, so reading the traffic counters is worth it. */
-    fun shown(context: Context) = context.getSystemService(PowerManager::class.java).isInteractive && ids(context).isNotEmpty()
+    /** Whether a widget exists; the ids are a system call, so the provider's callbacks keep this instead (null: read again). */
+    @Volatile var present: Boolean? = null
+    /** Whether a widget may be in view, so reading the traffic counters is worth it (the 2 s tick asks). */
+    fun shown(context: Context) = (present ?: ids(context).isNotEmpty().also { present = it }) &&
+        context.getSystemService(PowerManager::class.java).isInteractive
     @Synchronized fun traffic(app: ElarniApplication, metrics: JSONObject, state: AppState) {
         val now = longArrayOf(SystemClock.elapsedRealtime(), metrics.optLong("downlinkBytes"), metrics.optLong("uplinkBytes"))
         sample?.let { last ->

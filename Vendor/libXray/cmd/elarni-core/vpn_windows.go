@@ -863,6 +863,7 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 	sleep := newResumeClock(windowsSuspended)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var gate metricsGate
 	for {
 		select {
 		case <-closed:
@@ -872,7 +873,7 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 				return 1, true, true
 			}
 			return 0, true, false
-		case <-ticker.C:
+		case now := <-ticker.C:
 			if state, err := windows.WaitForSingleObject(parent, 0); err != nil || state != uint32(windows.WAIT_TIMEOUT) {
 				return 1, true, true
 			}
@@ -887,14 +888,14 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 				physicalNetwork.resume()
 			}
 			var reply vpnReply
-			if request.StreamMetrics {
-				if metrics, err := xray.GetRuntimeMetrics(); err == nil {
-					reply.Metrics = &metrics
-				}
-			}
 			if logs := xray.ReadLogs(logCursor).Entries; len(logs) > 0 {
 				logCursor = logs[len(logs)-1].Seq
 				reply.Logs = logs
+			}
+			if request.StreamMetrics {
+				if metrics, err := xray.GetRuntimeMetrics(); err == nil && gate.due(metrics, reply.Logs != nil, now) {
+					reply.Metrics = &metrics
+				}
 			}
 			if (reply.Metrics != nil || reply.Logs != nil) && writeFrame(pipe, reply) != nil {
 				return 1, true, true

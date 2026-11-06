@@ -63,7 +63,7 @@ class ElarniApplication : Application() {
         val notifications = getSystemService(NotificationManager::class.java)
         notifications.createNotificationChannel(NotificationChannel(CONNECTION_CHANNEL, tr(R.string.vpn_connection), NotificationManager.IMPORTANCE_LOW))
         notifications.createNotificationChannel(NotificationChannel(REVIEW_CHANNEL, tr(R.string.subscription_updates), NotificationManager.IMPORTANCE_DEFAULT))
-        LibXray.setAndroidSocketController(socketController)
+        NativeBindings.startCore { LibXray.setAndroidSocketController(socketController) }  // the first Go call
         // A single callback delegates to the current owner. Shared-UID apps necessarily share a rule.
         LibXray.registerProcessFinder(ProcessFinder { network, source, sourcePort, destination, destinationPort ->
             if (vpnOwner == null || sourcePort !in 1..65535 || destinationPort !in 1..65535) -1L else try {

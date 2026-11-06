@@ -8,6 +8,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 - Imported profiles can no longer read the core's environment through a field name
   that only matches under Unicode case folding, such as `addreſs`.
+- The core's brotli and zstd decoders are updated (brotli 1.2.7, klauspost/compress 1.20.2): a crafted brotli stream
+  could allocate excessive memory (GO-2026-6888) and a crafted zstd frame could crash the core (GO-2026-6865).
 
 ### Added
 
@@ -41,6 +43,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   the watchdog also runs while the phone dozes.
 - Android: the background refresh job runs hourly, and only when a subscription, route
   list or expiry reminder is due. Server checks run only while traffic flows.
+- The bundled Xray core is upstream main a52db8f6 (v26.10.31 and later), which adds Windows
+  TUN fixes (starting with IPv6 disabled, reusing an adapter by name), MPTCP off on listeners
+  by default, and fixes for QUIC sniffing and HTTP 100-continue.
 
 ### Fixed
 
@@ -127,6 +132,33 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - Linux: per-app routing looks up the owners of a burst of new connections in one
   pass (64 connections: 9 ms instead of 36 ms).
 - Windows: an idle direct UDP flow no longer holds a 64 KiB read buffer.
+- A connection closes as soon as the app closes it, instead of up to a second later (Xray's default `downlinkOnly`). A
+  burst of short connections no longer holds hundreds of TLS sessions: on the test phone the app peaked at 88 instead
+  of 231 MB during 2000 short connections and opened 739 instead of 633 per second; the desktop daemon peaked at 82
+  instead of 225 MB on Linux and 102 instead of 265 MB on Windows. An app that half-closes a connection and then waits
+  for the reply loses the reply, as with the mihomo-based clients; a profile's own `policy` value still wins.
+- Android: the core now uses the CPU's AES and carry-less multiply instructions. Go, loaded as a library, could not
+  read the CPU features in a release build, so TLS ran on software AES. On a Snapdragon 8 Gen 3 test phone one
+  download now runs at 136 instead of 37 MB/s and eight at 907 instead of 201, at a third to a seventh of the CPU
+  per MB; uploads and new connections per second gain too.
+- UDP in VPN (TUN) mode: datagrams waiting on a flow go to the server together, packed into
+  full TLS records, instead of one record and one write each. On the test phone UDP bulk
+  rises from 4.5 to 10.7 MB/s at half the CPU per MB; on desktops by 8-12%.
+- The VPN (TUN) mode on Windows, Linux and Android runs on Xray's own TCP/IP stack instead
+  of gVisor. One connection downloads up to 2.5x faster (VLESS: 2.75 vs 1.08 GB/s on the
+  test host) at less than half the CPU per MB, now level with upstream Xray on every protocol.
+- Linux: without a GPU (virtual machines, remote desktops), the window draws with Flutter's own
+  CPU renderer instead of Mesa's software OpenGL: 80 MB less memory and a quarter of the CPU
+  while it repaints. Set `FLUTTER_LINUX_RENDERER=opengl` to keep OpenGL.
+- The window no longer redraws every second while the connection status is unavailable.
+- Windows and Linux: a connected but idle VPN uses about 40% less CPU (Linux test namespace: 65 instead of 112 ms
+  per minute across the app and its core processes). The core passes its traffic counters on only when they change,
+  or every 10 s, instead of every second through each process; it reads its heap size without pausing the program;
+  and the Linux network check reads link state without a thread handoff.
+- Android: the 2-second status refresh no longer asks the system for home screen widgets each time.
+- Android: the 2-second status refresh no longer reloads every settings title, and the screen's clock stops while
+  the app is in the background. Idle CPU in the minute after heavy traffic drops by about a fifth (1020 vs 1260 ms
+  per minute on the test phone); settled idle is unchanged.
 
 ## 0.4.1 - 2026-11-04
 

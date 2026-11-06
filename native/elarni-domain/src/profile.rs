@@ -545,6 +545,7 @@ pub fn compile_profile(
             inbound["sniffing"] = fake_dns_sniffing();
         }
     }
+    crate::compiler::close_with_app(&mut owned);
     crate::compiler::apply_per_app_routing(&mut owned, runtime, &prefix)?;
     let endpoints = profile_endpoints(&owned)?;
     Ok(CompiledProfile {

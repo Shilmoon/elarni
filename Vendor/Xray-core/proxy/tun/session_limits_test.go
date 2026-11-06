@@ -429,7 +429,7 @@ func TestFullUDPTableReplacesAnsweredDNSFlow(t *testing.T) {
 // Admission retires an answered DNS flow while its session is still ending (Elarni): a query from the same
 // port in that window must start a new flow instead of being queued to the old one and lost.
 func TestRetiredDNSFlowPassesLaterQueriesToANewFlow(t *testing.T) {
-	c := &udpConn{}
+	c := &udpConn{queue: newPacketQueue(1)}
 	if queued, _ := c.enqueue(buf.New()); !queued || c.retireAnswered() {
 		t.Fatal("retired a flow with an unanswered query")
 	}
@@ -538,4 +538,20 @@ func (d *streamDispatcher) DispatchLink(ctx context.Context, _ net.Destination, 
 func isTimeout(err error) bool {
 	var ne stdnet.Error
 	return errors.As(err, &ne) && ne.Timeout()
+}
+
+// The stack hands its TCP connections' data over in buffers; the admission wrapper must keep that path, or
+// every byte is copied through Read and Write (Elarni: the gVisor-era wrapper hid it).
+func TestTrackedConnectionKeepsBufferMethods(t *testing.T) {
+	wrapped, _ := trackConn(&tcpConn{})
+	if _, ok := wrapped.(buf.Reader); !ok {
+		t.Fatal("tracked stack connection lost ReadMultiBuffer")
+	}
+	if _, ok := wrapped.(buf.Writer); !ok {
+		t.Fatal("tracked stack connection lost WriteMultiBuffer")
+	}
+	plain, _ := trackConn(&stdnet.TCPConn{})
+	if _, ok := plain.(buf.Reader); ok {
+		t.Fatal("a plain connection must not claim buffer methods it lacks")
+	}
 }

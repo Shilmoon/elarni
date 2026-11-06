@@ -1280,7 +1280,11 @@ extension _HomeController on _ElarniHomeState {
       final liveness = state == TunnelState.connected
           ? widget.tunnelControl.liveness
           : null;
-      if (_state != state || !_stateAvailable || _liveness != liveness)
+      final available = supportStates.contains(value) && value != 'unavailable';
+      // The poll runs every second; an unchanged unavailable state must not repaint.
+      if (_state != state ||
+          _stateAvailable != available ||
+          _liveness != liveness)
         _set(() {
           if (liveness == 'noTraffic' && _liveness != 'noTraffic')
             _noTrafficAt = DateTime.now();
@@ -1305,8 +1309,7 @@ extension _HomeController on _ElarniHomeState {
             _healthAt = null;
           }
           _state = state;
-          _stateAvailable =
-              supportStates.contains(value) && value != 'unavailable';
+          _stateAvailable = available;
           if (_stateAvailable) _lastKnownState = state;
         });
     } on Object {

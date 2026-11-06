@@ -13,12 +13,13 @@ import (
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/transport"
+	"gvisor.dev/gvisor/pkg/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/link/channel"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
-	"gvisor.dev/gvisor/pkg/tcpip/stack"
+	gstack "gvisor.dev/gvisor/pkg/tcpip/stack"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 	"gvisor.dev/gvisor/pkg/waiter"
 )
@@ -34,11 +35,16 @@ func dialThroughTun(t testing.TB, handler *Handler) func(port uint16) (*gonet.TC
 }
 
 // connectThroughTun is dialThroughTun that also returns the app's endpoint, to reset the connection.
+// The app is a gVisor stack on the other side of the link.
 func connectThroughTun(t testing.TB, handler *Handler) func(port uint16) (*gonet.TCPConn, tcpip.Endpoint, error) {
-	tunSide, appSide := channel.New(256, 1500, ""), channel.New(256, 1500, "")
-	device := &udpTestTun{endpoint: tunSide}
+	device, appSide := newLink(), channel.New(256, 1500, "")
+	device.out = func(packet []byte) {
+		pkt := gstack.NewPacketBuffer(gstack.PacketBufferOptions{Payload: buffer.MakeWithData(packet)})
+		appSide.InjectInbound(ipv4.ProtocolNumber, pkt)
+		pkt.DecRef()
+	}
 	handler.ctx, handler.config, handler.tun = context.Background(), &Config{}, device
-	network, err := NewStack(handler.ctx, StackOptions{Tun: device}, handler)
+	network, err := NewStack(handler.ctx, StackOptions{Tun: device, MTU: 1500}, handler)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,18 +52,31 @@ func connectThroughTun(t testing.TB, handler *Handler) func(port uint16) (*gonet
 		t.Fatal(err)
 	}
 	handler.stack = network
-	app := stack.New(stack.Options{NetworkProtocols: []stack.NetworkProtocolFactory{ipv4.NewProtocol}, TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol}})
+	app := gstack.New(gstack.Options{NetworkProtocols: []gstack.NetworkProtocolFactory{ipv4.NewProtocol}, TransportProtocols: []gstack.TransportProtocolFactory{tcp.NewProtocol}})
 	if err := app.CreateNIC(1, appSide); err != nil {
 		t.Fatal(err)
 	}
 	local := tcpip.AddrFrom4([4]byte{10, 0, 0, 1})
-	if err := app.AddProtocolAddress(1, tcpip.ProtocolAddress{Protocol: ipv4.ProtocolNumber, AddressWithPrefix: local.WithPrefix()}, stack.AddressProperties{}); err != nil {
+	if err := app.AddProtocolAddress(1, tcpip.ProtocolAddress{Protocol: ipv4.ProtocolNumber, AddressWithPrefix: local.WithPrefix()}, gstack.AddressProperties{}); err != nil {
 		t.Fatal(err)
 	}
 	app.SetRouteTable([]tcpip.Route{{Destination: header.IPv4EmptySubnet, NIC: 1}})
 	ctx, cancel := context.WithCancel(context.Background())
-	go pump(ctx, tunSide, appSide)
-	go pump(ctx, appSide, tunSide)
+	go func() {
+		for {
+			pkt := appSide.ReadContext(ctx)
+			if pkt == nil {
+				return
+			}
+			packet := pkt.ToView().AsSlice()
+			pkt.DecRef()
+			select {
+			case device.in <- packet:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 	t.Cleanup(func() { cancel(); handler.Close(); app.Close() })
 	return func(port uint16) (*gonet.TCPConn, tcpip.Endpoint, error) {
 		var wq waiter.Queue
