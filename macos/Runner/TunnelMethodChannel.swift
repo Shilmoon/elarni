@@ -541,6 +541,8 @@ final class TunnelMethodChannel {
           result(Self.flutterError("icmp_failed_restored"))
         } catch RunnerTunnelError.icmpRestoreFailed {
           result(Self.flutterError("icmp_restore_failed"))
+        } catch RunnerTunnelError.disconnectToTest {
+          result(FlutterError(code: "disconnect_to_test", message: "While connected, this test can't reach the server. Disconnect to test it.", details: nil))
         } catch RunnerTunnelError.unsupportedPingMethod {
           result(FlutterError(code: "unsupported_ping_method", message: "Direct TCP is not supported by this endpoint's transport. Use Proxy testing.", details: nil))
         } catch RunnerTunnelError.listenerUnavailable(let port) {
@@ -1293,6 +1295,7 @@ enum RunnerTunnelError: Error {
   case nodeSwitchRestoreFailed
   case pingFailure
   case unsupportedPingMethod
+  case disconnectToTest
   case icmpFailedRestored
   case icmpRestoreFailed
 }

@@ -1101,6 +1101,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Skipped: Direct TCP is not supported by this endpoint’s transport. Use Proxy testing.';
 
   @override
+  String get pingNeedsDisconnect =>
+      'Skipped: while connected, this test can’t reach the server. Disconnect to test it.';
+
+  @override
   String get routeTableUnreadable =>
       'The current route table could not be read.';
 
@@ -1148,6 +1152,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String pingSkippedIncompatible(int count) {
     return 'Skipped $count: incompatible with this test method.';
+  }
+
+  @override
+  String pingSkippedWhileConnected(int count) {
+    return 'Skipped $count: disconnect to test them.';
   }
 
   @override

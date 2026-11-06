@@ -19,6 +19,11 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - SRV, TXT and other lookups that aren't for addresses, asked over TCP through the VPN,
   came back truncated whenever the answer passed 512 bytes, so they failed; they now
   stay on TCP.
+- macOS: while connected, Direct TCP showed 1-5 ms for every server, dead ones too, because
+  the tunnel itself answered; it now tests outside the tunnel. Tests the tunnel cannot run
+  while connected (Direct TCP and other servers' proxy tests with Include all networks
+  on, and other servers' "Current rules / active tunnel" tests) are marked Skipped with a
+  hint to disconnect, instead of failing and marking the server Unavailable.
 
 ## 0.4.1 - 2026-11-04
 

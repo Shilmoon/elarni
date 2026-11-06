@@ -483,6 +483,7 @@
   "pingIcmpNoReplyRestored": "No ICMP reply. The previous tunnel connection was restored.",
   "pingIcmpUnavailable": "ICMP is unavailable while system VPN is connected. Use TCP or HTTP testing.",
   "pingDirectTcpUnsupported": "Skipped: Direct TCP is not supported by this endpoint’s transport. Use Proxy testing.",
+  "pingNeedsDisconnect": "Skipped: while connected, this test can’t reach the server. Disconnect to test it.",
   "routeTableUnreadable": "The current route table could not be read.",
   "systemInfoUnavailable": "System information is unavailable.",
   "systemSettingsNotLoaded": "System settings could not be loaded.",
@@ -531,6 +532,14 @@
   },
   "pingSkippedIncompatible": "Skipped {count}: incompatible with this test method.",
   "@pingSkippedIncompatible": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "pingSkippedWhileConnected": "Skipped {count}: disconnect to test them.",
+  "@pingSkippedWhileConnected": {
     "placeholders": {
       "count": {
         "type": "int"

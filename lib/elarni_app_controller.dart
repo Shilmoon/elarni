@@ -372,13 +372,14 @@ extension _HomeController on _ElarniHomeState {
     } on PlatformException catch (error) {
       if (mounted && run == _pingRun) {
         _set(() {
-          if (error.code == 'unsupported_ping_method') {
+          if (_skippedProbe(error)) {
             _pingSkipped.add(nodeId);
           } else {
             _pingUnavailable.add(nodeId);
           }
           _message = switch (error.code) {
             'unsupported_ping_method' => l10n.pingDirectTcpUnsupported,
+            'disconnect_to_test' => l10n.pingNeedsDisconnect,
             'unavailableProbePath' => l10n.pingIcmpUnavailable,
             'icmp_failed_restored' => l10n.pingIcmpNoReplyRestored,
             'icmp_restore_failed' => l10n.pingIcmpRestoreFailed,
@@ -405,6 +406,14 @@ extension _HomeController on _ElarniHomeState {
       }
     }
   }
+
+  // macOS refuses what its tunnel would answer itself while connected.
+  bool _skippedProbe(Object error) =>
+      error is PlatformException &&
+      const {
+        'unsupported_ping_method',
+        'disconnect_to_test',
+      }.contains(error.code);
 
   // The core accepts only a successful status, so a cleared or bad field
   // falls back to the default check instead of failing every server.
@@ -533,6 +542,7 @@ extension _HomeController on _ElarniHomeState {
       (queues[_findNode(id)?.probeKey ?? id] ??= []).add(id);
     }
     final busy = <String, int>{};
+    var needsDisconnect = false;
     Completer<void>? freed;
     Future<void> worker() async {
       while (mounted && run == _pingRun && queues.isNotEmpty) {
@@ -564,9 +574,10 @@ extension _HomeController on _ElarniHomeState {
         } on Object catch (error) {
           if (mounted && run == _pingRun) {
             _set(() {
-              if (error is PlatformException &&
-                  error.code == 'unsupported_ping_method') {
+              if (_skippedProbe(error)) {
                 _pingSkipped.add(nodeId);
+                needsDisconnect |=
+                    (error as PlatformException).code == 'disconnect_to_test';
               } else {
                 _pingUnavailable.add(nodeId);
               }
@@ -603,7 +614,10 @@ extension _HomeController on _ElarniHomeState {
             final skipped = nodeIds.where(_pingSkipped.contains).length;
             _message = [
               l10n.pingTested(tested, nodeIds.length - skipped),
-              if (skipped != 0) l10n.pingSkippedIncompatible(skipped),
+              if (skipped != 0)
+                needsDisconnect
+                    ? l10n.pingSkippedWhileConnected(skipped)
+                    : l10n.pingSkippedIncompatible(skipped),
             ].join(' ');
           }
         });

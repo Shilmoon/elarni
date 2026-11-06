@@ -1114,6 +1114,10 @@ class AppLocalizationsRu extends AppLocalizations {
       'Пропущено: транспорт этого сервера не поддерживает прямой TCP. Используйте проверку через прокси.';
 
   @override
+  String get pingNeedsDisconnect =>
+      'Пропущено: при подключении эта проверка не доходит до сервера. Отключитесь, чтобы проверить его.';
+
+  @override
   String get routeTableUnreadable =>
       'Не удалось прочитать текущую таблицу маршрутов.';
 
@@ -1164,6 +1168,11 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String pingSkippedIncompatible(int count) {
     return 'Пропущено $count: не подходят для этого способа проверки.';
+  }
+
+  @override
+  String pingSkippedWhileConnected(int count) {
+    return 'Пропущено $count: отключитесь, чтобы проверить их.';
   }
 
   @override

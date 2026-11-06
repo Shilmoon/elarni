@@ -1952,6 +1952,12 @@ abstract class AppLocalizations {
   /// **'Skipped: Direct TCP is not supported by this endpoint’s transport. Use Proxy testing.'**
   String get pingDirectTcpUnsupported;
 
+  /// No description provided for @pingNeedsDisconnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Skipped: while connected, this test can’t reach the server. Disconnect to test it.'**
+  String get pingNeedsDisconnect;
+
   /// No description provided for @routeTableUnreadable.
   ///
   /// In en, this message translates to:
@@ -2029,6 +2035,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Skipped {count}: incompatible with this test method.'**
   String pingSkippedIncompatible(int count);
+
+  /// No description provided for @pingSkippedWhileConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Skipped {count}: disconnect to test them.'**
+  String pingSkippedWhileConnected(int count);
 
   /// No description provided for @refreshFailedSentence.
   ///
