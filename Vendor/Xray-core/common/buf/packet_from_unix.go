@@ -5,15 +5,12 @@ package buf
 import (
 	"net"
 	"strconv"
-	"sync"
 	"syscall"
 )
 
 const pooledUDPReads = true
 
-var udpScratch = sync.Pool{New: func() any { scratch := make([]byte, UDPSize); return &scratch }}
-
-func readUDPFrom(conn *net.UDPConn) (*Buffer, net.Addr, error) {
+func readUDPFrom(conn *net.UDPConn, _ *[]byte) (*Buffer, net.Addr, error) {
 	raw, err := conn.SyscallConn()
 	if err != nil {
 		return nil, nil, err

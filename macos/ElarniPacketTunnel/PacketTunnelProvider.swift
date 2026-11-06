@@ -24,14 +24,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
   private var liveness: (generation: UInt64, state: String?)?
 #if os(iOS)
   private var alertArmedAt = -Double.infinity
-  // Pooled outbound connections stay on a path that is gone after a handoff,
-  // and the app is not running to notice; the extension restarts the core itself.
+#endif
+  // Pooled outbound connections stay on a path that is gone after a handoff, and the app
+  // may not be running to notice; the extension tells the core or restarts it itself.
   private let pathMonitor = NWPathMonitor()
   private var pathMonitorStarted = false
   private var latestPath: (signature: String, satisfied: Bool)?
   // The path the core last opened its connections on, and whether the primary path left it since.
   private var corePath: String?
   private var pathMoved = false
+  // The core failed its liveness checks; the next path check restarts it on the same path.
+  private var coreStalled = false
+  // Stall restarts since a check last passed; each one doubles the failed checks the next needs.
+  private var stallRestarts = 0
   private var pathSettle: Task<Void, Never>?
   // A handoff often flaps for a few seconds; restart once it has held.
   private static let pathSettleTime = Duration.seconds(6)
@@ -40,13 +45,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
   // The path restart in flight, and the one a user switch made give way.
   private var pathRestart: ProviderLifecycleGeneration?
   private var pathRestartYielded: ProviderLifecycleGeneration?
-#endif
   // The switch past its point of no return: the old core's monitor is paused and the core stops next.
   private var switchCommitted: ProviderLifecycleGeneration?
 #if DEBUG
   private let debugFaults = ProviderDebugFaults(save: ProviderDebugFaults.save)
   private var debugSaveStop: (ProviderDebugFaults.StopReceipt) throws -> Void = ProviderDebugFaults.saveStop
 #endif
+  // In the host's version+build form: the Mac app warns when the system runs another copy's extension.
+  private static let version: String = {
+    let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+    let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+    return build.isEmpty ? short : "\(short)+\(build)"
+  }()
 
   override func startTunnel(
     options: [String: NSObject]?,
@@ -62,9 +72,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       completionHandler(ProviderError.invalidState)
       return
     }
-#if os(iOS)
     startPathMonitor()
-#endif
     let attempt = ProviderBoundaryEvidence.reset()
     guard runtime.setAttempt(attempt, generation: generation) else {
       ProviderBoundaryEvidence.finish(attempt)
@@ -224,21 +232,21 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         if let debugGeneration { debugFaults.finish("cancelled", generation: debugGeneration, requestID: id) }
 #endif
         switchCancellation.finish(id)
-#if os(iOS)
-        // A path restart in flight gives way: this switch restarts the core on the new path too.
-        if debugGeneration == nil, let restart = backendLock.withLock({ () -> ProviderLifecycleGeneration? in
-          guard let restart = pathRestart, restart != pathRestartYielded, switchCommitted != restart else { return nil }
+        // A path restart in flight gives way, or, past its commit, finishes first: this switch
+        // restarts the core on the new path too.
+        if debugGeneration == nil, let pending = backendLock.withLock({ () -> (restart: ProviderLifecycleGeneration, committed: Bool)? in
+          guard let restart = pathRestart, restart != pathRestartYielded else { return nil }
           pathRestartYielded = restart
-          return restart
+          return (restart, switchCommitted == restart)
         }) {
-          runtime.cancelStartup(restart)
+          if !pending.committed { runtime.cancelStartup(pending.restart) }
           Task { [weak self] in
-            for _ in 0..<30 where self?.lifecycle.state == .switching(restart) { try? await Task.sleep(for: .milliseconds(100)) }
+            // A committed restart only has the new core to start; 5 s covers that, the 15 s bound does not.
+            for _ in 0..<50 where self?.lifecycle.state == .switching(pending.restart) { try? await Task.sleep(for: .milliseconds(100)) }
             self?.handleAppMessage(messageData, completionHandler: completionHandler)
           }
           return
         }
-#endif
         completionHandler?(Self.switchResponse(lifecycle.state.label == "quarantinedFailClosed" ? "quarantined" : "rejected"))
         return
       }
@@ -304,6 +312,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         "utunCandidateCount": utunCount,
         "utunDescriptorReady": utunCount == 1,
         "extensionMemoryBytes": Self.memoryFootprint(),
+        "extensionVersion": Self.version,
       ]
       completionHandler?(try? JSONSerialization.data(withJSONObject: response))
     }
@@ -324,13 +333,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
   override func wake() {
     backendLock.withLock { sleeping = false }
     DiagnosticLog.record("wake")
-#if os(iOS)
-    // A handoff during sleep is acted on now.
-    backendLock.withLock { schedulePathCheck() }
+    backendLock.withLock {
+#if os(macOS)
+      // A Mac's network sleeps with it: its pooled connections may be gone on the same path.
+      pathMoved = true
 #endif
+      // A handoff during sleep is acted on now.
+      schedulePathCheck()
+    }
   }
 
-#if os(iOS)
   private func startPathMonitor() {
     let start = backendLock.withLock {
       defer { pathMonitorStarted = true }
@@ -347,14 +359,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     // alone; any departure of the primary path, even one that returns, may not.
     let interfaces = path.availableInterfaces.filter { $0.type != .other && $0.type != .loopback }
     let satisfied = path.status == .satisfied
-    // IPv4 gateways tell apart two Wi-Fi networks on one interface; IPv6 router
-    // advertisements and the list order change without a handoff.
+    // IPv4 gateways and the interface's IPv4 address tell apart two Wi-Fi networks on one
+    // interface; IPv6 router advertisements and the list order change without a handoff.
     let gateways = path.gateways.compactMap { endpoint -> String? in
       if case .hostPort(.ipv4(let address), _) = endpoint { return "\(address)" }
       return nil
     }.sorted()
-    let signature = satisfied ? ((interfaces.first.map { ["\($0.type):\($0.index)"] } ?? []) + gateways)
-      .joined(separator: ",") : ""
+    let primary = interfaces.first.map { ["\($0.type):\($0.index)"] + Self.ipv4Addresses(of: $0.name) } ?? []
+    let signature = satisfied ? (primary + gateways).joined(separator: ",") : ""
     DiagnosticLog.record("network_path", ["available": satisfied ? 1 : 0, "interfaces": Int64(interfaces.count),
       "ipv4": path.supportsIPv4 ? 1 : 0, "ipv6": path.supportsIPv6 ? 1 : 0, "expensive": path.isExpensive ? 1 : 0])
     backendLock.withLock {
@@ -363,6 +375,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       if let corePath, signature != corePath { pathMoved = true }
       schedulePathCheck()
     }
+  }
+
+  private static func ipv4Addresses(of name: String) -> [String] {
+    var list: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&list) == 0, let first = list else { return [] }
+    defer { freeifaddrs(list) }
+    var addresses: [String] = []
+    for entry in sequence(first: first, next: { $0.pointee.ifa_next }) {
+      guard let address = entry.pointee.ifa_addr, address.pointee.sa_family == sa_family_t(AF_INET),
+            String(cString: entry.pointee.ifa_name) == name else { continue }
+      var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+      if getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
+        addresses.append(String(cString: host))
+      }
+    }
+    return addresses.sorted()
   }
 
   /// Call with backendLock held.
@@ -381,22 +409,40 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
   }
 
   private func restartIfPathMoved() {
-    let plan: TunnelPlan? = backendLock.withLock {
-      guard !sleeping, pathMoved, latestPath?.satisfied == true else { return nil }
-      return activeConfiguration?.0
+    let work: (plan: TunnelPlan, refreshOnly: Bool)? = backendLock.withLock {
+      guard !sleeping, pathMoved || coreStalled, latestPath?.satisfied == true,
+            let plan = activeConfiguration?.0 else { return nil }
+#if os(iOS)
+      // Connections on a primary path that is gone die with it, and a restart closes them at once.
+      // Back on the core's own path, telling the core keeps the ones that still work.
+      let restart = coreStalled || latestPath?.signature != corePath
+#else
+      // A Mac keeps the connections on its other interfaces: tell the core, unless its server
+      // addresses or DNS moved, which the refresh restarts it for.
+      let restart = coreStalled
+#endif
+      return (plan, !restart)
     }
-    // runSwitch restarts only the native tun2proxy backend in place.
-    guard let plan, plan.effectiveBackend == .nativeTun2Proxy else { return }
+    guard let work else { return }
+    // runSwitch restarts only the native tun2proxy backend in place; Xray's own TUN can only be told.
+    guard work.plan.effectiveBackend == .nativeTun2Proxy else {
+      Task { [weak self] in
+        if await self?.xray.socketPathChanged() == true { self?.noteCorePath() }
+      }
+      return
+    }
+    let plan = work.plan
     guard let generation = lifecycle.beginSwitch() else {
       // A switch or refresh is running; its core may have started on the old path.
       backendLock.withLock { retryPathCheck() }
       return
     }
     backendLock.withLock { pathRestart = generation }
-    DiagnosticLog.record("path_restart", ["generation": Int64(generation.rawValue)])
+    DiagnosticLog.record("path_restart", ["generation": Int64(generation.rawValue), "refresh": work.refreshOnly ? 1 : 0])
     let launched = runtime.launchStartup(generation: generation) { [weak self] in
       guard let self else { return }
-      self.finishPathRestart(generation, code: await self.boundedSwitch(plan: plan, generation: generation))
+      self.finishPathRestart(generation, code: await self.boundedSwitch(plan: plan, generation: generation,
+                                                                       refreshOnly: work.refreshOnly))
     }
     if !launched {
       lifecycle.finishSwitch(generation, restored: true)
@@ -408,17 +454,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
   }
 
   private func finishPathRestart(_ generation: ProviderLifecycleGeneration, code: String) {
+#if os(iOS)
     if ["protectedFailure", "quarantinedFailClosed"].contains(lifecycle.state.label) { IOSConnectionAlerts.failed() }
     else if code == "switched" { IOSConnectionAlerts.connected() }
+#endif
     DiagnosticLog.record("path_restart_done", ["switched": code == "switched" ? 1 : 0])
     runtime.startupFinished(generation)
     backendLock.withLock {
       pathRestart = nil
       // Failed before the core stopped (DNS or the Keychain not ready on the new path), or gave way.
-      if pathMoved, code != "cancelled" || pathRestartYielded != generation { retryPathCheck() }
+      if pathMoved || coreStalled, code != "cancelled" || pathRestartYielded != generation { retryPathCheck() }
     }
   }
-#endif
 
 #if os(iOS)
   /// Stops the user did not ask for. Settings, another VPN, sleep and removal stay quiet.
@@ -700,8 +747,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       try requireActive(generation)
       let settingsChanged = plan.dnsServers != oldPlan.dnsServers ||
         candidate.addresses.sorted() != oldCore.addresses.sorted()
-      if refreshOnly, plan.secretRef == oldPlan.secretRef, !settingsChanged {
+      // The core keeps its connections and checks its pooled ones; one that cannot be told restarts.
+      if refreshOnly, plan.secretRef == oldPlan.secretRef, !settingsChanged, await xray.socketPathChanged() {
         guard lifecycle.finishSwitch(generation, restored: true) else { return "cancelled" }
+        noteCorePath()
         return "unchanged"
       }
       backendLock.withLock { switchCommitted = generation }
@@ -800,8 +849,23 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         guard !Task.isCancelled, lifecycle.isActive(generation) else { return }
         tracker.record(passed: passed, uplink: await xray.metrics()["uplinkBytes"] ?? 0,
                        at: ProcessInfo.processInfo.systemUptime)
-        let state = tracker.state
-        backendLock.withLock { liveness = (generation.rawValue, state) }
+        let state = tracker.state, failures = tracker.failures
+        let stalled = backendLock.withLock { () -> Bool in
+          liveness = (generation.rawValue, state)
+          if passed {
+            coreStalled = false
+            stallRestarts = 0
+            return false
+          }
+          // Two failed checks in a row restart the core as a path change does; after each restart
+          // that did not help, twice as many, up to 16 (checks run a minute apart, while traffic leaves).
+          guard !coreStalled, failures >= 2 << min(stallRestarts, 3) else { return false }
+          coreStalled = true
+          stallRestarts += 1
+          schedulePathCheck(after: .zero)
+          return true
+        }
+        if stalled { DiagnosticLog.record("core_stalled", ["failures": Int64(failures)]) }
       }
       if DiagnosticLog.isCollecting {
         let counters = currentBackend == .xrayTun ? await xray.metrics() : bridge.counters
@@ -821,7 +885,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         alertArmedAt = now
       }
 #endif
-      if !(await xray.isRunning()) {
+      // A sleeping tunnel is not asked; an exit while asleep shows at the first check after wake.
+      if !backendLock.withLock({ sleeping }), !(await xray.isRunning()) {
         guard !Task.isCancelled, lifecycle.isActive(generation) else { return }
         ProviderBoundaryEvidence.failure(
           .libXrayState,
@@ -959,10 +1024,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         self.setActiveBackend(nil)
         self.backendLock.withLock {
           self.activeConfiguration = nil
-#if os(iOS)
           self.corePath = nil
           self.pathMoved = false
-#endif
+          self.coreStalled = false
+          self.stallRestarts = 0
           self.sessionCredentials?.clear()
           self.sessionCredentials = nil
         }
@@ -976,15 +1041,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     )
   }
 
-  /// The core just opened its connections on the latest path.
+  /// The core just opened its connections on the latest path, or was told about it.
   private func noteCorePath() {
-#if os(iOS)
     backendLock.withLock {
       corePath = latestPath?.signature
       pathMoved = false
+      coreStalled = false
       pathRetries = 0
     }
-#endif
   }
 
   private func requireActive(_ generation: ProviderLifecycleGeneration) throws {

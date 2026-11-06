@@ -23,6 +23,7 @@ import (
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/internet"
 	"github.com/xtls/xray-core/transport/internet/stat"
+	"gvisor.dev/gvisor/pkg/waiter"
 )
 
 // Handler is managing object that tie together tun interface, ip stack and dispatch connections to the routing
@@ -40,7 +41,7 @@ type Handler struct {
 	tcpSessions                stats.Counter
 	udpSessions                stats.Counter
 	tcpAdmission, udpAdmission sessionAdmission
-	dnsIdle                    time.Duration
+	dnsIdle, udpIdle           time.Duration
 }
 
 // ConnectionHandler interface with the only method that stack is going to push new connections to
@@ -68,7 +69,7 @@ func (t *Handler) Init(ctx context.Context, pm policy.Manager, dispatcher routin
 	t.policyManager = pm
 	t.dispatcher = dispatcher
 	t.tcpAdmission.limit, t.udpAdmission.limit = tcpLimit.Load(), udpLimit.Load()
-	t.tcpAdmission.minIdle, t.udpAdmission.minIdle, t.dnsIdle = sessionEvictIdle, sessionEvictIdle, dnsSessionIdle
+	t.tcpAdmission.minIdle, t.udpAdmission.minIdle, t.dnsIdle, t.udpIdle = sessionEvictIdle, sessionEvictIdle, dnsSessionIdle, udpSessionIdle
 	t.tcpAdmission.finishedIdle, t.udpAdmission.finishedIdle = tcpFinishedIdle, dnsFinishedIdle
 
 	if len(t.tag) > 0 && pm.ForSystem().Stats.InboundUplink {
@@ -171,15 +172,6 @@ func (t *Handler) Start() error {
 
 // HandleConnection pass the connection coming from the ip stack to the routing dispatcher
 func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
-	// when handling is done with any outcome, always signal back to the incoming connection
-	// to close, send completion packets back to the network, and cleanup
-	defer conn.Close()
-	var ready func() bool
-	if stream, ok := conn.(*tcpConn); ok {
-		ready = stream.readable
-	}
-	ctx, cancel := context.WithCancel(t.ctx)
-	defer cancel()
 	admission := &t.tcpAdmission
 	if destination.Network == net.Network_UDP {
 		admission = &t.udpAdmission
@@ -192,14 +184,51 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 		conn, clock = tracked, &tracked.activity
 	}
 	clock.touch()
-	closeConn := conn.Close
-	admitted := admission.acquire(clock, func() { cancel(); closeConn() })
+	t.serve(conn, destination, admission.acquire(clock, nil))
+}
+
+// serve dispatches a connection admission took; admitted is nil when it refused the connection.
+func (t *Handler) serve(conn net.Conn, destination net.Destination, admitted *admittedSession) {
+	// when handling is done with any outcome, always signal back to the incoming connection
+	// to close, send completion packets back to the network, and cleanup
+	defer conn.Close()
 	if admitted == nil {
 		return
 	}
 	defer admitted.release()
-	if destination.Network == net.Network_UDP && destination.Port == 53 && t.dnsIdle > 0 {
-		go admitted.evictWhenIdle(ctx.Done(), t.dnsIdle)
+	var stream *tcpConn
+	if tracked, ok := conn.(*activeConn); ok {
+		stream, _ = tracked.Conn.(*tcpConn)
+	}
+	ctx, cancel := context.WithCancel(t.ctx)
+	defer cancel()
+	closeConn := conn.Close
+	if !admitted.attach(func() { cancel(); closeConn() }) {
+		return // a full table replaced it while its handshake ran
+	}
+	if stream != nil {
+		// An app that resets its connection cancels the outbound, which reads nothing from it while it
+		// dials (Elarni). Not a FIN: the app may still await the reply. Not TIME_WAIT either, which raises
+		// the same events while the outbound may still send the app's last bytes.
+		hangUp := waiter.NewFunctionEntry(waiter.EventHUp|waiter.EventErr, func(waiter.EventMask) {
+			if stream.reset() {
+				cancel()
+			}
+		})
+		stream.wq.EventRegister(&hangUp)
+		defer stream.wq.EventUnregister(&hangUp)
+		if stream.reset() {
+			cancel()
+		}
+	}
+	if destination.Network == net.Network_UDP {
+		idle := t.udpIdle
+		if destination.Port == 53 {
+			idle = t.dnsIdle
+		}
+		if idle > 0 {
+			defer admitted.evictWhenIdle(idle)()
+		}
 	}
 	var sessionCounter stats.Counter
 	switch destination.Network {
@@ -259,9 +288,9 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 		Reader: &buf.TimeoutWrapperReader{Reader: buf.NewReader(conn)},
 		Writer: buf.NewWriter(conn),
 	}
-	if ready != nil {
-		link.Reader = &buf.TimeoutWrapperReader{Reader: &drainReader{Reader: conn, ready: ready}}
-		link.Writer = newTCPWriter(conn)
+	if stream != nil {
+		link.Reader = &buf.TimeoutWrapperReader{Reader: &drainReader{Reader: conn, ready: stream.readable}}
+		link.Writer = newTCPWriter(conn, stream.CloseWrite)
 	}
 	if destination.Network == net.Network_UDP {
 		// Count datagrams without hiding udpConn's per-packet destinations behind

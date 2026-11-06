@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 import CFNetwork
@@ -332,6 +333,12 @@ enum SystemEndpointResolver {
 final class NativeXrayCore: XrayCore, @unchecked Sendable {
   private let lock = NSLock()
   private var running = false
+  // The compile's endpoints and host mappings, keyed by its inputs: small, and all a restart needs
+  // to resolve again. The compiled configuration itself is not kept.
+  private var manifest: (inputs: Data, endpoints: [NativeProfileEndpoint], mappings: [String: [String: Any]])?
+  // The configuration the core runs. A restart with the same inputs and the same resolved addresses
+  // gets it back without compiling while the old core still holds its memory.
+  private var started: PreparedXray?
 
   func prepare(
     plan: TunnelPlan,
@@ -341,28 +348,46 @@ final class NativeXrayCore: XrayCore, @unchecked Sendable {
     attempt: ProviderBoundaryAttempt
   ) async throws -> PreparedXray {
     let endpointValue = endpoint
-    let compiled = try await ProviderLifecycleRuntime.runBlocking {
-      var endpointCopy = endpointValue
-      return try ElarniDomainCompiler.compile(
-        plan: plan,
-        endpoint: &endpointCopy,
-        servers: servers,
-        inboundCredentials: inboundCredentials,
-        attempt: attempt
-      )
+    func compile() async throws -> CompiledEndpoint {
+      let compiled = try await ProviderLifecycleRuntime.runBlocking {
+        var endpointCopy = endpointValue
+        return try ElarniDomainCompiler.compile(
+          plan: plan,
+          endpoint: &endpointCopy,
+          servers: servers,
+          inboundCredentials: inboundCredentials,
+          attempt: attempt
+        )
+      }
+      try Task.checkCancellation()
+      return compiled
     }
-    try Task.checkCancellation()
+    // Xray's own TUN takes a descriptor the compile resolves each time.
+    let inputs = plan.effectiveBackend == .xrayTun ? nil :
+      try Self.inputDigest(plan: plan, endpoint: endpoint, servers: servers, credentials: inboundCredentials)
+    var compiled: CompiledEndpoint?
+    let manifest: (endpoints: [NativeProfileEndpoint], mappings: [String: [String: Any]])
+    if let inputs, let saved = lock.withLock({ self.manifest?.inputs == inputs ? self.manifest : nil }) {
+      manifest = (saved.endpoints, saved.mappings)
+    } else {
+      let fresh = try await compile()
+      compiled = fresh
+      let endpoints = fresh.endpoints.filter(\.physical)
+      let hosts = Set(endpoints.map(\.host)).sorted()
+      let mappings = try Self.invokeObject(method: "profileHostMappings", payload: ["configJSON": fresh.config, "hosts": hosts])
+      manifest = (endpoints, mappings.compactMapValues { $0 as? [String: Any] })
+      if let inputs { lock.withLock { self.manifest = (inputs, manifest.endpoints, manifest.mappings) } }
+    }
     var addresses = Set<String>()
     var resolved: [String: String] = [:]
     var unavailable: [String] = []
-    let endpoints = compiled.endpoints.filter(\.physical)
+    let endpoints = manifest.endpoints
     let hosts = Set(endpoints.map(\.host)).sorted()
-    let mappings = try Self.invokeObject(method: "profileHostMappings", payload: ["configJSON": compiled.config, "hosts": hosts])
     var pinHosts: [String] = []
     var candidatesByHost: [String: [String]] = [:]
     for host in hosts {
       try Task.checkCancellation()
-      let mapping = mappings[host] as? [String: Any]
+      let mapping = manifest.mappings[host]
       do {
         if mapping?["blocked"] as? Bool == true { throw NativeAdapterError.resolutionFailed }
         let candidates: [String]
@@ -379,11 +404,44 @@ final class NativeXrayCore: XrayCore, @unchecked Sendable {
       addresses.formUnion(candidates)
     }
     try Task.checkCancellation()
-    let prepared = try compiled.prepared(resolved: resolved, unavailable: unavailable, pin: plan.runtimeSettings.resolveServer == true, pinHosts: pinHosts)
+    let pin = plan.runtimeSettings.resolveServer == true
+    let source = try inputs.map { inputs -> Data in
+      var digest = SHA256()
+      digest.update(data: inputs)
+      digest.update(data: try JSONSerialization.data(withJSONObject: ["resolved": resolved, "unavailable": unavailable,
+        "pin": pin, "pinHosts": pinHosts], options: [.sortedKeys]))
+      return Data(digest.finalize())
+    }
+    if let source, let current = lock.withLock({ started }), current.source == source {
+      return PreparedXray(config: current.config, addresses: addresses.sorted(),
+                          memoryLimitBytes: plan.runtimeSettings.memoryLimitBytes, source: source)
+    }
+    // The same inputs resolved to other addresses: compile again, as a first start does.
+    let base: CompiledEndpoint
+    if let compiled { base = compiled } else { base = try await compile() }
+    let prepared = try base.prepared(resolved: resolved, unavailable: unavailable, pin: pin, pinHosts: pinHosts)
     return PreparedXray(
       config: prepared.config, addresses: addresses.sorted(),
-      memoryLimitBytes: plan.runtimeSettings.memoryLimitBytes
+      memoryLimitBytes: plan.runtimeSettings.memoryLimitBytes, source: source
     )
+  }
+
+  /// Everything the compile reads besides files the plan names by digest or revision.
+  private static func inputDigest(plan: TunnelPlan, endpoint: SecretValue, servers: [String: SecretValue],
+                                  credentials: InboundCredentials?) throws -> Data {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    var digest = SHA256()
+    func add(_ data: Data) {
+      withUnsafeBytes(of: UInt64(data.count).littleEndian) { digest.update(bufferPointer: $0) }
+      digest.update(data: data)
+    }
+    add(try encoder.encode(plan))
+    add(endpoint.bytes)
+    for (ref, server) in servers.sorted(by: { $0.key < $1.key }) { add(Data(ref.utf8)); add(server.bytes) }
+    add(credentials?.username ?? Data())
+    add(credentials?.password ?? Data())
+    return Data(digest.finalize())
   }
 
   func start(_ prepared: PreparedXray, attempt: ProviderBoundaryAttempt) async throws {
@@ -450,13 +508,17 @@ final class NativeXrayCore: XrayCore, @unchecked Sendable {
       throw NativeAdapterError.notRunning
     }
     ProviderBoundaryEvidence.success(.libXrayState, attempt: attempt)
+    lock.withLock { started = prepared }
   }
 
   func stop() async throws {
     _ = try await ProviderLifecycleRuntime.runBlocking {
       try self.invoke(method: "stopXray", payload: [:])
     }
-    lock.withLock { running = false }
+    lock.withLock {
+      running = false
+      started = nil
+    }
   }
 
   func isRunning() async -> Bool {
@@ -481,6 +543,13 @@ final class NativeXrayCore: XrayCore, @unchecked Sendable {
     (try? await ProviderLifecycleRuntime.runBlocking {
       try Self.invokeObject(method: "ping", payload: ["runningCore": true, "url": url, "method": "GET",
         "timeout": timeout, "expectedStatus": 204, "expectedBody": ""])
+    }) != nil
+  }
+
+  func socketPathChanged() async -> Bool {
+    guard lock.withLock({ running }) else { return false }
+    return (try? await ProviderLifecycleRuntime.runBlocking {
+      try Self.invokeObject(method: "socketPathChanged", payload: [:])
     }) != nil
   }
 

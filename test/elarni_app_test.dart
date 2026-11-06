@@ -1314,9 +1314,28 @@ void main() {
       expect(find.text('Tunnel settings'), findsNothing);
       await openSettings(tester);
       await selectCategory(tester, SettingsCategory.connection);
-      expect(find.text('System-wide VPN'), findsOneWidget);
+      expect(find.text('Connection mode'), findsOneWidget);
+      await tester.tap(find.text('Local proxy only'));
+      await tester.pumpAndSettle();
+      expect(
+        find.widgetWithText(MenuItemButton, 'System-wide VPN'),
+        findsOneWidget,
+      );
+      await tester.tap(find.widgetWithText(MenuItemButton, 'System proxy'));
+      await tester.pumpAndSettle();
+      expect(
+        (control.settings.systemProxyEnabled, control.settings.xrayTunEnabled),
+        (true, false),
+      );
       await reveal(tester, find.text('SOCKS5 and HTTP ports'));
       expect(find.text('SOCKS5 and HTTP ports'), findsOneWidget);
+      // The listeners System proxy mode needs are fixed while it is on.
+      expect(
+        find.text(
+          'In System proxy mode, apps on this computer use the HTTP port without a login.',
+        ),
+        findsOneWidget,
+      );
       await selectCategory(tester, SettingsCategory.ping);
       expect(find.byKey(const Key('ping-url')), findsNothing);
       await tester.tap(find.text('Direct TCP'));
@@ -1793,6 +1812,59 @@ void main() {
     );
   });
 
+  // Windows and Linux reconnect until Stop by default, so the switch would do nothing.
+  testWidgets('Windows offers no On Demand switch', (tester) async {
+    final control = FakeTunnelControl();
+    await pumpApp(tester, control, windows: true);
+    await openSettings(tester);
+    await reveal(tester, find.text('Connect on untrusted Wi-Fi'));
+    expect(find.text('On Demand'), findsNothing);
+  });
+
+  // While minimized the window must stay idle between catalog changes.
+  testWidgets(
+    'the idle Windows window neither rebuilds for a growing health age nor polls servers',
+    (tester) async {
+      final control = FakeTunnelControl()
+        ..automation = {
+          'enabled': true,
+          'policySupported': true,
+          'status': 'healthy',
+          'healthNodeID': 'a',
+          'healthAgeSeconds': 1.0,
+        };
+      await pumpApp(tester, control, windows: true);
+      final reads = control.subscriptionReads;
+      var rebuilds = 0;
+      debugOnRebuildDirtyWidget = (element, _) {
+        if (element.widget is ElarniHome) rebuilds++;
+      };
+      try {
+        for (final age in [6.0, 11.0, 16.0]) {
+          control.automation = {...control.automation, 'healthAgeSeconds': age};
+          await tester.pump(const Duration(seconds: 5));
+        }
+        expect(rebuilds, 0);
+        expect(control.subscriptionReads, reads);
+        // Past 90 s the page says the check is stale.
+        control.automation = {...control.automation, 'healthAgeSeconds': 95.0};
+        await tester.pump(const Duration(seconds: 5));
+        await tester.pump();
+        expect(rebuilds, greaterThan(0));
+      } finally {
+        debugOnRebuildDirtyWidget = null;
+      }
+    },
+  );
+
+  testWidgets('macOS still polls servers', (tester) async {
+    final control = FakeTunnelControl();
+    await pumpApp(tester, control);
+    final reads = control.subscriptionReads;
+    await tester.pump(const Duration(seconds: 5));
+    expect(control.subscriptionReads, greaterThan(reads));
+  });
+
   testWidgets('Windows lets this account connect without the approval prompt', (
     tester,
   ) async {
@@ -1844,8 +1916,8 @@ void main() {
     await tester.pumpAndSettle();
     await openSettings(tester);
     await selectCategory(tester, SettingsCategory.connection);
-    await reveal(tester, find.text('System-wide VPN'));
-    expect(find.text('System-wide VPN'), findsOneWidget);
+    await reveal(tester, find.text('Connection mode'));
+    expect(find.text('Connection mode'), findsOneWidget);
     expect(find.text('Connect without administrator approval'), findsNothing);
   });
 

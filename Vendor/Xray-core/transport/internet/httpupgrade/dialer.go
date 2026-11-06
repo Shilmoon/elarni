@@ -45,11 +45,10 @@ func (c *ConnRF) Read(b []byte) (int, error) {
 	return c.Conn.Read(b)
 }
 
-func dialhttpUpgrade(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (net.Conn, error) {
+func dialhttpUpgrade(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (_ net.Conn, err error) {
 	transportConfiguration := streamSettings.ProtocolSettings.(*Config)
 
 	var pconn net.Conn
-	var err error
 	if streamSettings.FinalMask != nil {
 		pconn, err = streamSettings.FinalMask.DialTCP(ctx, dest)
 	} else {
@@ -59,6 +58,19 @@ func dialhttpUpgrade(ctx context.Context, dest net.Destination, streamSettings *
 		errors.LogErrorInner(ctx, err, "failed to dial to ", dest)
 		return nil, err
 	}
+	// Elarni: bound the TLS and upgrade handshakes (the reply too unless early data defers
+	// it), and release the socket when they fail. Closing works on every conn, deadlines do not.
+	ctx, cancel := context.WithTimeout(ctx, tls.HandshakeTimeout)
+	defer cancel()
+	stop := context.AfterFunc(ctx, func() { pconn.Close() })
+	defer func() {
+		if !stop() {
+			err = ctx.Err()
+		}
+		if err != nil {
+			pconn.Close()
+		}
+	}()
 
 	var conn net.Conn
 	var requestURL url.URL

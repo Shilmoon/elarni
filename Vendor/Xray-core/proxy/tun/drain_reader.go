@@ -6,6 +6,7 @@ import (
 	"github.com/xtls/xray-core/common/buf"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
+	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 	"gvisor.dev/gvisor/pkg/waiter"
 )
 
@@ -34,8 +35,14 @@ func (r *drainReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
 type tcpConn struct {
 	*gonet.TCPConn
 	ep tcpip.Endpoint
+	wq *waiter.Queue
 }
 
 func (c *tcpConn) readable() bool {
 	return c.ep.Readiness(waiter.ReadableEvents) != 0
+}
+
+// reset reports that the app reset the connection or it failed.
+func (c *tcpConn) reset() bool {
+	return c.ep.State() == uint32(tcp.StateError)
 }

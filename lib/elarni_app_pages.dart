@@ -965,7 +965,9 @@ extension _HomePages on _ElarniHomeState {
           if (widget.desktopCore && !_settings.xrayTunEnabled) ...[
             const SizedBox(height: 10),
             Text(
-              l10n.localProxyMode,
+              _settings.systemProxy
+                  ? l10n.systemProxyMode
+                  : l10n.localProxyMode,
               style: TextStyle(color: scheme.onSurfaceVariant),
             ),
           ],

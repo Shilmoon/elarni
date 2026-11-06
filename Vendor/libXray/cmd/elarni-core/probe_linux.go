@@ -53,6 +53,11 @@ func linuxProbePath(uid int) string {
 // request also holds a copy in its probe child.
 const linuxProbeAssetBudget = 256 << 20
 
+// Root probe cores that run at once; other admitted requests wait within their
+// deadline. Each is a full core process with its own geodata copy, so 32 at once
+// spiked RAM and CPU. 8 leaves room above the app's bulk test width plus a health check.
+const linuxProbeRuns = 8
+
 func readLinuxProbe(reader io.Reader) (linuxProbeRequest, error) {
 	return readLinuxProbeAdmitted(reader, nil)
 }
@@ -261,6 +266,7 @@ func startLinuxProbeServer(parent context.Context, uid int, executable string, m
 	var workers sync.WaitGroup
 	// Match the shared desktop's bounded bulk-ping concurrency.
 	slots := make(chan struct{}, 32)
+	runs := semaphore.NewWeighted(linuxProbeRuns)
 	assetBudget := semaphore.NewWeighted(linuxProbeAssetBudget)
 	workers.Add(1)
 	go func() {
@@ -312,6 +318,13 @@ func startLinuxProbeServer(parent context.Context, uid int, executable string, m
 				if err != nil {
 					return
 				}
+				admission, cancel := context.WithDeadline(ctx, deadline)
+				err = runs.Acquire(admission, 1)
+				cancel()
+				if err != nil {
+					return
+				}
+				defer runs.Release(1)
 				request.Mark = mark()
 				childCtx, childCancel := context.WithTimeout(ctx, 20*time.Second)
 				defer childCancel()

@@ -18,7 +18,8 @@ import (
 )
 
 // x/net moves a batch in one recvmmsg or sendmmsg only on Linux; elsewhere it would
-// still make one system call per datagram.
+// still make one system call per datagram. Android has them too, but on a phone a call per
+// datagram took 9% less CPU per MB and moved up to 11% more.
 var batchSyscalls = runtime.GOOS == "linux"
 
 // batchConn returns the system UDP socket under c, possibly behind byte counters, for
@@ -98,6 +99,8 @@ func (b *bind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort uint16, err
 		messages = newBatchMessages()
 	}
 
+	// One goroutine calls each receive function, and the peer's address rarely changes.
+	var last *conn.StdNetEndpoint
 	return []conn.ReceiveFunc{
 		func(bufs [][]byte, sizes []int, eps []conn.Endpoint) (n int, err error) {
 			for {
@@ -141,7 +144,10 @@ func (b *bind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort uint16, err
 						bufs[i][2] = 0
 						bufs[i][3] = 0
 					}
-					eps[i] = &conn.StdNetEndpoint{AddrPort: addr.(*net.UDPAddr).AddrPort()}
+					if from := addr.(*net.UDPAddr).AddrPort(); last == nil || last.AddrPort != from {
+						last = &conn.StdNetEndpoint{AddrPort: from}
+					}
+					eps[i] = last
 				}
 				return n, nil
 			}

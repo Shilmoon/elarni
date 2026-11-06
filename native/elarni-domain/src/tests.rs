@@ -869,7 +869,7 @@ fn dns_compilation_uses_bootstrap_through_proxy_and_explicit_domestic_rules() {
     assert_eq!(
         config["dns"]["servers"],
         json!([
-            {"address":"https://remote.example/dns-query"},
+            {"address":"https://remote.example/dns-query","timeoutMs":2000},
             {"address":"https://domestic.example/dns-query","domains":["full:example.cn"],"skipFallback":true}
         ])
     );
@@ -915,6 +915,96 @@ fn dns_compilation_uses_bootstrap_through_proxy_and_explicit_domestic_rules() {
                 .unwrap()
                 .starts_with("elarni-dns-bootstrap"))
     );
+}
+
+// With a direct fallback, the remote resolver's own plain-UDP queries would follow it and
+// cross the ISP in clear. The domestic resolver keeps following the rules.
+#[test]
+fn plain_udp_remote_resolver_reaches_its_server_through_the_proxy() {
+    use crate::compiler::compile_xray_outbound_config_with_options;
+    let mut value = routing_profile();
+    value["GlobalProxy"] = json!("false");
+    let routes = serde_json::from_value::<HappRoutingProfile>(value)
+        .unwrap()
+        .to_route_model()
+        .unwrap();
+    let pin = |resolver: &str| {
+        json!({"type": "field", "network": "tcp,udp", "port": 53, "inboundTag": ["elarni-dns-client"],
+            "ip": [resolver], "outboundTag": "elarni-proxy"})
+    };
+    let mut request = compile_request();
+    request.routes = routes.clone();
+    let config = compiled(&request);
+    let rules = config["routing"]["rules"].as_array().unwrap();
+    assert_eq!(rules[1], pin("1.1.1.1"), "{rules:?}");
+    assert_eq!(rules.last().unwrap()["outboundTag"], "elarni-direct");
+    assert!(!rules.contains(&pin("8.8.8.8")));
+    // The pin matches by inbound first, so it gives hostnames no reason to resolve.
+    assert_eq!(config["routing"]["domainStrategy"], "IPIfNonMatch");
+    // An HTTP proxy carries no UDP: the resolver would fail instead.
+    let (http, _) = compile_xray_outbound_config_with_options(
+        json!({"protocol": "http", "settings": {"servers": [{"address": "proxy.example.com", "port": 8080}]}}),
+        &routes,
+        10890,
+        PacketBackend::NativeTun2Proxy,
+        1500,
+        &RuntimeOptions::default(),
+    )
+    .unwrap();
+    let http: Value = serde_json::from_slice(&http).unwrap();
+    assert!(
+        http["routing"]["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|rule| rule["inboundTag"] != json!(["elarni-dns-client"]))
+    );
+}
+
+// Apps resolve through Xray's DNS: an expired answer is served while it refreshes, and an
+// IPv4 preference keeps apps off IPv6 the server may not reach.
+#[test]
+fn dns_serves_stale_answers_and_follows_an_ipv4_preference() {
+    use crate::model::PreferredIp;
+    for (preference, strategy) in [
+        (PreferredIp::Ipv4, "UseIPv4"),
+        (PreferredIp::Ipv6, "UseIP"),
+        (PreferredIp::Automatic, "UseIP"),
+    ] {
+        let mut request = compile_request();
+        request.runtime.preferred_ip = preference;
+        let config = compiled(&request);
+        assert_eq!(config["dns"]["queryStrategy"], strategy, "{preference:?}");
+        assert_eq!(config["dns"]["serveStale"], true);
+        // Without a bound Xray never cleans its cache.
+        assert_eq!(config["dns"]["serveExpiredTTL"], 3600);
+        // Blackholing needs no lookup first.
+        assert_eq!(
+            *tagged(&config, "outbounds", "elarni-block"),
+            json!({"tag": "elarni-block", "protocol": "blackhole", "settings": {"response": {"type": "none"}}})
+        );
+        // A profile keeps its own addressing unless its override names a family.
+        for (requested, strategy) in [(None, "UseIP"), (Some(preference), strategy)] {
+            let profile = crate::profile::compile_profile(
+                json!({"outbounds": [{"tag": "server", "protocol": "vless", "settings": {
+                    "address": "server.example.com", "port": 443,
+                    "id": "00000000-0000-4000-8000-000000000001", "encryption": "none"}}]}),
+                None,
+                1080,
+                PacketBackend::NativeTun2Proxy,
+                1500,
+                &request.runtime,
+                requested,
+            )
+            .unwrap();
+            let profile: Value = serde_json::from_slice(&profile.config).unwrap();
+            assert_eq!(
+                profile["dns"]["queryStrategy"], strategy,
+                "{preference:?} {requested:?}"
+            );
+            assert_eq!(profile["dns"]["serveStale"], true);
+        }
+    }
 }
 
 // Apple's tunnel tells a dead server from an idle one by these counters,

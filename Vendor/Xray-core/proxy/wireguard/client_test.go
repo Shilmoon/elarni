@@ -355,3 +355,23 @@ func TestWireGuardRebindsWhenTheSocketPathChanges(t *testing.T) {
 		}
 	}
 }
+
+// Platforms report a network change as a burst of signals; each rebind loses the datagrams in flight.
+func TestBurstOfPathChangesRebindsOnceMore(t *testing.T) {
+	const gap = 200 * time.Millisecond
+	moves, done := make(chan struct{}, 1), make(chan struct{})
+	var passes atomic.Int32
+	defer close(done)
+	go coalesce(moves, done, gap, func() { passes.Add(1) })
+	for range 10 { // spread over one gap, as a path monitor reports a change
+		select {
+		case moves <- struct{}{}:
+		default:
+		}
+		time.Sleep(gap / 10)
+	}
+	time.Sleep(3 * gap)
+	if n := passes.Load(); n < 1 || n > 2 {
+		t.Fatalf("a burst of 10 signals ran %d rebinds, want 1 or 2", n)
+	}
+}

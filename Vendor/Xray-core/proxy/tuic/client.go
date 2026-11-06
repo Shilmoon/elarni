@@ -7,9 +7,12 @@ import (
 	"io"
 	"net"
 	"os"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	quicgo "github.com/sagernet/quic-go"
 	qtls "github.com/sagernet/sing-quic"
 	quic "github.com/sagernet/sing-quic/tuic"
 	M "github.com/sagernet/sing/common/metadata"
@@ -38,11 +41,27 @@ type Client struct {
 	stream   *internet.MemoryStreamConfig
 	policy   policy.Manager
 	up, down stats.Counter
-	client   *quic.Client
-	sockets  *socketDialer
-	cancel   context.CancelFunc
+	current  *upstream   // takes new flows
+	retired  []*upstream // keep their flows after a socket path change
+	unwatch  func()
 	closed   bool
 }
+
+// upstream is one sing-quic client, which holds one connection, and the sockets it dialed.
+type upstream struct {
+	*quic.Client
+	sockets *socketDialer
+	cancel  context.CancelFunc
+}
+
+func (u *upstream) close() {
+	u.cancel()
+	u.CloseWithError(os.ErrClosed)
+	u.sockets.Close()
+}
+
+// probeBound is how long a connection may stay silent after a socket path change.
+var probeBound = 5 * time.Second
 
 func NewClient(ctx context.Context, config *ClientConfig) (*Client, error) {
 	if config.Address == nil || config.Port == 0 || config.Port > 65535 || len(config.Uuid) != 16 || config.Heartbeat <= 0 {
@@ -69,8 +88,19 @@ func (c *Client) initialize(ctx context.Context, dialer internet.Dialer) (*quic.
 	if c.closed {
 		return nil, os.ErrClosed
 	}
-	if c.client != nil {
-		return c.client, nil
+	if c.current != nil {
+		return c.current.Client, nil
+	}
+	if c.unwatch == nil {
+		moves, done := make(chan struct{}, 1), make(chan struct{})
+		remove := internet.OnSocketPathChange(func() {
+			select {
+			case moves <- struct{}{}:
+			default:
+			}
+		})
+		c.unwatch = func() { remove(); close(done) }
+		go coalesce(moves, done, c.moved)
 	}
 	destination := xnet.UDPDestination(c.config.Address.AsAddress(), xnet.Port(c.config.Port))
 	owner := &session.Outbound{Target: destination, Name: "tuic"}
@@ -96,8 +126,60 @@ func (c *Client) initialize(ctx context.Context, dialer internet.Dialer) (*quic.
 		cancel()
 		return nil, errors.New("invalid TUIC options")
 	}
-	c.client, c.cancel, c.sockets = client, cancel, sockets
+	c.current = &upstream{Client: client, sockets: sockets, cancel: cancel}
 	return client, nil
+}
+
+// moved hands new flows to a new connection and closes the old one if it stopped answering;
+// one that answers keeps its flows and closes after the last.
+func (c *Client) moved() {
+	c.mu.Lock()
+	var drained []*upstream
+	c.retired = slices.DeleteFunc(c.retired, func(u *upstream) bool {
+		if len(u.sockets.open()) == 0 {
+			drained = append(drained, u)
+			return true
+		}
+		return false
+	})
+	old := c.current
+	if old != nil {
+		c.current = nil
+		c.retired = append(c.retired, old)
+	}
+	c.mu.Unlock()
+	for _, u := range drained {
+		u.close()
+	}
+	if old == nil {
+		return
+	}
+	old.SetKeepIdleConnections(false)
+	for _, socket := range old.sockets.open() {
+		go func() {
+			if !socket.answers(probeBound) {
+				socket.Close()
+			}
+			old.CloseIdleConnections() // a dial finished during the check with no flow left
+		}()
+	}
+}
+
+// coalesce runs pass once for a burst of signals on moves, at most once per probeBound.
+func coalesce(moves, done <-chan struct{}, pass func()) {
+	for {
+		select {
+		case <-moves:
+		case <-done:
+			return
+		}
+		pass()
+		select {
+		case <-time.After(probeBound):
+		case <-done:
+			return
+		}
+	}
 }
 
 func (c *Client) Close() error {
@@ -107,16 +189,18 @@ func (c *Client) Close() error {
 		return nil
 	}
 	c.closed = true
-	client, cancel, sockets := c.client, c.cancel, c.sockets
+	all := c.retired
+	if c.current != nil {
+		all = append(all, c.current)
+	}
+	c.current, c.retired = nil, nil
+	unwatch := c.unwatch
 	c.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if unwatch != nil {
+		unwatch()
 	}
-	if client != nil {
-		client.CloseWithError(os.ErrClosed)
-	}
-	if sockets != nil {
-		sockets.Close()
+	for _, u := range all {
+		u.close()
 	}
 	return nil
 }
@@ -228,8 +312,8 @@ func (d *socketDialer) DialContext(ctx context.Context, network string, destinat
 	}
 	if wrapper, ok := conn.(*xnet.PacketConnWrapper); ok {
 		if udp, ok := wrapper.PacketConn.(*net.UDPConn); ok {
-			// quic-go cannot reach the socket behind this wrapper to enlarge its buffers
-			// itself; the defaults (768 KiB on macOS) dropped datagrams during transfers.
+			// quic-go, which gets the socket through PacketConn, asks for its own size once;
+			// set this tested one first: the defaults (768 KiB on macOS) dropped datagrams.
 			_ = udp.SetReadBuffer(quicSocketBuffer)
 			_ = udp.SetWriteBuffer(quicSocketBuffer)
 		}
@@ -259,20 +343,61 @@ func (d *socketDialer) ListenPacket(context.Context, M.Socksaddr) (net.PacketCon
 func (d *socketDialer) Close() {
 	d.mu.Lock()
 	d.closed = true
+	d.mu.Unlock()
+	for _, socket := range d.open() {
+		socket.Close()
+	}
+}
+
+func (d *socketDialer) open() []*ownedSocket {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	sockets := make([]*ownedSocket, 0, len(d.sockets))
 	for socket := range d.sockets {
 		sockets = append(sockets, socket)
 	}
-	d.mu.Unlock()
-	for _, socket := range sockets {
-		socket.Close()
-	}
+	return sockets
 }
 
 type ownedSocket struct {
 	net.Conn
 	once sync.Once
 	done func()
+	quic atomic.Pointer[quicgo.Conn]
+}
+
+// PacketConn hands quic-go the unconnected socket behind Xray's wrapper, with its batched
+// receive, GSO and ECN; quic-go's connected path would send without an address.
+func (c *ownedSocket) PacketConn() net.PacketConn {
+	if wrapper, ok := c.Conn.(*xnet.PacketConnWrapper); ok {
+		return wrapper.PacketConn
+	}
+	return nil
+}
+
+// SetQUICConn is how quic-go reports the connection it dialed over this socket.
+func (c *ownedSocket) SetQUICConn(conn *quicgo.Conn) { c.quic.Store(conn) }
+
+// answers reports whether the connection over this socket received anything within bound,
+// while it sends heartbeats, which the server acknowledges.
+func (c *ownedSocket) answers(bound time.Duration) bool {
+	var conn *quicgo.Conn
+	var before uint64
+	for range 5 {
+		if conn == nil {
+			if conn = c.quic.Load(); conn != nil {
+				before = conn.ConnectionStats().PacketsReceived
+			}
+		}
+		if conn != nil && conn.SendDatagram([]byte{quic.Version, quic.CommandHeartbeat}) != nil {
+			return false
+		}
+		time.Sleep(bound / 5)
+		if conn != nil && conn.ConnectionStats().PacketsReceived > before {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *ownedSocket) Close() error {
@@ -306,6 +431,9 @@ type packetWriter struct {
 	conn    net.PacketConn
 	target  xnet.Destination
 	counter stats.Counter
+	// The last packet's target and its socket address, built once per peer.
+	lastTarget xnet.Destination
+	lastAddr   net.Addr
 }
 
 func (w *packetWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
@@ -315,7 +443,10 @@ func (w *packetWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
 		if b.UDP != nil {
 			target = *b.UDP
 		}
-		n, err := w.conn.WriteTo(b.Bytes(), M.ParseSocksaddr(target.NetAddr()))
+		if target != w.lastTarget || w.lastAddr == nil {
+			w.lastTarget, w.lastAddr = target, M.ParseSocksaddr(target.NetAddr())
+		}
+		n, err := w.conn.WriteTo(b.Bytes(), w.lastAddr)
 		if w.counter != nil {
 			w.counter.Add(int64(n))
 		}
@@ -330,6 +461,9 @@ type packetReader struct {
 	conn    net.PacketConn
 	counter stats.Counter
 	scratch []byte
+	// The last datagram's peer and its destination, built once per peer.
+	lastPeer M.Socksaddr
+	lastDest xnet.Destination
 }
 
 func (r *packetReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
@@ -346,8 +480,10 @@ func (r *packetReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
 	// Queued datagrams keep their buffers; size each to its data, as freedom does.
 	b := buf.NewWithSize(int32(n))
 	b.Write(r.scratch[:n])
-	peer := M.SocksaddrFromNet(address)
-	destination := xnet.UDPDestination(xnet.ParseAddress(peer.AddrString()), xnet.Port(peer.Port))
+	if peer := M.SocksaddrFromNet(address); peer != r.lastPeer || !r.lastDest.IsValid() {
+		r.lastPeer, r.lastDest = peer, xnet.UDPDestination(xnet.ParseAddress(peer.AddrString()), xnet.Port(peer.Port))
+	}
+	destination := r.lastDest // each buffer gets its own copy: later handlers rewrite it
 	b.UDP = &destination
 	return buf.MultiBuffer{b}, nil
 }

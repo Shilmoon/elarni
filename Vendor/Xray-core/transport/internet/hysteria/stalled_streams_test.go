@@ -69,8 +69,8 @@ func TestStalledDownloadsLeaveTheConnectionUsable(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			client := &client{lock: make(chan struct{}, 1), conn: conn, tr: tr, pktConn: socket}
-			defer client.close()
+			client := &client{lock: make(chan struct{}, 1), current: &connection{Conn: conn, tr: tr, pktConn: socket}}
+			defer client.clean(true)
 
 			for range 3 {
 				stalled, err := client.tcp(ctx)

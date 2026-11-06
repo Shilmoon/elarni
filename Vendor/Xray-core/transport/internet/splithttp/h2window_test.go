@@ -16,7 +16,7 @@ import (
 func TestHTTP2DownloadsAdvertiseTwoMiBStreamWindows(t *testing.T) {
 	client, server := net.Pipe()
 	defer server.Close()
-	transport := h2Transport(func(context.Context) (net.Conn, error) { return client, nil }, 0)
+	transport := h2Transport(func(context.Context) (net.Conn, error) { return client, nil }, 0, nil)
 	defer transport.CloseIdleConnections()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -40,5 +40,12 @@ func TestHTTP2DownloadsAdvertiseTwoMiBStreamWindows(t *testing.T) {
 	}
 	if window, _ := settings.Value(http2.SettingInitialWindowSize); window != 2<<20 {
 		t.Fatalf("stream window %d, want %d", window, 2<<20)
+	}
+}
+
+// iOS kills the packet tunnel above about 50 MB, so a stalled download holds half as much there.
+func TestHTTP2StreamWindowIsOneMiBOnIOS(t *testing.T) {
+	if got := h2StreamWindow("ios"); got != 1<<20 {
+		t.Fatalf("iOS stream window %d, want 1 MiB", got)
 	}
 }

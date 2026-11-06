@@ -11,7 +11,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use device::PacketDevice;
+use device::{InputRoom, PacketDevice};
 use framing::{FrameAssembler, validate_packet};
 use tokio::runtime::Builder;
 use tokio::sync::mpsc;
@@ -22,6 +22,8 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(2);
 const MIN_PACKET_BYTES: usize = 1280;
 const MAX_PACKET_BYTES: usize = 65_535;
 const MAX_QUEUE_PACKETS: usize = 4096;
+/// How long a submit waits for room in a full input queue before it drops the packet.
+const SUBMIT_WAIT: Duration = Duration::from_millis(10);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -84,6 +86,8 @@ struct Counters {
 
 pub struct ElarniPacketBridge {
     input: mpsc::Sender<Vec<u8>>,
+    input_room: Arc<InputRoom>,
+    submit_wait: Duration,
     output: Arc<Mutex<FrameAssembler>>,
     output_ready: Arc<Condvar>,
     cancellation: CancellationToken,
@@ -100,6 +104,10 @@ pub extern "C" fn elarni_packet_abi_version() -> u32 {
     ELARNI_PACKET_ABI_VERSION
 }
 
+// Elarni: 10 s ended game, VoIP and STUN associations between their 15-30 s keepalives. DNS sessions,
+// most of the churn, now end with their answer; the session cap still bounds the rest.
+const UDP_TIMEOUT_SECONDS: u64 = 60;
+
 #[unsafe(no_mangle)]
 pub extern "C" fn elarni_packet_bridge_new(
     socks_port: u16,
@@ -108,6 +116,29 @@ pub extern "C" fn elarni_packet_bridge_new(
     udp_max_sessions: usize,
     queue_packets: usize,
     max_packet_bytes: usize,
+) -> *mut ElarniPacketBridge {
+    elarni_packet_bridge_new_with_udp_timeout(
+        socks_port,
+        mtu,
+        tcp_max_sessions,
+        udp_max_sessions,
+        queue_packets,
+        max_packet_bytes,
+        UDP_TIMEOUT_SECONDS,
+    )
+}
+
+/// `elarni_packet_bridge_new` whose UDP sessions end after `udp_timeout_seconds` (1-600) without
+/// traffic instead of 60 s, so checks need not wait out the production timeout.
+#[unsafe(no_mangle)]
+pub extern "C" fn elarni_packet_bridge_new_with_udp_timeout(
+    socks_port: u16,
+    mtu: u16,
+    tcp_max_sessions: usize,
+    udp_max_sessions: usize,
+    queue_packets: usize,
+    max_packet_bytes: usize,
+    udp_timeout_seconds: u64,
 ) -> *mut ElarniPacketBridge {
     new_bridge(
         ArgProxy {
@@ -120,6 +151,7 @@ pub extern "C" fn elarni_packet_bridge_new(
         udp_max_sessions,
         queue_packets,
         max_packet_bytes,
+        udp_timeout_seconds,
     )
 }
 
@@ -171,6 +203,7 @@ pub unsafe extern "C" fn elarni_packet_bridge_new_authenticated(
         udp_max_sessions,
         queue_packets,
         max_packet_bytes,
+        UDP_TIMEOUT_SECONDS,
     )
 }
 
@@ -181,8 +214,10 @@ fn new_bridge(
     udp_max_sessions: usize,
     queue_packets: usize,
     max_packet_bytes: usize,
+    udp_timeout: u64,
 ) -> *mut ElarniPacketBridge {
     if proxy.addr.port() == 0
+        || !(1..=600).contains(&udp_timeout)
         || usize::from(mtu) < MIN_PACKET_BYTES
         || tcp_max_sessions == 0
         || udp_max_sessions == 0
@@ -196,6 +231,7 @@ fn new_bridge(
     }
 
     let (sender, receiver) = mpsc::channel(queue_packets);
+    let input_room = Arc::new(InputRoom::default());
     let output = Arc::new(Mutex::new(FrameAssembler::new(
         max_packet_bytes,
         queue_packets,
@@ -204,7 +240,12 @@ fn new_bridge(
     let cancellation = CancellationToken::new();
     let state = Arc::new(AtomicU8::new(ElarniPacketState::Starting as u8));
     let counters = Arc::new(Counters::default());
-    let device = PacketDevice::new(receiver, output.clone(), output_ready.clone());
+    let device = PacketDevice::new(
+        receiver,
+        input_room.clone(),
+        output.clone(),
+        output_ready.clone(),
+    );
     let thread_cancellation = cancellation.clone();
     let thread_state = state.clone();
     let virtual_dns_metrics = Arc::new(VirtualDnsMetrics::default());
@@ -220,6 +261,7 @@ fn new_bridge(
         udp_max_sessions,
         session_metrics: Some(session_metrics.clone()),
         mtu,
+        udp_timeout,
         virtual_dns_capacity: 256,
         virtual_dns_mapping_ttl: 60,
         virtual_dns_answer_ttl: 5,
@@ -262,6 +304,8 @@ fn new_bridge(
 
     Box::into_raw(Box::new(ElarniPacketBridge {
         input: sender,
+        input_room,
+        submit_wait: SUBMIT_WAIT,
         output,
         output_ready,
         cancellation,
@@ -307,21 +351,62 @@ pub unsafe extern "C" fn elarni_packet_bridge_submit(
         bridge.counters.malformed.fetch_add(1, Ordering::Relaxed);
         return ElarniPacketStatus::MalformedPacket;
     }
-    match bridge.input.try_send(packet.to_vec()) {
-        Ok(()) => {
+    let status = match bridge.input.try_send(packet.to_vec()) {
+        Ok(()) => ElarniPacketStatus::Ok,
+        Err(mpsc::error::TrySendError::Full(packet)) => bridge.send_within_wait(packet),
+        Err(mpsc::error::TrySendError::Closed(_)) => ElarniPacketStatus::Stopped,
+    };
+    match status {
+        ElarniPacketStatus::Ok => {
             bridge.counters.packets_in.fetch_add(1, Ordering::Relaxed);
             bridge
                 .counters
                 .bytes_in
                 .fetch_add(packet_len as u64, Ordering::Relaxed);
-            ElarniPacketStatus::Ok
         }
-        Err(mpsc::error::TrySendError::Full(_)) => {
-            // Drop this packet like a congested link; the tunnel keeps running.
+        // Drop this packet like a congested link; the tunnel keeps running.
+        ElarniPacketStatus::QueueOverflow => {
             bridge.counters.overflows.fetch_add(1, Ordering::Relaxed);
-            ElarniPacketStatus::QueueOverflow
         }
-        Err(mpsc::error::TrySendError::Closed(_)) => ElarniPacketStatus::Stopped,
+        _ => {}
+    }
+    status
+}
+
+impl ElarniPacketBridge {
+    /// Waits up to `submit_wait` for the stack to take a packet from the full input queue. A burst used to
+    /// be dropped there, costing the client a retransmission; the next read waits instead. Stop ends the wait.
+    fn send_within_wait(&self, mut packet: Vec<u8>) -> ElarniPacketStatus {
+        let deadline = Instant::now() + self.submit_wait;
+        let Ok(mut guard) = self.input_room.lock.lock() else {
+            return ElarniPacketStatus::InternalError;
+        };
+        self.input_room.waiting.fetch_add(1, Ordering::SeqCst);
+        let status = loop {
+            // Pairs with the fence in `InputRoom::notify`: this retry sees the freed slot, or the reader sees the waiter.
+            std::sync::atomic::fence(Ordering::SeqCst);
+            match self.input.try_send(packet) {
+                Ok(()) => break ElarniPacketStatus::Ok,
+                Err(mpsc::error::TrySendError::Closed(_)) => break ElarniPacketStatus::Stopped,
+                Err(mpsc::error::TrySendError::Full(rejected)) => packet = rejected,
+            }
+            if self.state.load(Ordering::Acquire) != ElarniPacketState::Running as u8 {
+                break ElarniPacketStatus::Stopped;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break ElarniPacketStatus::QueueOverflow;
+            }
+            match self.input_room.freed.wait_timeout(guard, left) {
+                Ok((next, _)) => guard = next,
+                Err(_) => {
+                    self.input_room.waiting.fetch_sub(1, Ordering::SeqCst);
+                    return ElarniPacketStatus::InternalError;
+                }
+            }
+        };
+        self.input_room.waiting.fetch_sub(1, Ordering::SeqCst);
+        status
     }
 }
 
@@ -471,6 +556,7 @@ pub unsafe extern "C" fn elarni_packet_bridge_stop(
     // Taking the lock orders this wake after a waiter's last look at the state.
     drop(bridge.output.lock());
     bridge.output_ready.notify_all();
+    bridge.input_room.wake();
     bridge.cancellation.cancel();
     let deadline = Instant::now() + STOP_TIMEOUT;
     loop {

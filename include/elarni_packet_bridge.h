@@ -66,6 +66,18 @@ struct ElarniPacketBridge *elarni_packet_bridge_new(uint16_t socks_port,
                                                     size_t max_packet_bytes);
 
 /**
+ * `elarni_packet_bridge_new` whose UDP sessions end after `udp_timeout_seconds` (1-600) without
+ * traffic instead of 60 s, so checks need not wait out the production timeout.
+ */
+struct ElarniPacketBridge *elarni_packet_bridge_new_with_udp_timeout(uint16_t socks_port,
+                                                                     uint16_t mtu,
+                                                                     size_t tcp_max_sessions,
+                                                                     size_t udp_max_sessions,
+                                                                     size_t queue_packets,
+                                                                     size_t max_packet_bytes,
+                                                                     uint64_t udp_timeout_seconds);
+
+/**
  * # Safety
  * Credential pointers must reference their stated readable lengths for this call.
  */

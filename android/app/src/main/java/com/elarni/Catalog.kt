@@ -532,6 +532,24 @@ class Catalog(val data: JSONObject) {
             Regex("\\d{1,6}").matchEntire(headers.string("profile-update-interval").trim())?.value?.toInt()?.takeIf { it > 0 }
                 ?.let { metadata.put("updateIntervalHours", it.coerceAtMost(168)) }
         }
+        /** Without lockdown, which blocks the apps a VPN leaves out, apps that need no tunnel stay out of the userspace stack:
+         *  the VPN Builder's allowed (true) or disallowed (false) apps besides [self], or null when every app enters. */
+        fun tunnelApps(settings: JSONObject, self: String, uid: (String) -> Int?): Pair<Boolean, List<String>>? {
+            // An uninstalled app has no UID; Android would keep its name in a list and match no app.
+            val installed = settings.strings("perAppProcesses").filter { it != self }.mapNotNull { name -> uid(name)?.let { name to it } }
+            val targets = settings.mapObject("perAppTargets")
+            return when (settings.string("perAppMode")) {
+                // The core still routes each listed app, whatever its target.
+                "proxyOnly" -> if (installed.isEmpty()) null else true to installed.map { it.first }
+                "bypass" -> {
+                    // Apps sharing a UID share one rule, set by the first listed app with a target, as in perAppTargets.
+                    val shared = mutableMapOf<Int, String>()
+                    installed.forEach { (name, id) -> if (targets.has(name)) shared.putIfAbsent(id, targets.getString(name)) }
+                    false to installed.filter { (_, id) -> (shared[id] ?: "direct") == "direct" }.map { it.first }
+                }
+                else -> null
+            }
+        }
         // Subscriptions, managed lists and geodata retry a failed refresh after 60, 300, then 1800 s.
         fun retryDelay(failures: Int) = listOf(60, 300, 1800)[(failures - 1).coerceIn(0, 2)]
         // Whole hours from 1 to 168, without a leading zero.

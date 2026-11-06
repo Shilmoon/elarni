@@ -340,33 +340,33 @@ func clearVPNGuard() (any, error) {
 // The guard outlives a crashed helper, so a crash blocks DNS instead of leaking
 // it until a helper removes it or Windows restarts. Physical DNS settings stay intact.
 // The caller holds claimGuard's owner handle for as long as the guard may exist.
-func protectDNS(luid uint64, protected []netip.Prefix) (func(), error) {
+func protectDNS(luid uint64, protected []netip.Prefix) error {
 	failed := errors.New("dns_guard_failed")
 	if unsafe.Sizeof(wfpFilter{}) != 200 || unsafe.Sizeof(wfpSession{}) != 72 || unsafe.Sizeof(wfpCondition{}) != 40 {
-		return nil, failed
+		return failed
 	}
 	engine, err := openWFP()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer wfpClose.Call(engine)
 	name, _ := windows.UTF16PtrFromString("Elarni DNS")
 	display := wfpDisplay{Name: name, Description: name}
 	executable, err := os.Executable()
 	if err != nil {
-		return nil, failed
+		return failed
 	}
 	path, _ := windows.UTF16PtrFromString(executable)
 	var appID *wfpBlob
 	code, _, _ := wfpAppID.Call(uintptr(unsafe.Pointer(path)), uintptr(unsafe.Pointer(&appID)))
 	if code != 0 {
-		return nil, syscall.Errno(code)
+		return syscall.Errno(code)
 	}
 	defer wfpFree.Call(uintptr(unsafe.Pointer(&appID)))
 	sublayer := wfpSublayer{Key: guardSublayer, Display: display, Weight: 65535}
 	code, _, _ = wfpBegin.Call(engine, 0)
 	if code != 0 {
-		return nil, syscall.Errno(code)
+		return syscall.Errno(code)
 	}
 	complete := false
 	defer func() {
@@ -375,11 +375,11 @@ func protectDNS(luid uint64, protected []netip.Prefix) (func(), error) {
 		}
 	}()
 	if err := clearGuard(engine); err != nil { // A crashed helper's leftovers.
-		return nil, err
+		return err
 	}
 	code, _, _ = wfpAddSublayer.Call(engine, uintptr(unsafe.Pointer(&sublayer)), 0)
 	if code != 0 {
-		return nil, syscall.Errno(code)
+		return syscall.Errno(code)
 	}
 	remotePort := wfpGUID("c35a604d-d22b-4e1a-91b4-68f674ee674b")
 	protocol := wfpGUID("3971ef2b-623e-4f9a-8cb1-6e79b806b9a7")
@@ -403,7 +403,7 @@ func protectDNS(luid uint64, protected []netip.Prefix) (func(), error) {
 	for _, layer := range []windows.GUID{wfpGUID("c38d57d1-05a7-4c33-904f-7fbceee60e82"), wfpGUID("4a72393b-319f-44bc-84c3-ba54dcb3b6b4")} {
 		if len(protected) > 0 {
 			if err := add(layer, []wfpCondition{{Field: application, Value: wfpValue{Type: 12, Value: uintptr(unsafe.Pointer(appID))}}}, 0x1002, 2); err != nil {
-				return nil, err
+				return err
 			}
 		}
 		for _, proto := range []uintptr{6, 17} {
@@ -419,7 +419,7 @@ func protectDNS(luid uint64, protected []netip.Prefix) (func(), error) {
 					conditions = append(conditions, wfpCondition{Field: localInterface, Match: 10 /* FWP_MATCH_NOT_EQUAL */, Value: wfpValue{Type: 4, Value: uintptr(unsafe.Pointer(&luid))}})
 				}
 				if err := add(layer, conditions, action, weight); err != nil {
-					return nil, err
+					return err
 				}
 			}
 		}
@@ -451,7 +451,7 @@ func protectDNS(luid uint64, protected []netip.Prefix) (func(), error) {
 		err := add(layer, conditions, 0x1001, 1)
 		pin.Unpin()
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
 	runtime.KeepAlive(appID)
@@ -463,10 +463,8 @@ func protectDNS(luid uint64, protected []netip.Prefix) (func(), error) {
 	}
 	code, _, _ = wfpCommit.Call(engine)
 	if code != 0 {
-		return nil, syscall.Errno(code)
+		return syscall.Errno(code)
 	}
 	complete = true
-	return func() {
-		_ = releaseGuard() // On failure the marker stays, so Repair can retry.
-	}, nil
+	return nil
 }

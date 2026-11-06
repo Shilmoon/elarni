@@ -13,16 +13,97 @@ import (
 	"github.com/xtls/xray-core/common/net"
 )
 
-type packet struct {
-	data []byte
-	dest *net.Destination
+// udpQueueLimit is the most datagrams a flow holds for its outbound before it drops new ones.
+const udpQueueLimit = 1024
+
+// packetQueue holds a flow's datagrams until its one reader takes them. It takes memory only for
+// datagrams that wait (Elarni): a channel allocated all 1024 slots (8 KiB) for every flow up front.
+type packetQueue struct {
+	mu      sync.Mutex
+	packets []*buf.Buffer
+	head    int
+	closed  bool
+	ready   chan struct{} // wakes a reader waiting for a datagram
+}
+
+// push queues b; it fails once the queue is closed or full.
+func (q *packetQueue) push(b *buf.Buffer) bool {
+	q.mu.Lock()
+	if q.closed || len(q.packets)-q.head >= udpQueueLimit {
+		q.mu.Unlock()
+		return false
+	}
+	if q.head > 0 && len(q.packets) == cap(q.packets) {
+		n := copy(q.packets, q.packets[q.head:])
+		clear(q.packets[n:])
+		q.packets, q.head = q.packets[:n], 0
+	}
+	q.packets = append(q.packets, b)
+	ready := q.ready
+	q.mu.Unlock()
+	wake(ready)
+	return true
+}
+
+// pop returns the oldest datagram, waiting for one; it returns nil once the queue is closed and empty.
+func (q *packetQueue) pop() *buf.Buffer {
+	for {
+		q.mu.Lock()
+		if q.head < len(q.packets) {
+			b := q.packets[q.head]
+			q.packets[q.head] = nil
+			if q.head++; q.head == len(q.packets) {
+				q.packets, q.head = q.packets[:0], 0
+			}
+			q.mu.Unlock()
+			return b
+		}
+		if q.closed {
+			q.mu.Unlock()
+			return nil
+		}
+		if q.ready == nil {
+			q.ready = make(chan struct{}, 1)
+		}
+		ready := q.ready
+		q.mu.Unlock()
+		<-ready
+	}
+}
+
+// close ends the queue; its reader still gets the datagrams queued before.
+func (q *packetQueue) close() {
+	q.mu.Lock()
+	q.closed = true
+	ready := q.ready
+	q.mu.Unlock()
+	wake(ready)
+}
+
+func wake(ready chan struct{}) {
+	select {
+	case ready <- struct{}{}:
+	default:
+	}
+}
+
+// udpFlowKey binds a flow to its app socket, so replies from any peer reach the app (full cone). A DNS
+// datagram's flow also keys on its server (Elarni): routing hijacks port 53 to the DNS outbound, which drops
+// anything else, so one socket's DNS and other traffic must not follow whichever came first.
+type udpFlowKey struct{ src, dns net.Destination }
+
+func flowKey(src, dst net.Destination) udpFlowKey {
+	if dst.Port == 53 {
+		return udpFlowKey{src, dst}
+	}
+	return udpFlowKey{src: src}
 }
 
 // sub-handler specifically for udp connections under main handler
 type udpConnectionHandler struct {
 	sync.RWMutex
 
-	udpConns map[net.Destination]*udpConn
+	udpConns map[udpFlowKey]*udpConn
 	closed   bool
 
 	handleConnection func(conn net.Conn, dest net.Destination)
@@ -31,7 +112,7 @@ type udpConnectionHandler struct {
 
 func newUdpConnectionHandler(handleConnection func(conn net.Conn, dest net.Destination), writePacket func(data []byte, src net.Destination, dst net.Destination) error) *udpConnectionHandler {
 	handler := &udpConnectionHandler{
-		udpConns:         make(map[net.Destination]*udpConn),
+		udpConns:         make(map[udpFlowKey]*udpConn),
 		handleConnection: handleConnection,
 		writePacket:      writePacket,
 	}
@@ -39,20 +120,24 @@ func newUdpConnectionHandler(handleConnection func(conn net.Conn, dest net.Desti
 	return handler
 }
 
-// HandlePacket handles UDP packets coming from tun, to forward to the dispatcher
+// HandlePacket hands a datagram from tun, which it takes ownership of, to its flow.
 // this custom handler support FullCone NAT of returning packets, binding connection only by the source addr:port
-func (u *udpConnectionHandler) HandlePacket(src net.Destination, dst net.Destination, data []byte) {
+func (u *udpConnectionHandler) HandlePacket(src net.Destination, dst net.Destination, b *buf.Buffer) {
+	b.UDP = &dst
+	key := flowKey(src, dst)
 	u.RLock()
 	if u.closed {
 		u.RUnlock()
+		b.Release()
 		return
 	}
-	conn, found := u.udpConns[src]
+	conn, found := u.udpConns[key]
 	if found {
-		queued, retired := conn.enqueue(&packet{data: data, dest: &dst})
+		queued, retired := conn.enqueue(b)
 		if !retired {
 			if !queued {
-				errors.LogDebug(context.Background(), "drop udp with size ", len(data), " to ", dst.NetAddr(), " original ", conn.dst.NetAddr(), " > queue full")
+				errors.LogDebug(context.Background(), "drop udp with size ", b.Len(), " to ", dst.NetAddr(), " original ", conn.dst.NetAddr(), " > queue full")
+				b.Release()
 			}
 			u.RUnlock()
 			return
@@ -63,29 +148,30 @@ func (u *udpConnectionHandler) HandlePacket(src net.Destination, dst net.Destina
 	u.Lock()
 	defer u.Unlock()
 	if u.closed {
+		b.Release()
 		return
 	}
 
 	for {
-		conn, found = u.udpConns[src]
+		conn, found = u.udpConns[key]
 		if !found {
-			egress := make(chan *packet, 1024)
-			conn = &udpConn{handler: u, egress: egress, src: src, dst: dst}
+			conn = &udpConn{handler: u, key: key, src: src, dst: dst}
 			if dst.Port == 53 {
 				conn.done, conn.retire = conn.answered, conn.retireAnswered
 			}
-			u.udpConns[src] = conn
+			u.udpConns[key] = conn
 		}
-		// send packet data to the egress channel, if it has buffer, or discard
-		queued, retired := conn.enqueue(&packet{data: data, dest: &dst})
+		// send packet data to the egress queue, if it has room, or discard
+		queued, retired := conn.enqueue(b)
 		if retired {
 			// Admission replaced this flow and its session is ending: the datagram starts a new one (Elarni).
-			delete(u.udpConns, src)
-			close(conn.egress)
+			delete(u.udpConns, key)
+			conn.egress.close()
 			continue
 		}
 		if !queued {
-			errors.LogDebug(context.Background(), "drop udp with size ", len(data), " to ", dst.NetAddr(), " original ", conn.dst.NetAddr(), " > queue full 2")
+			errors.LogDebug(context.Background(), "drop udp with size ", b.Len(), " to ", dst.NetAddr(), " original ", conn.dst.NetAddr(), " > queue full 2")
+			b.Release()
 		}
 		if !found {
 			// Started after its first datagram is queued and counted, so admission never takes it for answered.
@@ -99,17 +185,17 @@ func (u *udpConnectionHandler) Close() {
 	u.Lock()
 	defer u.Unlock()
 	u.closed = true
-	for src, conn := range u.udpConns {
-		delete(u.udpConns, src)
-		close(conn.egress)
+	for key, conn := range u.udpConns {
+		delete(u.udpConns, key)
+		conn.egress.close()
 	}
 }
 
 func (u *udpConnectionHandler) connectionFinished(conn *udpConn) {
 	u.Lock()
-	if u.udpConns[conn.src] == conn {
-		delete(u.udpConns, conn.src)
-		close(conn.egress)
+	if u.udpConns[conn.key] == conn {
+		delete(u.udpConns, conn.key)
+		conn.egress.close()
 	}
 	u.Unlock()
 }
@@ -119,7 +205,8 @@ type udpConn struct {
 	activity
 	handler *udpConnectionHandler
 
-	egress chan *packet
+	egress packetQueue
+	key    udpFlowKey
 	src    net.Destination
 	dst    net.Destination
 	// datagrams from the app minus datagrams back to it; a DNS flow at zero has every query answered
@@ -147,7 +234,7 @@ func (c *udpConn) answer(n int64) {
 
 // enqueue hands a datagram from the app to the flow; queued is false when the queue is full, and retired
 // when admission replaced the flow, which then takes nothing.
-func (c *udpConn) enqueue(p *packet) (queued, retired bool) {
+func (c *udpConn) enqueue(b *buf.Buffer) (queued, retired bool) {
 	for {
 		n := c.unanswered.Load()
 		if n < 0 {
@@ -157,44 +244,32 @@ func (c *udpConn) enqueue(p *packet) (queued, retired bool) {
 			break
 		}
 	}
-	select {
-	case c.egress <- p:
+	if c.egress.push(b) {
 		return true, false
-	default:
-		c.unanswered.Add(-1)
-		return false, false
 	}
+	c.unanswered.Add(-1)
+	return false, false
 }
 
 func (c *udpConn) ReadMultiBuffer() (buf.MultiBuffer, error) {
-	for {
-		e, ok := <-c.egress
-		if !ok {
-			return nil, io.EOF
-		}
-
-		b := buf.NewWithSize(int32(len(e.data)))
-		if _, err := b.Write(e.data); err != nil {
-			errors.LogErrorInner(context.Background(), err, "drop packet to ", e.dest, " with size ", len(e.data))
-			b.Release()
-			continue
-		}
-		b.UDP = e.dest
-		c.touch()
-
-		return buf.MultiBuffer{b}, nil
+	b := c.egress.pop()
+	if b == nil {
+		return nil, io.EOF
 	}
+	c.touch()
+	return buf.MultiBuffer{b}, nil
 }
 
 // Read packets from the connection
 func (c *udpConn) Read(p []byte) (int, error) {
-	e, ok := <-c.egress
-	if !ok {
+	b := c.egress.pop()
+	if b == nil {
 		return 0, io.EOF
 	}
+	defer b.Release()
 	c.touch()
-	n := copy(p, e.data)
-	if n != len(e.data) {
+	n := copy(p, b.Bytes())
+	if n != int(b.Len()) {
 		return 0, io.ErrShortBuffer
 	}
 	return n, nil

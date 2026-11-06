@@ -42,11 +42,17 @@ type DefaultDialerClient struct {
 	uploadConns    []*H1Conn
 	uploadClosed   bool // set by Close: posts still writing must not pool their connections
 	dialUploadConn func(ctxInner context.Context) (net.Conn, error)
-	preconnect     *preconnect // HTTP/2 only
+	preconnect     *preconnect   // HTTP/2 only
+	open           *atomic.Int32 // HTTP/2 and HTTP/3 connections up
 }
 
 func (c *DefaultDialerClient) IsClosed() bool {
 	return c.closed.Load()
+}
+
+// warm reports whether a request would find a connection without a handshake.
+func (c *DefaultDialerClient) warm() bool {
+	return c.open.Load() > 0 || c.preconnect != nil && c.preconnect.waiting()
 }
 
 func (c *DefaultDialerClient) OpenStream(ctx context.Context, url string, sessionId string, body io.Reader, uploadOnly bool) (wrc io.ReadCloser, remoteAddr, localAddr net.Addr, err error) {

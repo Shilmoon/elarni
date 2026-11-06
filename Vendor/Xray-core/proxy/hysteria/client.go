@@ -178,6 +178,9 @@ type UDPWriter struct {
 	writer io.Writer
 	addr   string
 	buf    [buf.Size]byte
+	// The last packet's destination and its address string, built once per peer.
+	lastDest net.Destination
+	lastAddr string
 }
 
 func (w *UDPWriter) SendMessage(msg *UDPMessage) error {
@@ -193,7 +196,10 @@ func (w *UDPWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
 	for i, b := range mb {
 		addr := w.addr
 		if b.UDP != nil {
-			addr = b.UDP.NetAddr()
+			if *b.UDP != w.lastDest || w.lastAddr == "" {
+				w.lastDest, w.lastAddr = *b.UDP, b.UDP.NetAddr()
+			}
+			addr = w.lastAddr
 		}
 
 		msg := &UDPMessage{
@@ -232,6 +238,9 @@ type UDPReader struct {
 	reader   io.Reader
 	df       *Defragger
 	firstBuf *buf.Buffer
+	// The last message's address and its parse, done once per peer.
+	lastAddr string
+	lastDest net.Destination
 }
 
 func (r *UDPReader) ReadFrom(p []byte) (n int, addr *net.Destination, err error) {
@@ -253,15 +262,19 @@ func (r *UDPReader) ReadFrom(p []byte) (n int, addr *net.Destination, err error)
 			continue
 		}
 
-		dest, err := net.ParseDestination("udp:" + dfMsg.Addr)
-		if err != nil {
-			continue
+		if dfMsg.Addr != r.lastAddr {
+			dest, err := net.ParseDestination("udp:" + dfMsg.Addr)
+			if err != nil {
+				continue
+			}
+			r.lastAddr, r.lastDest = dfMsg.Addr, dest
 		}
 
 		if len(p) < len(dfMsg.Data) {
 			continue
 		}
 
+		dest := r.lastDest // each buffer gets its own copy: later handlers rewrite it
 		return copy(p, dfMsg.Data), &dest, nil
 	}
 }

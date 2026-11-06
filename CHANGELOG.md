@@ -9,10 +9,97 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - Imported profiles can no longer read the core's environment through a field name
   that only matches under Unicode case folding, such as `addreſs`.
 
+### Added
+
+- Windows and Linux: Settings › Connection › Connection mode picks System-wide VPN (the default),
+  System proxy or Local proxy only. System proxy points the Windows proxy setting, or
+  GNOME's and KDE Plasma's, at Elarni's HTTP listener while connected and puts the
+  previous setting back on disconnect, on quit, and at the next start after a crash.
+- macOS: the app warns when the VPN extension that runs is another build's (a leftover
+  development build's extension used 6.6 GB).
+
 ### Changed
 
 - A release is built only from a commit whose checks passed, and every main commit
   is checked (a newer push no longer cancels a pending run).
+- Windows and Linux: a dropped connection is retried on the selected server without
+  automation turned on: after 1, 2, 4, 8, 16 and 30 s, then every minute for as long as
+  you stay connected and online. Failover to other servers still needs automation. A
+  connection left on when Elarni quits comes back at the next start; Disconnect ends it.
+  The On Demand switch, which did nothing there, is gone.
+- Windows and Linux: the elevated helper outlives a tunnel that failed or ended by
+  itself, so reconnecting asks for administrator approval only once per session.
+- Windows and Linux: with automation on, a failed server check is repeated after 10 s
+  instead of 30 s, so failover leaves a dead server within about 80 s instead of 120 s.
+  Each backup is tried in turn without saving the catalog again or restarting the
+  failed server in between; the original comes back only if no backup works.
+- iOS: On Demand is on for new installs; a saved choice is kept.
+- Android: apps that need no tunnel (bypassed apps going direct, and unlisted apps in
+  Only listed mode) stay out of the VPN entirely while lockdown is off, and use the
+  system's DNS.
+- Android: after a crash the VPN comes back by itself, at most once in 10 minutes, and
+  the watchdog also runs while the phone dozes.
+- Android: the background refresh job runs hourly, and only when a subscription, route
+  list or expiry reminder is due. Server checks run only while traffic flows.
+
+### Fixed
+
+- A TLS, REALITY or HTTPUpgrade handshake that DPI swallows gives up after 16 s and frees
+  its socket; a failed handshake no longer leaks it. A refused or timed-out server fails
+  at once instead of after five tries.
+- DNS: a lookup that fails is answered with SERVFAIL, so apps try again at once instead
+  of waiting out their own timeout; a lost query is sent again after 1 s; a remote
+  resolver that stalls gives up after 2 s, and expired answers are served while they
+  refresh. A DoH server that stalls while connecting gives up after 16 s instead of
+  holding every lookup. A plain-UDP remote resolver now goes through the proxy, and
+  `+local` resolvers in imported profiles, which bypassed the tunnel, are dropped.
+- After a network change, pooled XHTTP, gRPC, Hysteria, TUIC and DNS connections are
+  checked and only dead ones are closed; new connections use the new network (Windows,
+  Linux, Android, macOS, iOS). Android and macOS keep the core running instead of
+  restarting it, and Linux and Windows also do this after sleep.
+- XHTTP/3: a failed dial no longer leaks its socket, more than 100 sessions no longer
+  stall for 16 s, and closing the first app no longer aborts the shared dial.
+- Routing with IP rules uses the connection's own address instead of looking its domain
+  up again.
+- Android: an error in a background task no longer ends the app and its VPN; a failed
+  save no longer undoes a connect.
+- Android: in Only listed mode, a connection whose app Android cannot identify stays in
+  the tunnel.
+- Android: the Quick Settings tile shows a VPN paused for sleep as off.
+- iOS and macOS: a stalled core is restarted after two failed checks, and packet writes
+  refused while settings change no longer end the tunnel.
+- Linux: a failed nft cleanup keeps the marker, so Repair VPN setup still finds the
+  leftover redirect.
+- Windows: a DNS setting that could not be restored on disconnect is reported, and
+  retried.
+- Testing many servers at once no longer fails a server now and then: two probes could be
+  given the same local port and fail each other's login (Windows, Linux, macOS, Android).
+
+### Performance
+
+- iOS and macOS: faster downloads through the packet tunnel (TCP window scaling, one copy
+  per segment, half the ACKs); a burst of packets waits up to 10 ms instead of being
+  dropped; DNS sessions end with their answers.
+- Fewer copies and allocations per UDP datagram in the TUN stack, Hysteria, TUIC and
+  WireGuard; TUIC uses batched reads and GSO.
+- Idle UDP flows in the TUN stack end after 2 minutes instead of 5; a full table refuses
+  new connections before their handshake; near the memory limit, idle sessions are
+  replaced first.
+- Hysteria keeps its connection alive (10 s keepalive) and shares one dial between
+  flows; XHTTP gives new flows a connection that is already up.
+- Android: the core's DNS answers are cached for their TTL, routing data is not read
+  again for the same route, and logs are capped at 200 lines a second.
+- The core returns memory after light traffic at most once a minute instead of every
+  5 s, and still at once after a large download or when many connections close.
+- iOS: lower peak memory for XHTTP and QUIC downloads, and the core is not compiled
+  again for a restart with the same settings.
+- Desktop: no window rebuilds or catalog saves on unchanged state, direct TCP tests use
+  sockets instead of a core per server, and the helper returns memory after each start.
+- Windows: reconnecting with unchanged routing data no longer sends and checks the
+  geofiles again (80 ms and about 100 MB of copies for 18 MiB of geodata).
+- Linux: per-app routing looks up the owners of a burst of new connections in one
+  pass (64 connections: 9 ms instead of 36 ms).
+- Windows: an idle direct UDP flow no longer holds a 64 KiB read buffer.
 
 ## 0.4.1 - 2026-11-04
 

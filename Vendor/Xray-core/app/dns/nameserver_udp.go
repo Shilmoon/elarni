@@ -25,11 +25,15 @@ type ClassicNameServer struct {
 	cacheController *CacheController
 	address         *net.Destination
 	requests        map[uint16]*udpDnsRequest
-	udpServer       *udp.Dispatcher
+	udpServer       atomic.Pointer[udp.Dispatcher]
 	requestsCleanup *task.Periodic
 	reqID           uint32
 	clientIP        net.IP
+	dispatcher      routing.Dispatcher
 }
+
+// udpResendAfter is when a query still unanswered is sent once more.
+var udpResendAfter = time.Second
 
 type udpDnsRequest struct {
 	dnsRequest
@@ -48,12 +52,13 @@ func NewClassicNameServer(address net.Destination, dispatcher routing.Dispatcher
 		address:         &address,
 		requests:        make(map[uint16]*udpDnsRequest),
 		clientIP:        clientIP,
+		dispatcher:      dispatcher,
 	}
 	s.requestsCleanup = &task.Periodic{
 		Interval: time.Minute,
 		Execute:  s.RequestsCleanup,
 	}
-	s.udpServer = udp.NewDispatcher(dispatcher, s.HandleResponse)
+	s.udpServer.Store(udp.NewDispatcher(dispatcher, s.HandleResponse))
 
 	errors.LogInfo(context.Background(), "DNS: created UDP client initialized for ", address.NetAddr())
 	return s
@@ -62,6 +67,19 @@ func NewClassicNameServer(address net.Destination, dispatcher routing.Dispatcher
 // Name implements Server.
 func (s *ClassicNameServer) Name() string {
 	return s.cacheController.name
+}
+
+// retire sends new queries on a fresh flow after a socket path change (contract C1); the old flow
+// still delivers the answers to the queries it carries until it closes.
+func (s *ClassicNameServer) retire(grace time.Duration) {
+	old := s.udpServer.Swap(udp.NewDispatcher(s.dispatcher, s.HandleResponse))
+	time.AfterFunc(grace, old.RemoveRay)
+}
+
+// Close implements common.Closable.
+func (s *ClassicNameServer) Close() error {
+	s.udpServer.Load().RemoveRay()
+	return nil
 }
 
 // IsDisableCache implements Server.
@@ -111,7 +129,7 @@ func (s *ClassicNameServer) HandleResponse(ctx context.Context, packet *udp_prot
 	}
 	s.Unlock()
 	if !ok {
-		errors.LogErrorInner(ctx, err, s.Name(), " cannot find the pending request")
+		errors.LogInfo(ctx, s.Name(), " got an answer to no pending request") // a resent query answered twice
 		return
 	}
 
@@ -131,7 +149,7 @@ func (s *ClassicNameServer) HandleResponse(ctx context.Context, packet *udp_prot
 			newReq.msg = &newMsg
 			s.addPendingRequest(&newReq)
 			b, _ := dns.PackMessage(newReq.msg)
-			s.udpServer.Dispatch(toDnsContext(newReq.ctx, s.address.String()), *s.address, b)
+			s.udpServer.Load().Dispatch(toDnsContext(newReq.ctx, s.address.String()), *s.address, b)
 			return
 		}
 	}
@@ -189,7 +207,22 @@ func (s *ClassicNameServer) sendQuery(ctx context.Context, noResponseErrCh chan<
 			}
 			return
 		}
-		s.udpServer.Dispatch(toDnsContext(ctx, s.address.String()), *s.address, b)
+		s.udpServer.Load().Dispatch(toDnsContext(ctx, s.address.String()), *s.address, b)
+		// Elarni: a lost datagram cost the whole query timeout, since an app's own retry joins this query.
+		time.AfterFunc(udpResendAfter, func() { s.resend(udpReq) })
+	}
+}
+
+// resend sends req once more if it is still pending and its lookup still waits.
+func (s *ClassicNameServer) resend(req *udpDnsRequest) {
+	s.RLock()
+	pending := s.requests[req.msg.ID] == req
+	s.RUnlock()
+	if !pending || req.ctx.Err() != nil {
+		return
+	}
+	if b, err := dns.PackMessage(req.msg); err == nil {
+		s.udpServer.Load().Dispatch(toDnsContext(req.ctx, s.address.String()), *s.address, b)
 	}
 }
 

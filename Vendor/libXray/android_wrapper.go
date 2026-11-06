@@ -85,23 +85,13 @@ type ProcessFinder interface {
 	FindProcessByConnection(network, srcIP string, srcPort int, destIP string, destPort int) int
 }
 
-func RegisterDialerController(controller DialerController) {
-	c.RegisterDialerController(func(fd uintptr) bool {
-		return controller.ProtectFd(int(fd))
-	})
-}
-
-func RegisterListenerController(controller DialerController) {
-	c.RegisterListenerController(func(fd uintptr) bool {
-		return controller.ProtectFd(int(fd))
-	})
-}
+// SocketPathChanged reports that the default network moved: new sockets now
+// leave through another network, so the core moves its long-lived ones there.
+func SocketPathChanged() { xinternet.SocketPathChanged() }
 
 // RegisterProcessFinder -> registers process finder for per-app routing.
 // Pass nil to unregister.
-// sdkVersion = Build.VERSION.SDK_INT.
-// On API < 30, /proc/net/* parsing is used automatically; the Java callback
-// is only called on API 30+.
+// sdkVersion = Build.VERSION.SDK_INT (unused: minSdk 30 always asks the callback).
 func RegisterProcessFinder(finder ProcessFinder, sdkVersion int) {
 	if finder == nil {
 		c.RegisterProcessFinder(nil, 0)

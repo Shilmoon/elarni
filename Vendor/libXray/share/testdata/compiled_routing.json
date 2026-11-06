@@ -8,6 +8,8 @@
         ]
       },
       "queryStrategy": "UseIP",
+      "serveExpiredTTL": 3600,
+      "serveStale": true,
       "servers": [
         "192.0.2.53"
       ],
@@ -69,8 +71,7 @@
             "type": "none"
           }
         },
-        "tag": "elarni-block",
-        "targetStrategy": "ForceIPv4"
+        "tag": "elarni-block"
       },
       {
         "protocol": "loopback",
@@ -159,9 +160,17 @@
           "203.0.113.9"
         ]
       },
-      "queryStrategy": "UseIP",
+      "queryStrategy": "UseIPv4",
+      "serveExpiredTTL": 3600,
+      "serveStale": true,
       "servers": [
-        "192.0.2.53"
+        {
+          "address": "192.0.2.53",
+          "timeoutMs": 2000
+        },
+        {
+          "address": "192.0.2.54"
+        }
       ],
       "tag": "elarni-dns-client",
       "useSystemHosts": false
@@ -221,8 +230,7 @@
             "type": "none"
           }
         },
-        "tag": "elarni-block",
-        "targetStrategy": "ForceIPv4"
+        "tag": "elarni-block"
       },
       {
         "protocol": "loopback",
@@ -281,6 +289,18 @@
           ],
           "network": "tcp,udp",
           "outboundTag": "elarni-dns",
+          "port": 53,
+          "type": "field"
+        },
+        {
+          "inboundTag": [
+            "elarni-dns-client"
+          ],
+          "ip": [
+            "192.0.2.53"
+          ],
+          "network": "tcp,udp",
+          "outboundTag": "elarni-proxy",
           "port": 53,
           "type": "field"
         },
@@ -375,8 +395,7 @@
             "type": "none"
           }
         },
-        "tag": "elarni-block",
-        "targetStrategy": "ForceIPv4"
+        "tag": "elarni-block"
       },
       {
         "protocol": "loopback",

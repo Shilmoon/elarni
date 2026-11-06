@@ -133,7 +133,12 @@ fn per_app_policy_gates_tun_then_preserves_provider_and_app_routing() {
         let entry = rules[0]["outboundTag"].as_str().unwrap();
         assert_ne!(entry, "elarni-apps-0");
         assert_eq!(rules[0]["port"], 53);
-        assert_eq!(rules[1]["process"], json!(runtime.per_app_processes));
+        // In "Only listed" a flow whose owner Android could not look up ("-1") stays proxied.
+        let mut listed = runtime.per_app_processes.clone();
+        if mode == PerAppMode::ProxyOnly {
+            listed.push("-1".into());
+        }
+        assert_eq!(rules[1]["process"], json!(listed));
         assert_eq!(rules[1]["inboundTag"], json!(["elarni-tun"]));
         assert_eq!(rules[2]["outboundTag"] == entry, mode == PerAppMode::Bypass);
         assert_eq!(
@@ -285,6 +290,50 @@ fn per_app_targets_send_each_listed_app_to_its_own_outbound() {
             .unwrap()
             .iter()
             .all(|rule| rule.get("process").is_none())
+    );
+}
+
+// Android names the owner of a flow it could not look up "-1". In "Only listed" that flow
+// could belong to a listed app, so it must not go direct.
+#[test]
+fn only_listed_keeps_unattributed_flows_in_the_tunnel() {
+    use crate::model::PerAppMode;
+    let mut runtime = per_app_runtime(json!([
+        {"process":"curl", "target":"direct"}, {"process":"game.exe", "target":"block"},
+        {"process":"telegram", "target":"direct"}, {"process":"browser", "target":"direct"},
+        {"process":"steam", "target":"direct"},
+    ]));
+    runtime.per_app_mode = PerAppMode::ProxyOnly;
+    let config = compile_per_app(&runtime).unwrap();
+    let rules = config["routing"]["rules"].as_array().unwrap();
+    let reentry = &rules[0]["outboundTag"];
+    let miss = rules
+        .iter()
+        .find(|rule| rule["process"] == json!(["-1"]))
+        .unwrap();
+    assert_eq!(miss["inboundTag"], json!(["elarni-tun"]));
+    assert_eq!(miss["outboundTag"], *reentry);
+    // Unlisted apps still go direct.
+    assert_eq!(
+        rules
+            .iter()
+            .find(|rule| rule["inboundTag"] == json!(["elarni-tun"])
+                && rule.get("process").is_none()
+                && rule.get("port").is_none())
+            .unwrap()["outboundTag"],
+        "elarni-direct"
+    );
+    // Bypass already proxies what no rule names.
+    runtime.per_app_mode = PerAppMode::Bypass;
+    let config = compile_per_app(&runtime).unwrap();
+    assert!(
+        config["routing"]["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|rule| !rule["process"]
+                .as_array()
+                .is_some_and(|names| names.contains(&json!("-1"))))
     );
 }
 
@@ -518,14 +567,18 @@ fn provider_dns_inherits_independently_of_app_routing_rules() {
 // resolver over a socket the platform keeps outside the tunnel: the ISP's DNS.
 #[test]
 fn inherited_provider_dns_never_uses_the_system_resolver() {
+    // "+local" schemes dial outside routing too; plain tcp:// is routed.
     let profile = json!({"outbounds": [node("server", "server.example.com")],
-        "dns": {"servers": ["localhost", {"address": "LocalHost", "domains": ["geosite:private"]}, "192.0.2.53"]}});
+        "dns": {"servers": ["localhost", {"address": "LocalHost", "domains": ["geosite:private"]}, "192.0.2.53",
+            "tcp+local://192.0.2.54", {"address": "HTTPS+Local://dns.example/dns-query"},
+            "h2c+local://dns.example/dns-query", "quic+local://dns.example", "tcp://192.0.2.55"]}});
     assert_eq!(
         compile(profile, None)["dns"]["servers"],
-        json!(["192.0.2.53"])
+        json!(["192.0.2.53", "tcp://192.0.2.55"])
     );
     for dns in [
         json!({"servers": ["localhost"], "hosts": {"private.provider": "192.0.2.3"}}),
+        json!({"servers": ["tcp+local://192.0.2.54"], "hosts": {"private.provider": "192.0.2.3"}}),
         json!({"servers": [], "hosts": {"private.provider": "192.0.2.3"}}),
         json!({"hosts": {"private.provider": "192.0.2.3"}}),
     ] {
@@ -540,11 +593,10 @@ fn inherited_provider_dns_never_uses_the_system_resolver() {
             "{dns}: no servers means the system resolver"
         );
         assert!(
-            servers.iter().all(|server| !server
-                .as_str()
-                .or(server["address"].as_str())
-                .unwrap_or("")
-                .eq_ignore_ascii_case("localhost")),
+            servers.iter().all(|server| {
+                let address = server.as_str().or(server["address"].as_str()).unwrap_or("");
+                !address.eq_ignore_ascii_case("localhost") && !address.contains("+local")
+            }),
             "{dns}: {servers:?}"
         );
         assert_eq!(
@@ -610,7 +662,7 @@ fn enabled_routing_profile_dns_outranks_provider_dns_and_keeps_provider_hosts() 
     let config = compile(profile.clone(), Some(&routes));
     assert_eq!(
         config["dns"]["servers"],
-        json!([{"address": "198.51.100.53"}, {"address": "203.0.113.53"}])
+        json!([{"address": "198.51.100.53", "timeoutMs": 2000}, {"address": "203.0.113.53"}])
     );
     assert_eq!(
         config["dns"]["hosts"]["shared.example.com"],
@@ -1013,6 +1065,46 @@ fn provider_system_stats_survive_the_tunnel_counters() {
             json!({"statsOutboundUplink": true, "statsInboundUplink": true, "statsInboundDownlink": true}),
             "{backend:?}"
         );
+    }
+}
+
+// Subscriptions often ship a policy block; Elarni's listeners keep the user's idle timeout.
+#[test]
+fn provider_policy_keeps_the_user_idle_timeout() {
+    let runtime = RuntimeOptions {
+        connection_idle_seconds: 600,
+        ..RuntimeOptions::default()
+    };
+    for (policy, level) in [
+        (
+            json!({"levels": {"0": {"handshake": 4, "connIdle": 30}, "8": {"connIdle": 5}}}),
+            json!({"handshake": 4, "connIdle": 600}),
+        ),
+        (
+            json!({"levels": {"8": {"connIdle": 5}}}),
+            json!({"connIdle": 600}),
+        ),
+        (
+            json!({"system": {"statsOutboundUplink": true}}),
+            json!({"connIdle": 600}),
+        ),
+        (json!({"levels": null}), json!({"connIdle": 600})),
+    ] {
+        let result = compile_profile(
+            json!({"outbounds": [node("server", "one.example.com")], "policy": policy.clone()}),
+            None,
+            1080,
+            PacketBackend::NativeTun2Proxy,
+            1500,
+            &runtime,
+            None,
+        )
+        .unwrap();
+        let config: Value = serde_json::from_slice(&result.config).unwrap();
+        assert_eq!(config["policy"]["levels"]["0"], level, "{policy}");
+        if let Some(other) = policy["levels"].get("8") {
+            assert_eq!(config["policy"]["levels"]["8"], *other, "{policy}");
+        }
     }
 }
 

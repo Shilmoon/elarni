@@ -658,6 +658,8 @@ pub(crate) fn compile_owned_config(
     }
     crate::routing::validate_effective_targets(routes).map_err(|_| CompileError::InvalidRoute)?;
     let mut routing_rules = compile_routes(&routes.rules, routes.fallback_action)?;
+    // The DNS client's own rules below match by inbound first and never resolve a name.
+    let ip_rules = has_ip_rules(&routing_rules);
     let mut dns_servers = routes
         .dns_servers
         .iter()
@@ -776,6 +778,24 @@ pub(crate) fn compile_owned_config(
                 );
             }
             let mut server = json!({"address": resolver.address});
+            if index == 0 {
+                // Xray waits 4 s for a stalled resolver before the next one or an answer.
+                server["timeoutMs"] = json!(2000);
+                // Like DoH above, the remote resolver's own UDP queries take the proxy whatever
+                // the fallback; an HTTP proxy carries no UDP.
+                if resolver.address.parse::<IpAddr>().is_ok()
+                    && proxy_outbound["protocol"] != "http"
+                {
+                    routing_rules.insert(
+                        0,
+                        json!({
+                            "type": "field", "network": "tcp,udp", "port": 53,
+                            "inboundTag": ["elarni-dns-client"],
+                            "ip": [resolver.address], "outboundTag": "elarni-proxy"
+                        }),
+                    );
+                }
+            }
             if let Some(domains) = &policy.domestic_domains {
                 if domains.len() > crate::routing::MAX_ROUTING_TARGETS
                     || domains.iter().any(|domain| {
@@ -806,7 +826,7 @@ pub(crate) fn compile_owned_config(
         RouteDomainStrategy::AsIs => "AsIs",
         // The explicit fallback always matches, so Xray would never retry with
         // resolved IPs; resolving on demand lets hostnames reach IP rules.
-        RouteDomainStrategy::IpIfNonMatch if has_ip_rules(&routing_rules) => "IPOnDemand",
+        RouteDomainStrategy::IpIfNonMatch if ip_rules => "IPOnDemand",
         RouteDomainStrategy::IpIfNonMatch => "IPIfNonMatch",
         RouteDomainStrategy::IpOnDemand => "IPOnDemand",
     };
@@ -890,8 +910,7 @@ pub(crate) fn compile_owned_config(
         json!({
             "tag": "elarni-block",
             "protocol": "blackhole",
-            "settings": {"response": {"type": "none"}},
-            "targetStrategy": "ForceIPv4"
+            "settings": {"response": {"type": "none"}}
         }),
     ];
     outbounds.extend(dns_bootstrap_outbounds);
@@ -925,7 +944,11 @@ pub(crate) fn compile_owned_config(
         },
         "dns": {
             "tag": "elarni-dns-client",
-            "queryStrategy": "UseIP",
+            "queryStrategy": query_strategy(runtime.preferred_ip),
+            // An expired answer is served while it refreshes; without a bound Xray never
+            // cleans its cache.
+            "serveStale": true,
+            "serveExpiredTTL": 3600,
             "servers": dns_servers,
             "hosts": static_hosts,
             "disableFallbackIfMatch": routes.dns_policy.as_ref()
@@ -1130,16 +1153,19 @@ pub(crate) fn apply_per_app_routing(
             None => groups.push((tag, vec![&item.process])),
         }
     }
-    let others: Vec<&String> = runtime
+    let mut others: Vec<&str> = runtime
         .per_app_processes
         .iter()
-        .filter(|name| !targeted.contains(name.as_str()))
+        .map(String::as_str)
+        .filter(|name| !targeted.contains(name))
         .collect();
+    // Android names the owner of a flow it could not look up "-1"; a listed app's
+    // flow must not leave the tunnel for that.
+    if runtime.per_app_mode == PerAppMode::ProxyOnly {
+        others.push("-1");
+    }
     if !others.is_empty() {
-        groups.push((
-            selected.to_owned(),
-            others.into_iter().map(String::as_str).collect(),
-        ));
+        groups.push((selected.to_owned(), others));
     }
     let outbounds = config["outbounds"]
         .as_array()
@@ -1199,6 +1225,14 @@ pub(crate) fn has_ip_rules(rules: &[Value]) -> bool {
                 || ips.as_str().is_some_and(|ips| !ips.is_empty())
         })
     })
+}
+
+/// Apps resolve through Xray's DNS; IPv6 answers would take them past an IPv4 preference.
+fn query_strategy(preferred_ip: PreferredIp) -> &'static str {
+    match preferred_ip {
+        PreferredIp::Ipv4 => "UseIPv4",
+        PreferredIp::Ipv6 | PreferredIp::Automatic => "UseIP",
+    }
 }
 
 fn target_strategy(preferred_ip: PreferredIp) -> &'static str {

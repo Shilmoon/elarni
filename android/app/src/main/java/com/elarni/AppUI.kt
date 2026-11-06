@@ -64,8 +64,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.DateFormat
@@ -403,8 +406,9 @@ private val LocalReselect = compositionLocalOf { 0 }
                 tr(R.string.require_a_login) to { activity.run("settings", obj("settings" to obj("inboundAuthEnabled" to true))) },
                 tr(R.string.not_now) to { loginNoticeHidden = true; prefs.edit().putBoolean("loginWarningDismissed", true).apply() })
         val feed = catalog.settings.string("updateFeedURL")
-        // Each minute asks whether the day (or, while the feed is unreadable, the hour) has passed.
-        LaunchedEffect(feed) { do { UpdateCheck.refresh(feed); delay(60_000) } while (feed.isNotEmpty()) }
+        val lifecycle = LocalLifecycleOwner.current.lifecycle
+        // Each minute the app shows asks whether the day (or, while the feed is unreadable, the hour) has passed.
+        LaunchedEffect(feed, lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { do { UpdateCheck.refresh(feed); delay(60_000) } while (feed.isNotEmpty()) } }
         val update by UpdateCheck.available.collectAsStateWithLifecycle()
         var dismissedUpdate by remember { mutableStateOf(prefs.getString("dismissedUpdate", "") ?: "") }
         update?.takeIf { it.first != dismissedUpdate }?.let { (version, url) ->
@@ -1147,7 +1151,11 @@ private fun quota(metadata: JSONObject): Triple<String, String, Float?> {
 }
 
 @Composable fun EmptyDetail() { Text(tr(R.string.item_no_longer_in_catalog), Modifier.padding(24.dp)) }
-@Composable fun rememberClock(): State<Double> = produceState(now()) { while (true) { delay(30_000); value = now() } }
+@Composable fun rememberClock(): State<Double> {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    // Ticks only while the app shows; back in view, it first catches up on a tick it missed.
+    return produceState(now(), lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { delay(((value + 30 - now()) * 1000).toLong().coerceIn(0, 30_000)); value = now() } } }
+}
 fun pingFresh(node: JSONObject, result: JSONObject, time: Double) = result.string("configurationRevision") == node.string("configurationRevision", node.string("id")) && time - result.optDouble("timestamp", 0.0) in 0.0..300.0
 fun pingScope(result: JSONObject) = when (result.string("protocol")) { "tcp" -> tr(R.string.direct_tcp); "icmp" -> tr(R.string.direct_icmp); "activeProxy" -> tr(R.string.active_proxy); else -> "proxy" }
 
@@ -1212,12 +1220,16 @@ fun pingScope(result: JSONObject) = when (result.string("protocol")) { "tcp" -> 
 @Composable private fun LogsScreen(catalog: Catalog, busy: Boolean, activity: MainActivity) {
     val level = catalog.settings.string("logLevel", "warning")
     var lines by remember { mutableStateOf(listOf<JSONObject>()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            val after = lines.lastOrNull()?.optLong("seq") ?: 0
-            withContext(Dispatchers.IO) { runCatching { Native.call("readLogs", obj("after" to after)) }.getOrNull() }
-                ?.let { read -> lines = (lines + read.objects("entries")).takeLast(1000) }
-            delay(1000)
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    // Only while the app shows: a Logs screen left open in the background read the core every second.
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                val after = lines.lastOrNull()?.optLong("seq") ?: 0
+                withContext(Dispatchers.IO) { runCatching { Native.call("readLogs", obj("after" to after)) }.getOrNull() }
+                    ?.let { read -> lines = (lines + read.objects("entries")).takeLast(1000) }
+                delay(1000)
+            }
         }
     }
     fun text() = (listOf(tr(R.string.elarni_log_level, level)) + lines.map { "${java.time.Instant.ofEpochMilli(it.optLong("time"))} ${it.string("level").uppercase()} ${it.string("text")}" })

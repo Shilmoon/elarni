@@ -64,6 +64,13 @@ class Automation(saved: JSONObject) {
         attempts = 0; failures = 0; exhausted = false; exhaustions = 0; episodeStarted = null; retryAt = null
         healthAt = time + healthInterval; status = "healthy"
     }
+    /** Whether the health check runs at [time]. A server that [passed] its last check and has carried no [traffic]
+     *  since needs none: each check wakes the radio, and after any sleep the first tick is due. */
+    fun healthDue(time: Double, passed: Boolean, traffic: () -> Boolean): Boolean {
+        if (time < (healthAt ?: time)) return false
+        if (failures > 0 || !passed || traffic()) return true
+        healthAt = time + healthInterval; return false
+    }
     fun schedule(time: Double) {
         if (retryAt != null || exhausted || !online || sleeping || !intent) return
         if (episodeStarted == null) episodeStarted = time

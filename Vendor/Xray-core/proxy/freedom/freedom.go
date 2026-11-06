@@ -308,7 +308,7 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 	var conn stat.Connection
 	var blockedDest *net.Destination
 	var blockedRule *FinalRule
-	err := retry.ExponentialBackoff(5, 100).On(func() error {
+	err := retry.ExponentialBackoff(5, 100).OnContext(ctx, func() error {
 		dialDest := destination
 		if !h.resolveStrategy.HasStrategy() && !h.usesDialerProxy && dialDest.Address.Family().IsDomain() {
 			if ip := hostsAddress(ctx, dialDest.Address.Domain()); ip != nil {
@@ -323,7 +323,7 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 					if err != nil { // non-force may still dial with system DNS
 						errors.LogInfoInner(ctx, err, "failed to get IP address for domain ", destination.Address.Domain())
 						if strategy.ForceIP() {
-							return err // retry
+							return retry.Again(err) // retry
 						}
 					}
 					for _, ip := range ips {
@@ -371,6 +371,7 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 				if ips, lookupErr := internet.LookupForIPContext(ctx, ob.RouteTarget.Address.Domain(), internet.DomainStrategy_USE_IP4, outGateway); lookupErr == nil {
 					destination.Address = net.IPAddress(ips[dice.Roll(len(ips))])
 					errors.LogInfo(ctx, "IPv6 dial failed, retrying ", ob.RouteTarget.Address, " at ", destination.Address)
+					return retry.Again(err) // even a timed-out or refused IPv6 dial
 				}
 			}
 			return err

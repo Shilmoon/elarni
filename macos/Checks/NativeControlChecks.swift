@@ -68,6 +68,17 @@ struct NativeControlChecks {
       throw Failure(message: "systemInfo has no app version for Settings")
     }
     print("PASS systemInfo reports the bundle's version and build")
+    // The extension runs a 40-50 MB limit unlimited, as plans saved when that was the only range need;
+    // a new choice there is refused instead of silently dropped, and a saved one still migrates.
+    do {
+      _ = try AppTunnelSettings(arguments: ["memoryLimitMB": 45], base: .defaults)
+      throw Failure(message: "a 45 MB memory limit was accepted although the extension would not apply it")
+    } catch RunnerTunnelError.invalidSettings {}
+    guard try AppTunnelSettings(arguments: ["memoryLimitMB": 45]).memoryLimitMB == 0,
+          try AppTunnelSettings(arguments: ["memoryLimitMB": 64], base: .defaults).memoryLimitMB == 64 else {
+      throw Failure(message: "a saved 40-50 MB limit did not migrate, or a valid one was lost")
+    }
+    print("PASS a 40-50 MB memory limit is refused when picked and migrated when saved")
     do {
       _ = try await messenger.call("importClientProfiles", arguments: ["content": "happ://routing/off"])
       throw Failure(message: "a routing link without a selected server was accepted")
@@ -470,6 +481,31 @@ struct NativeControlChecks {
     _ = try await store.setNodeIPPreference(nodeID: first, preference: nil)
     try await pingChecks(store: store, defaults: defaults)
     await record { try await fixedAutomationSelectionCheck(store: store, defaults: defaults, plan: candidate, pinned: second, other: first) }
+    await record { try await extensionVersionCheck(store: store, defaults: defaults, plan: candidate) }
+  }
+
+  // A stale build can register its own extension, which macOS then runs for this app; the app says so once per instance.
+  static func extensionVersionCheck(store: SubscriptionStore, defaults: UserDefaults, plan: Data) async throws {
+    try TunnelCommandCoordinator(defaults: defaults).persist(.connected)
+    let manager = SwitchManager(plan: plan)
+    let messenger = ControlMessenger()
+    let controller = TunnelMethodChannel(messenger: messenger, defaults: defaults, observesSystem: false,
+      makeSubscriptions: { store }, loadPreferences: { [manager] })
+    defer { withExtendedLifetime(controller) {} }
+    _ = try await messenger.call("state")
+    guard messenger.notices.isEmpty else { throw Failure(message: "this app's own extension was reported as another copy's") }
+    manager.fixtureSession.instanceID = "stale"
+    manager.fixtureSession.extensionVersion = "1.2.2+44"
+    _ = try await messenger.call("state")
+    _ = try await messenger.call("state")
+    guard messenger.notices.count == 1, messenger.notices[0].contains("1.2.2+44"), messenger.notices[0].contains("1.2.3+45") else {
+      throw Failure(message: "a running extension of another version was not reported once: \(messenger.notices)")
+    }
+    manager.fixtureSession.instanceID = "older"
+    manager.fixtureSession.extensionVersion = nil
+    _ = try await messenger.call("state")
+    guard messenger.notices.count == 2 else { throw Failure(message: "an extension too old to report its version was not reported") }
+    print("PASS the app warns once per instance when the running extension is not its own version")
   }
 
   // Settings hide the test URL for TCP and ICMP, so the app sends it empty.
@@ -858,6 +894,9 @@ final class SwitchSession: NETunnelProviderSession {
   var startable = false
   var starts = 0
   var logReads: [Int] = []
+  var instanceID = "fixture"
+  // As NativeControlInfo.plist gives this check binary; nil models an extension from before the field.
+  var extensionVersion: String? = "1.2.3+45"
   weak var owner: NEVPNManager?
   // As the system does, a stop under a Connect rule shows disconnected once, then the tunnel is back.
   var onDemandRestarts = 0
@@ -878,9 +917,11 @@ final class SwitchSession: NETunnelProviderSession {
     fixtureStatus = .connected
   }
   override func sendProviderMessage(_ messageData: Data, responseHandler: ((Data?) -> Void)? = nil) throws {
-    let identity: [String: Any] = ["instanceID": "fixture", "generation": 1]
+    let identity: [String: Any] = ["instanceID": instanceID, "generation": 1]
     if messageData == Data("state".utf8) {
-      responseHandler?(try JSONSerialization.data(withJSONObject: identity)); return
+      var state = identity
+      state["extensionVersion"] = extensionVersion
+      responseHandler?(try JSONSerialization.data(withJSONObject: state)); return
     }
     let request = try JSONSerialization.jsonObject(with: messageData) as! [String: Any]
     var response = identity
@@ -927,8 +968,17 @@ final class ControlConnection: NEVPNConnection {
 
 final class ControlMessenger: NSObject, FlutterBinaryMessenger {
   var handler: FlutterBinaryMessageHandler?
-  func send(onChannel channel: String, message: Data?) {}
-  func send(onChannel channel: String, message: Data?, binaryReply callback: FlutterBinaryReply?) { callback?(nil) }
+  /// Errors the handler showed through subscriptionsChanged.
+  var notices: [String] = []
+  func send(onChannel channel: String, message: Data?) { note(message) }
+  func send(onChannel channel: String, message: Data?, binaryReply callback: FlutterBinaryReply?) { note(message); callback?(nil) }
+  private func note(_ message: Data?) {
+    guard let message else { return }
+    let call = FlutterStandardMethodCodec.sharedInstance().decodeMethodCall(message)
+    if call.method == "subscriptionsChanged", let error = (call.arguments as? [String: Any])?["error"] as? String {
+      notices.append(error)
+    }
+  }
   func setMessageHandlerOnChannel(_ channel: String, binaryMessageHandler handler: FlutterBinaryMessageHandler?) -> FlutterBinaryMessengerConnection {
     self.handler = handler
     return 1

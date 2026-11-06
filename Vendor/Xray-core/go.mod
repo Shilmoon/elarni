@@ -16,6 +16,7 @@ require (
 	github.com/pires/go-proxyproto v0.16.0
 	github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af
 	github.com/robfig/cron/v3 v3.0.1
+	github.com/sagernet/quic-go v0.61.0-sing-box-mod.6
 	github.com/sagernet/sing v0.9.0-beta.4
 	github.com/sagernet/sing-quic v0.7.1
 	github.com/vishvananda/netlink v1.3.1
@@ -56,7 +57,6 @@ require (
 	github.com/pion/transport/v4 v4.1.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
-	github.com/sagernet/quic-go v0.61.0-sing-box-mod.6 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect

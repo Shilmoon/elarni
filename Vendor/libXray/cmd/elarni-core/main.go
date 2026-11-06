@@ -48,7 +48,8 @@ func dispatch(raw string) (result response) {
 			ReuseSession bool `json:"reuseSession"`
 		}
 		_ = json.Unmarshal(request.Payload, &options)
-		result.session = result.run && options.ReuseSession
+		// A failed runVPN may leave a live elevated owner for the next connect.
+		result.session = string(request.Method) == "runVPN" && options.ReuseSession
 		return
 	}
 	if data, err, handled := dataRequest(string(request.Method), request.Payload); handled {
@@ -130,7 +131,7 @@ func nativeResponse(data any, err error) string {
 	return string(encoded)
 }
 
-func serve(input io.Reader, output io.Writer, invoke func(string) response, stop func() error, running func() bool) int {
+func serve(input io.Reader, output io.Writer, invoke func(string) response, stop func() error, running, up func() bool) int {
 	logCursor := xray.LastLogSeq()
 	// EOF detection cannot wait for Invoke: startup can hold the core mutex.
 	requests := make(chan string, 1)
@@ -202,8 +203,8 @@ func serve(input io.Reader, output io.Writer, invoke func(string) response, stop
 		} `json:"payload"`
 	}
 	_ = json.Unmarshal([]byte(raw), &options)
-	if result.session {
-		return serveVPNSession(requests, closed, output, invoke, running, options.Payload.StreamMetrics, logCursor)
+	if result.session && (result.run || running()) {
+		return serveVPNSession(requests, closed, output, invoke, running, up, result.run, options.Payload.StreamMetrics, logCursor)
 	}
 	if result.hold {
 		return serveCatalogLease(requests, closed, output, invoke)
@@ -251,8 +252,9 @@ func serve(input io.Reader, output io.Writer, invoke func(string) response, stop
 
 // A session only accepts tunnel start/stop operations. All other native methods
 // keep their one-shot lifetime, including probes with independent Xray globals.
-func serveVPNSession(requests <-chan string, closed <-chan struct{}, output io.Writer, invoke func(string) response, running func() bool, streamMetrics bool, logCursor int64) int {
-	active := true
+// Its elevated owner outlives a tunnel that failed or ended by itself, so the next
+// connect needs no new consent: running reports the owner, up its tunnel.
+func serveVPNSession(requests <-chan string, closed <-chan struct{}, output io.Writer, invoke func(string) response, running, up func() bool, active, streamMetrics bool, logCursor int64) int {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	write := func(value any) bool {
@@ -296,7 +298,7 @@ func serveVPNSession(requests <-chan string, closed <-chan struct{}, output io.W
 				var reply struct {
 					Success bool `json:"success"`
 				}
-				if json.Unmarshal([]byte(result.text), &reply) != nil || !reply.Success {
+				if (json.Unmarshal([]byte(result.text), &reply) != nil || !reply.Success) && !running() {
 					return 1
 				}
 				active = result.run
@@ -315,6 +317,17 @@ func serveVPNSession(requests <-chan string, closed <-chan struct{}, output io.W
 			}
 			if event := logEvent(&logCursor); active && event != nil && !write(event) {
 				return 1
+			}
+			if active && !up() {
+				// The app reports the drop and may reconnect through this owner. The
+				// tunnel's last lines, logged before its loss, say why it ended.
+				active = false
+				if event := logEvent(&logCursor); event != nil && !write(event) {
+					return 1
+				}
+				if !write(map[string]any{"event": "stopped"}) {
+					return 1
+				}
 			}
 		}
 	}
@@ -381,7 +394,7 @@ func main() {
 	protocol := os.Stdout
 	os.Stdout = os.Stderr // Reserve the original stdout for protocol responses.
 	code := serve(os.Stdin, protocol, dispatch, func() error { platformStop(); return xray.StopXray() },
-		func() bool { return platformRunning() || xray.GetXrayState() })
+		func() bool { return platformRunning() || xray.GetXrayState() }, platformTunnelUp)
 	diagnosticsFlush()
 	os.Exit(code)
 }

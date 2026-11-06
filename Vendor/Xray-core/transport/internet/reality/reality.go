@@ -159,7 +159,14 @@ func realityFingerprint(name string) *utls.ClientHelloID {
 	return &utls.HelloChrome_Auto
 }
 
-func UClient(c net.Conn, config *Config, ctx context.Context, dest net.Destination) (net.Conn, error) {
+func UClient(c net.Conn, config *Config, ctx context.Context, dest net.Destination) (_ net.Conn, err error) {
+	// Elarni: callers drop c when this fails, so release it here unless a crawl keeps it.
+	keep := false
+	defer func() {
+		if err != nil && !keep {
+			c.Close()
+		}
+	}()
 	localAddr := c.LocalAddr().String()
 	uConn := &UConn{
 		Config: config,
@@ -218,7 +225,9 @@ func UClient(c net.Conn, config *Config, ctx context.Context, dest net.Destinati
 		aead.Seal(hello.SessionId[:0], hello.Random[20:], hello.SessionId[:16], hello.Raw)
 		copy(hello.Raw[39:], hello.SessionId)
 	}
-	handshakeErr := uConn.HandshakeContext(ctx)
+	handshakeCtx, cancel := context.WithTimeout(ctx, tls.HandshakeTimeout)
+	handshakeErr := uConn.HandshakeContext(handshakeCtx)
+	cancel()
 	verified := uConn.Verified
 	probe.Record(ctx, probe.Event{Stage: "reality_handshake_done", Code: probe.Code(handshakeErr), Verified: &verified})
 	if handshakeErr != nil {
@@ -229,98 +238,137 @@ func UClient(c net.Conn, config *Config, ctx context.Context, dest net.Destinati
 	}
 	if !uConn.Verified {
 		errors.LogError(ctx, "REALITY: received real certificate (potential MITM or redirection)")
-		go func() {
-			client := &http.Client{
-				Transport: &http2.Transport{
-					DialTLSContext: func(ctx context.Context, network, addr string, cfg *gotls.Config) (net.Conn, error) {
-						if config.Show {
-							fmt.Printf("REALITY localAddr: %v\tDialTLSContext\n", localAddr)
-						}
-						return uConn, nil
-					},
-				},
-			}
-			prefix := []byte("https://" + uConn.ServerName)
-			maps.Lock()
-			if maps.maps == nil {
-				maps.maps = make(map[string]map[string]struct{})
-			}
-			paths := maps.maps[uConn.ServerName]
-			if paths == nil {
-				paths = make(map[string]struct{})
-				paths[config.SpiderX] = struct{}{}
-				maps.maps[uConn.ServerName] = paths
-			}
-			firstURL := string(prefix) + getPathLocked(paths)
-			maps.Unlock()
-			get := func(first bool) {
-				var (
-					req  *http.Request
-					resp *http.Response
-					err  error
-					body []byte
-				)
-				if first {
-					req, _ = http.NewRequest("GET", firstURL, nil)
-				} else {
-					maps.Lock()
-					req, _ = http.NewRequest("GET", string(prefix)+getPathLocked(paths), nil)
-					maps.Unlock()
-				}
-				if req == nil {
-					return
-				}
-				utils.TryDefaultHeadersWith(req.Header, "nav")
-				if first && config.Show {
-					fmt.Printf("REALITY localAddr: %v\treq.UserAgent(): %v\n", localAddr, req.UserAgent())
-				}
-				times := 1
-				if !first {
-					times = int(crypto.RandBetween(config.SpiderY[4], config.SpiderY[5]))
-				}
-				for j := 0; j < times; j++ {
-					if !first && j == 0 {
-						req.Header.Set("Referer", firstURL)
-					}
-					req.AddCookie(&http.Cookie{Name: "padding", Value: strings.Repeat("0", int(crypto.RandBetween(config.SpiderY[0], config.SpiderY[1])))})
-					if resp, err = client.Do(req); err != nil {
-						break
-					}
-					defer resp.Body.Close()
-					req.Header.Set("Referer", req.URL.String())
-					if body, err = io.ReadAll(resp.Body); err != nil {
-						break
-					}
-					maps.Lock()
-					for _, m := range href.FindAllSubmatch(body, -1) {
-						m[1] = bytes.TrimPrefix(m[1], prefix)
-						if !bytes.Contains(m[1], dot) {
-							paths[string(m[1])] = struct{}{}
-						}
-					}
-					req.URL.Path = getPathLocked(paths)
-					if config.Show {
-						fmt.Printf("REALITY localAddr: %v\treq.Referer(): %v\n", localAddr, req.Referer())
-						fmt.Printf("REALITY localAddr: %v\tlen(body): %v\n", localAddr, len(body))
-						fmt.Printf("REALITY localAddr: %v\tlen(paths): %v\n", localAddr, len(paths))
-					}
-					maps.Unlock()
-					if !first {
-						time.Sleep(time.Duration(crypto.RandBetween(config.SpiderY[6], config.SpiderY[7])) * time.Millisecond) // interval
-					}
-				}
-			}
-			get(true)
-			concurrency := int(crypto.RandBetween(config.SpiderY[2], config.SpiderY[3]))
-			for i := 0; i < concurrency; i++ {
-				go get(false)
-			}
-			// Do not close the connection
-		}()
+		keep = true
+		spider(uConn, uConn.ServerName, config, localAddr)
 		time.Sleep(time.Duration(crypto.RandBetween(config.SpiderY[8], config.SpiderY[9])) * time.Millisecond) // return
 		return nil, errors.New("REALITY: processed invalid connection")
 	}
 	return uConn, nil
+}
+
+// spider browses the cover site over conn as a browser would: upstream's anti-probing.
+// Elarni: one connection per ServerName at a time, so a MITM that fails every handshake
+// cannot pile up connections and crawlers; the others are closed.
+func spider(conn net.Conn, serverName string, config *Config, localAddr string) {
+	maps.Lock()
+	if maps.crawling[serverName] {
+		maps.Unlock()
+		conn.Close()
+		return
+	}
+	if maps.crawling == nil {
+		maps.crawling = make(map[string]bool)
+	}
+	maps.crawling[serverName] = true
+	maps.Unlock()
+	conn = &spiderConn{Conn: conn, serverName: serverName}
+	go func() {
+		client := &http.Client{
+			Transport: &http2.Transport{
+				DialTLSContext: func(ctx context.Context, network, addr string, cfg *gotls.Config) (net.Conn, error) {
+					if config.Show {
+						fmt.Printf("REALITY localAddr: %v\tDialTLSContext\n", localAddr)
+					}
+					return conn, nil
+				},
+			},
+		}
+		prefix := []byte("https://" + serverName)
+		maps.Lock()
+		if maps.maps == nil {
+			maps.maps = make(map[string]map[string]struct{})
+		}
+		paths := maps.maps[serverName]
+		if paths == nil {
+			paths = make(map[string]struct{})
+			paths[config.SpiderX] = struct{}{}
+			maps.maps[serverName] = paths
+		}
+		firstURL := string(prefix) + getPathLocked(paths)
+		maps.Unlock()
+		get := func(first bool) {
+			var (
+				req  *http.Request
+				resp *http.Response
+				err  error
+				body []byte
+			)
+			if first {
+				req, _ = http.NewRequest("GET", firstURL, nil)
+			} else {
+				maps.Lock()
+				req, _ = http.NewRequest("GET", string(prefix)+getPathLocked(paths), nil)
+				maps.Unlock()
+			}
+			if req == nil {
+				if first { // http2 never got the connection to close it
+					conn.Close()
+				}
+				return
+			}
+			utils.TryDefaultHeadersWith(req.Header, "nav")
+			if first && config.Show {
+				fmt.Printf("REALITY localAddr: %v\treq.UserAgent(): %v\n", localAddr, req.UserAgent())
+			}
+			times := 1
+			if !first {
+				times = int(crypto.RandBetween(config.SpiderY[4], config.SpiderY[5]))
+			}
+			for j := 0; j < times; j++ {
+				if !first && j == 0 {
+					req.Header.Set("Referer", firstURL)
+				}
+				req.AddCookie(&http.Cookie{Name: "padding", Value: strings.Repeat("0", int(crypto.RandBetween(config.SpiderY[0], config.SpiderY[1])))})
+				if resp, err = client.Do(req); err != nil {
+					break
+				}
+				defer resp.Body.Close()
+				req.Header.Set("Referer", req.URL.String())
+				if body, err = io.ReadAll(resp.Body); err != nil {
+					break
+				}
+				maps.Lock()
+				for _, m := range href.FindAllSubmatch(body, -1) {
+					m[1] = bytes.TrimPrefix(m[1], prefix)
+					if !bytes.Contains(m[1], dot) && len(paths) < maxSpiderPaths {
+						paths[string(m[1])] = struct{}{}
+					}
+				}
+				req.URL.Path = getPathLocked(paths)
+				if config.Show {
+					fmt.Printf("REALITY localAddr: %v\treq.Referer(): %v\n", localAddr, req.Referer())
+					fmt.Printf("REALITY localAddr: %v\tlen(body): %v\n", localAddr, len(body))
+					fmt.Printf("REALITY localAddr: %v\tlen(paths): %v\n", localAddr, len(paths))
+				}
+				maps.Unlock()
+				if !first {
+					time.Sleep(time.Duration(crypto.RandBetween(config.SpiderY[6], config.SpiderY[7])) * time.Millisecond) // interval
+				}
+			}
+		}
+		get(true)
+		concurrency := int(crypto.RandBetween(config.SpiderY[2], config.SpiderY[3]))
+		for i := 0; i < concurrency; i++ {
+			go get(false)
+		}
+		// Do not close the connection
+	}()
+}
+
+// spiderConn frees its ServerName for the next crawl once http2 or the crawl drops it.
+type spiderConn struct {
+	net.Conn
+	serverName string
+	release    sync.Once
+}
+
+func (c *spiderConn) Close() error {
+	c.release.Do(func() {
+		maps.Lock()
+		delete(maps.crawling, c.serverName)
+		maps.Unlock()
+	})
+	return c.Conn.Close()
 }
 
 var (
@@ -330,8 +378,13 @@ var (
 
 var maps struct {
 	sync.Mutex
-	maps map[string]map[string]struct{}
+	maps     map[string]map[string]struct{}
+	crawling map[string]bool // Elarni: ServerNames with a crawl connection open
 }
+
+// maxSpiderPaths caps the paths kept per ServerName: every crawl starts at a random known
+// path, so a big cover site would otherwise grow the set for the life of the process.
+const maxSpiderPaths = 1024
 
 func getPathLocked(paths map[string]struct{}) string {
 	stopAt := int(crypto.RandBetween(0, int64(len(paths)-1)))

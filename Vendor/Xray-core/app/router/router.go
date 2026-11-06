@@ -204,7 +204,9 @@ func (r *Router) pickRouteInternal(ctx routing.Context) (*Rule, routing.Context,
 	// this prevents cycle resolving dead loop
 	skipDNSResolve := ctx.GetSkipDNSResolve()
 
-	if r.domainStrategy == Config_IpOnDemand && !skipDNSResolve {
+	// Elarni: a connection that already has its real IP (TUN) is routed by it without a lookup. The
+	// dispatcher replaces a FakeDNS target with its domain, so such a target still resolves here.
+	if r.domainStrategy == Config_IpOnDemand && !skipDNSResolve && len(ctx.GetTargetIPs()) == 0 {
 		ctx = routing_dns.ContextWithDNSClient(ctx, r.dns)
 	}
 

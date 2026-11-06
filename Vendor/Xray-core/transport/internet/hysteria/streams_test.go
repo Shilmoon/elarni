@@ -54,8 +54,8 @@ func TestStreamsBeyondTheServerLimitWaitForCredit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &client{lock: make(chan struct{}, 1), conn: conn, tr: tr, pktConn: socket}
-	defer c.close()
+	c := &client{lock: make(chan struct{}, 1), current: &connection{Conn: conn, tr: tr, pktConn: socket}}
+	defer c.clean(true)
 
 	first, err := c.tcp(ctx)
 	if err != nil {

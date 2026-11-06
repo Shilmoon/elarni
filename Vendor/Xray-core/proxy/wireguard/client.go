@@ -375,14 +375,40 @@ func (h *Handler) newDevice(ctx context.Context) tunnelDevice {
 	}
 	bind.downFunc = dev.Down
 	// The socket keeps the interface it was bound to; reopen it on the new one.
-	h.stopRebind = internet.OnSocketPathChange(func() {
-		go func() {
-			if dev.BindUpdate() != nil {
-				dev.Down() // the next dial retries Up, as after a failed start
-			}
-		}()
+	moves, done := make(chan struct{}, 1), make(chan struct{})
+	remove := internet.OnSocketPathChange(func() {
+		select {
+		case moves <- struct{}{}:
+		default:
+		}
+	})
+	h.stopRebind = func() { remove(); close(done) }
+	go coalesce(moves, done, rebindGap, func() {
+		if dev.BindUpdate() != nil {
+			dev.Down() // the next dial retries Up, as after a failed start
+		}
 	})
 	return dev
+}
+
+// rebindGap is the shortest time between two rebinds; each loses the datagrams in flight.
+const rebindGap = time.Second
+
+// coalesce runs pass once for a burst of signals on moves, at most once per gap.
+func coalesce(moves, done <-chan struct{}, gap time.Duration, pass func()) {
+	for {
+		select {
+		case <-moves:
+		case <-done:
+			return
+		}
+		pass()
+		select {
+		case <-time.After(gap):
+		case <-done:
+			return
+		}
+	}
 }
 
 func (h *Handler) init(ctx context.Context) error {

@@ -3029,6 +3029,12 @@ func (c *Conn) tryQueueingUndecryptablePacket(p receivedPacket, pt qlog.PacketTy
 	c.undecryptablePackets = append(c.undecryptablePackets, receivedPacketWithChecksum{receivedPacket: p, checksum: datagramPayloadChecksum})
 }
 
+// Ping sends a PING frame, which the peer acknowledges at once. Elarni: XHTTP/3 checks a
+// connection this way after the device's network changes.
+func (c *Conn) Ping() {
+	c.queueControlFrame(&wire.PingFrame{})
+}
+
 func (c *Conn) queueControlFrame(f wire.Frame) {
 	c.framer.QueueControlFrame(f)
 	c.scheduleSending()

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -131,7 +132,7 @@ func TestParentEOFDuringStartupDoesNotWaitForStartup(t *testing.T) {
 			close(started)
 			<-release
 			return response{}
-		}, func() error { close(stopped); return nil }, func() bool { return true })
+		}, func() error { close(stopped); return nil }, func() bool { return true }, nil)
 	}()
 	_, _ = io.WriteString(parent, "{}\n")
 	<-started
@@ -159,7 +160,7 @@ func TestParentEOFAfterReadinessStopsCore(t *testing.T) {
 	go func() {
 		done <- serve(input, child, func(string) response {
 			return response{text: `{"success":true}`, run: true}
-		}, func() error { close(stopped); return nil }, func() bool { return true })
+		}, func() error { close(stopped); return nil }, func() bool { return true }, nil)
 	}()
 	_, _ = io.WriteString(parent, "{}\n")
 	line, err := bufio.NewReader(output).ReadString('\n')
@@ -187,7 +188,7 @@ func TestOutputFailureStopsCore(t *testing.T) {
 	stopped := false
 	code := serve(input, failedWriter{}, func(string) response {
 		return response{text: `{"success":true}`, run: true}
-	}, func() error { stopped = true; return nil }, func() bool { return true })
+	}, func() error { stopped = true; return nil }, func() bool { return true }, nil)
 	if code != 1 || !stopped {
 		t.Fatal("output failure did not stop the core")
 	}
@@ -211,7 +212,7 @@ func TestParentEOFWhileOutputIsBlockedStopsCore(t *testing.T) {
 	go func() {
 		done <- serve(input, writer, func(string) response {
 			return response{text: `{"success":true}`, run: true}
-		}, func() error { return nil }, func() bool { return true })
+		}, func() error { return nil }, func() bool { return true }, nil)
 	}()
 	_, _ = io.WriteString(parent, "{}\n")
 	<-writer.started
@@ -227,7 +228,7 @@ func TestOversizedInputNeverInvokesCore(t *testing.T) {
 	called := false
 	serve(bytes.NewReader(bytes.Repeat([]byte("x"), maxMessage+1)), io.Discard,
 		func(string) response { called = true; return response{} },
-		func() error { return nil }, func() bool { return false })
+		func() error { return nil }, func() bool { return false }, nil)
 	if called {
 		t.Fatal("oversized input reached the core")
 	}
@@ -249,7 +250,7 @@ func TestVPNSessionReconnectAndOwnerEOF(t *testing.T) {
 			}
 			_ = json.Unmarshal([]byte(raw), &request)
 			return response{text: `{"success":true}`, run: request.Method == "runVPN", session: request.Method == "runVPN"}
-		}, func() error { close(stopped); return nil }, func() bool { return true })
+		}, func() error { close(stopped); return nil }, func() bool { return true }, func() bool { return true })
 	}()
 	reader := bufio.NewReader(output)
 	for _, method := range []string{"runVPN", "stopVPN", "runVPN", "stopVPN"} {
@@ -276,6 +277,105 @@ func TestVPNSessionReconnectAndOwnerEOF(t *testing.T) {
 	<-stopped
 }
 
+// Regression: any failed start or lost tunnel ended the session, so the next
+// connect asked for UAC or polkit consent again.
+func TestVPNSessionOwnerOutlivesFailedStartsAndLostTunnels(t *testing.T) {
+	input, parent := io.Pipe()
+	output, child := io.Pipe()
+	defer input.Close()
+	defer parent.Close()
+	defer output.Close()
+	defer child.Close()
+	var alive, tunnel, refuse, lost atomic.Bool
+	alive.Store(true)
+	refuse.Store(true)
+	up := func() bool {
+		if tunnel.Load() {
+			return true
+		}
+		if lost.CompareAndSwap(true, false) {
+			// The child's last lines land right before its loss, after this tick read the log.
+			xray.AppendLogs([]xray.LogEntry{{Time: 1, Level: "error", Text: "the core stopped"}})
+		}
+		return false
+	}
+	done := make(chan int, 1)
+	go func() {
+		done <- serve(input, child, func(raw string) response {
+			var request struct {
+				Method string `json:"method"`
+			}
+			_ = json.Unmarshal([]byte(raw), &request)
+			run := request.Method == "runVPN"
+			if run && refuse.Load() {
+				return response{text: `{"success":false,"error":"vpn_core_failed"}`, session: true}
+			}
+			tunnel.Store(run)
+			return response{text: `{"success":true}`, run: run, session: run}
+		}, func() error { return nil }, alive.Load, up)
+	}()
+	lines := make(chan string, 8)
+	go func() {
+		reader := bufio.NewReader(output)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				close(lines)
+				return
+			}
+			lines <- line
+		}
+	}()
+	expect := func(want string) {
+		t.Helper()
+		select {
+		case line := <-lines:
+			if line != want+"\n" {
+				t.Fatalf("got %q, want %q", line, want)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("no %s", want)
+		}
+	}
+	command := func(method, want string) {
+		t.Helper()
+		_, _ = io.WriteString(parent, `{"apiVersion":1,"method":"`+method+`","payload":{"reuseSession":true}}`+"\n")
+		expect(want)
+	}
+	command("runVPN", `{"success":false,"error":"vpn_core_failed"}`)
+	refuse.Store(false)
+	command("runVPN", `{"success":true}`)
+	lost.Store(true)
+	tunnel.Store(false) // The tunnel ends by itself; the owner stays.
+	select {
+	case line := <-lines:
+		if !strings.Contains(line, `"event":"logs"`) || !strings.Contains(line, "the core stopped") {
+			t.Fatalf("got %q, want the lost tunnel's last lines", line)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the lost tunnel's last lines were dropped")
+	}
+	expect(`{"event":"stopped"}`)
+	refuse.Store(true) // A failed reconnect inside the session keeps the owner too.
+	command("runVPN", `{"success":false,"error":"vpn_core_failed"}`)
+	refuse.Store(false)
+	command("runVPN", `{"success":true}`)
+	command("stopVPN", `{"success":true}`)
+	alive.Store(false) // An owner that went ends the session.
+	select {
+	case code := <-done:
+		if code != 1 {
+			t.Fatalf("exit %d", code)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the session outlived its owner")
+	}
+	_ = child.Close()
+	for line := range lines {
+		t.Fatalf("unexpected output %q", line)
+	}
+}
+
 func TestVPNSessionRejectsUnrelatedCommandsAndCancelsRestart(t *testing.T) {
 	for _, method := range []string{"importClientProfiles", "runVPN"} {
 		t.Run(method, func(t *testing.T) {
@@ -283,7 +383,7 @@ func TestVPNSessionRejectsUnrelatedCommandsAndCancelsRestart(t *testing.T) {
 			closed := make(chan struct{})
 			requests <- `{"apiVersion":1,"method":"` + method + `"}`
 			called := false
-			if serveVPNSession(requests, closed, io.Discard, func(string) response { called = true; return response{} }, func() bool { return true }, false, 0) != 1 || called {
+			if serveVPNSession(requests, closed, io.Discard, func(string) response { called = true; return response{} }, func() bool { return true }, func() bool { return true }, true, false, 0) != 1 || called {
 				t.Fatal("unexpected command reached the runtime")
 			}
 		})
@@ -294,7 +394,7 @@ func TestVPNSessionRejectsUnrelatedCommandsAndCancelsRestart(t *testing.T) {
 	done := make(chan int, 1)
 	requests <- `{"apiVersion":1,"method":"stopVPN"}`
 	go func() {
-		done <- serveVPNSession(requests, closed, io.Discard, func(string) response { close(started); <-release; return response{} }, func() bool { return true }, false, 0)
+		done <- serveVPNSession(requests, closed, io.Discard, func(string) response { close(started); <-release; return response{} }, func() bool { return true }, func() bool { return true }, true, false, 0)
 	}()
 	<-started
 	close(closed)
@@ -332,7 +432,7 @@ func TestCatalogLeaseServesStorageUntilOwnerEOF(t *testing.T) {
 			text := replies[request.Method][0]
 			replies[request.Method] = replies[request.Method][1:]
 			return response{text: text, hold: request.Method == "acquireCatalog"}
-		}, func() error { return nil }, func() bool { return false })
+		}, func() error { return nil }, func() bool { return false }, nil)
 		_ = child.Close() // An early exit fails the read below instead of hanging it.
 		done <- code
 	}()
@@ -407,7 +507,7 @@ func TestCoreStreamsItsNewRedactedLogLines(t *testing.T) {
 			done <- serve(input, child, func(string) response {
 				mode.record()
 				return response{text: `{"success":true}`, run: true, session: mode.method == "runVPN"}
-			}, func() error { return nil }, func() bool { return true })
+			}, func() error { return nil }, func() bool { return true }, func() bool { return true })
 		}()
 		_, _ = io.WriteString(parent, `{"apiVersion":1,"method":"`+mode.method+`","payload":{}}`+"\n")
 		lines := make(chan string, 4)

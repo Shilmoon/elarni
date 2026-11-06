@@ -28,7 +28,16 @@ extension _HomeController on _ElarniHomeState {
       final value = await widget.tunnelControl.automationStatus();
       if (!mounted || revision != _stateRevision) return;
       final changed = value['status'] != _automation['status'];
-      if (!_sameJson(value, _automation)) _set(() => _automation = value);
+      // The age grows every poll; the page shows only whether it is under 90 s.
+      Map<String, Object?> shown(Map<String, Object?> status) => {
+        ...status,
+        'healthAgeSeconds': switch (status['healthAgeSeconds']) {
+          final num age => age < 90,
+          _ => null,
+        },
+      };
+      if (!_sameJson(shown(value), shown(_automation)))
+        _set(() => _automation = value);
       if (changed && value['status'] == 'selected')
         await _refreshSubscriptions();
     } on Object {
@@ -587,8 +596,16 @@ extension _HomeController on _ElarniHomeState {
     }
 
     try {
+      // While the Linux VPN runs, its root probe service starts 8 probe cores at
+      // a time; probes queued behind them would run out their 7 s bound.
+      final width =
+          widget.linux &&
+              _settings.xrayTunEnabled &&
+              !{TunnelState.disconnected, TunnelState.prepared}.contains(_state)
+          ? 8
+          : 32;
       await Future.wait(
-        List.generate(nodeIds.length.clamp(0, 32), (_) => worker()),
+        List.generate(nodeIds.length.clamp(0, width), (_) => worker()),
       );
       if (mounted && run == _pingRun) {
         _set(() {
@@ -765,12 +782,14 @@ extension _HomeController on _ElarniHomeState {
   Future<void> _refreshSubscriptions() async {
     try {
       final value = await widget.tunnelControl.subscriptions();
+      _subscriptionsLoaded = true;
       // An unchanged periodic snapshot must not rebuild every server row.
       if (mounted &&
           (value.signature == null ||
               value.signature != _subscriptions.signature))
         _set(() => _applySnapshot(value));
     } on Object {
+      _subscriptionsLoaded = false;
       if (mounted) {
         _set(() => _message = l10n.subscriptionsNotLoaded);
       }

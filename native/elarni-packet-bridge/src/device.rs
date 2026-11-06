@@ -1,5 +1,6 @@
 use std::io;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering, fence};
 use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context, Poll};
 
@@ -8,8 +9,35 @@ use tokio::sync::mpsc;
 
 use crate::framing::FrameAssembler;
 
+/// Wakes a submit that waits for room in the full input queue.
+#[derive(Default)]
+pub struct InputRoom {
+    pub lock: Mutex<()>,
+    pub freed: Condvar,
+    /// Submits waiting on `freed`; the reader takes the lock only when one waits.
+    pub waiting: AtomicUsize,
+}
+
+impl InputRoom {
+    /// Called after the reader took a packet, which freed a slot.
+    pub fn notify(&self) {
+        // Pairs with the fence before a waiting submit's retry.
+        fence(Ordering::SeqCst);
+        if self.waiting.load(Ordering::Relaxed) > 0 {
+            self.wake();
+        }
+    }
+
+    pub fn wake(&self) {
+        // Taking the lock orders this wake after a waiter's last retry.
+        drop(self.lock.lock());
+        self.freed.notify_all();
+    }
+}
+
 pub struct PacketDevice {
     input: mpsc::Receiver<Vec<u8>>,
+    input_room: Arc<InputRoom>,
     current: Option<(Vec<u8>, usize)>,
     output: Arc<Mutex<FrameAssembler>>,
     output_ready: Arc<Condvar>,
@@ -18,11 +46,13 @@ pub struct PacketDevice {
 impl PacketDevice {
     pub fn new(
         input: mpsc::Receiver<Vec<u8>>,
+        input_room: Arc<InputRoom>,
         output: Arc<Mutex<FrameAssembler>>,
         output_ready: Arc<Condvar>,
     ) -> Self {
         Self {
             input,
+            input_room,
             current: None,
             output,
             output_ready,
@@ -38,7 +68,10 @@ impl AsyncRead for PacketDevice {
     ) -> Poll<io::Result<()>> {
         if self.current.is_none() {
             match self.input.poll_recv(context) {
-                Poll::Ready(Some(packet)) => self.current = Some((packet, 0)),
+                Poll::Ready(Some(packet)) => {
+                    self.current = Some((packet, 0));
+                    self.input_room.notify();
+                }
                 Poll::Ready(None) => return Poll::Ready(Ok(())),
                 Poll::Pending => return Poll::Pending,
             }

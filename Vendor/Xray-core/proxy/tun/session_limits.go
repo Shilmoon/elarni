@@ -1,6 +1,9 @@
 package tun
 
 import (
+	"math"
+	"runtime/debug"
+	"runtime/metrics"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,6 +19,10 @@ const (
 	// Stub resolvers retransmit within about 5 s, so a UDP port 53 flow that
 	// quiet is finished; it need not hold its slot for the connection idle timeout.
 	dnsSessionIdle = 5 * time.Second
+	// Any other UDP flow this quiet is over (Elarni): a closed QUIC connection no longer holds its outbound
+	// stream and socket for the whole connection idle timeout (300 s). Two minutes is the least a NAT may
+	// keep a mapping (RFC 4787 REQ-5), so an app that relies on that keeps its source port.
+	udpSessionIdle = 2 * time.Minute
 	// How quiet a finished session must be before a full table replaces it (Elarni). It must stay below
 	// a session's lifetime in a full table under churn (256 slots at 1,600 conn/s: 160 ms). DNS needs none:
 	// retire hands a later query from the same port to a new flow.
@@ -89,10 +96,13 @@ type admittedSession struct {
 
 // acquire admits a session, replacing a finished or else the longest idle one
 // when the table is full. It returns nil when every admitted session is still active.
+// A nil stop leaves the session unstoppable until attach sets it.
 func (s *sessionAdmission) acquire(clock *activity, stop func()) *admittedSession {
+	pressed := s.limit != 0 && heapPressed()
 	s.mu.Lock()
 	var victim *admittedSession
-	if s.limit != 0 && int64(len(s.sessions)) >= s.limit {
+	var stopVictim func()
+	if s.limit != 0 && (int64(len(s.sessions)) >= s.limit || pressed && len(s.sessions) > 0) {
 		finished := false
 		for session := range s.sessions {
 			if session.clock.finished() && session.clock.idle() >= s.finishedIdle && session.clock.claim() {
@@ -108,6 +118,7 @@ func (s *sessionAdmission) acquire(clock *activity, stop func()) *admittedSessio
 			return nil
 		}
 		delete(s.sessions, victim)
+		stopVictim = victim.stop
 	}
 	if s.sessions == nil {
 		s.sessions = make(map[*admittedSession]struct{})
@@ -115,10 +126,20 @@ func (s *sessionAdmission) acquire(clock *activity, stop func()) *admittedSessio
 	session := &admittedSession{owner: s, clock: clock, stop: stop}
 	s.sessions[session] = struct{}{}
 	s.mu.Unlock()
-	if victim != nil {
-		victim.stop()
+	if stopVictim != nil {
+		stopVictim()
 	}
 	return session
+}
+
+// attach sets how to stop a session admitted before its connection existed (Elarni: TCP is admitted
+// before its handshake). It reports false when a full table already replaced the session.
+func (a *admittedSession) attach(stop func()) bool {
+	a.owner.mu.Lock()
+	defer a.owner.mu.Unlock()
+	a.stop = stop
+	_, admitted := a.owner.sessions[a]
+	return admitted
 }
 
 // release frees the session's slot; it is a no-op once the session was evicted.
@@ -129,25 +150,54 @@ func (a *admittedSession) release() {
 }
 
 func (a *admittedSession) evict() {
-	a.release()
-	a.stop()
+	a.owner.mu.Lock()
+	delete(a.owner.sessions, a)
+	stop := a.stop
+	a.owner.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
 }
 
-// evictWhenIdle ends the session after idle without traffic; it returns early once done closes.
-func (a *admittedSession) evictWhenIdle(done <-chan struct{}, idle time.Duration) {
-	timer := time.NewTimer(idle)
-	defer timer.Stop()
-	for {
-		select {
-		case <-done:
-			return
-		case <-timer.C:
-			if rest := idle - a.clock.idle(); rest > 0 {
-				timer.Reset(rest)
-				continue
-			}
-			a.evict()
+// evictWhenIdle ends the session after idle without traffic, from a timer rather than a goroutine
+// per flow (Elarni); the returned func cancels it.
+func (a *admittedSession) evictWhenIdle(idle time.Duration) (cancel func() bool) {
+	var timer *time.Timer
+	timer = time.AfterFunc(math.MaxInt64, func() {
+		if rest := idle - a.clock.idle(); rest > 0 {
+			timer.Reset(rest)
 			return
 		}
+		a.evict()
+	})
+	timer.Reset(idle) // armed only after timer is set, which the callback reads
+	return timer.Stop
+}
+
+// heapCheck caches the last memory reading: admission asks for every new flow.
+var heapCheck struct {
+	next atomic.Int64 // UnixNano of the next reading
+	high atomic.Bool
+}
+
+// readHeap returns the live heap and the Go memory limit (math.MaxInt64 when none is set).
+var readHeap = func() (live, limit int64) {
+	sample := []metrics.Sample{{Name: "/gc/heap/live:bytes"}}
+	metrics.Read(sample)
+	if sample[0].Value.Kind() != metrics.KindUint64 {
+		return 0, math.MaxInt64
 	}
+	return int64(sample[0].Value.Uint64()), debug.SetMemoryLimit(-1)
+}
+
+// heapPressed reports, from a reading at most a second old, whether the live heap passed 85% of the
+// memory limit (Elarni): Android's 192 MiB limit is reached long before its session limits, and the GC
+// then takes up to half the CPU. Admission treats the table as full, so idle sessions make room.
+func heapPressed() bool {
+	now := time.Now().UnixNano()
+	if next := heapCheck.next.Load(); now >= next && heapCheck.next.CompareAndSwap(next, now+int64(time.Second)) {
+		live, limit := readHeap()
+		heapCheck.high.Store(limit != math.MaxInt64 && live > limit/20*17)
+	}
+	return heapCheck.high.Load()
 }

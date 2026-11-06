@@ -188,7 +188,7 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 	}
 
 	if conn == nil {
-		if err := retry.ExponentialBackoff(5, 200).On(func() error {
+		if err := retry.ExponentialBackoff(5, 200).OnContext(ctx, func() error {
 			var err error
 			conn, err = dialer.Dial(ctx, rec.Destination)
 			if err != nil {

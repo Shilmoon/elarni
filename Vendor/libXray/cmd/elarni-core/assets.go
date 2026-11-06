@@ -348,6 +348,12 @@ func installAssets(assets map[string][]byte) error {
 			return errors.New("invalid_geodata")
 		}
 	}
+	useAssets(assets)
+	return nil
+}
+
+// useAssets serves geodata that installAssets verified to the next core.
+func useAssets(assets map[string][]byte) {
 	filesystem.NewAssetReader = func(name string) (io.ReadCloser, error) {
 		data, found := assets[name]
 		if !found {
@@ -357,7 +363,6 @@ func installAssets(assets map[string][]byte) error {
 	}
 	// Parsed-geodata caches key on this; a reused helper serves each route's own files.
 	filesystem.AssetGeneration.Add(1)
-	return nil
 }
 
 func downloadAsset(url string, stored assetValidators, destination string) (bool, assetValidators, error) {

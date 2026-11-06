@@ -98,6 +98,22 @@ class AutomationTest {
         assertEquals(5.0 + Automation.healthInterval, healthy.healthAt!!, 0.0)
     }
 
+    @Test fun healthCheckWaitsForTrafficAfterAPass() {
+        val automation = ready().apply { healthy(0.0) }
+        var reads = 0
+        assertFalse("Not due yet", automation.healthDue(Automation.healthInterval - 1, passed = true) { reads++; true })
+        assertEquals("The counter is read only when a check is due", 0, reads)
+        val due = Automation.healthInterval + 1
+        assertFalse("A passing server that carried nothing since is not probed", automation.healthDue(due, passed = true) { reads++; false })
+        assertEquals(1, reads)
+        assertEquals("The next look is one interval later", due + Automation.healthInterval, automation.healthAt!!, 0.0)
+        assertTrue("Traffic left since the pass", automation.healthDue(due + Automation.healthInterval, passed = true) { true })
+        assertTrue("The last check failed", automation.healthDue(due + Automation.healthInterval, passed = false) { reads++; false })
+        assertEquals("A failed check is repeated without reading the counter", 1, reads)
+        automation.failures = 1
+        assertTrue("A health failure is checked again", automation.healthDue(due + Automation.healthInterval, passed = true) { false })
+    }
+
     @Test fun unattendedRecoveryWaitsLongerEachTime() {
         val automation = Automation(obj("exhausted" to true)).apply { intent = true; online = true }
         var time = 0.0

@@ -1,6 +1,7 @@
 package quic
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/apernet/quic-go/internal/monotime"
@@ -27,10 +28,21 @@ func TestConnectionWindowMovesPastStalledStreams(t *testing.T) {
 			break
 		}
 	}
-	if limit := protocol.ByteCount(2*maxWindow + window); fc.receiveWindow > limit {
+	if limit := unreadAllowance(runtime.GOOS, maxWindow) + window; fc.receiveWindow > limit {
 		t.Fatalf("unread bytes reached a window of %d, want at most %d", fc.receiveWindow, limit)
 	}
 	if fc.GetWindowUpdate(now) != 0 {
 		t.Fatal("window still moved once the allowance was held")
+	}
+}
+
+// iOS kills the packet tunnel above about 50 MB; one connection's unread bytes must stay well under it there.
+func TestUnreadAllowanceIsSmallerOnIOS(t *testing.T) {
+	const maxWindow = 15 << 20 // the Chrome parrot's connection window
+	if got := unreadAllowance("ios", maxWindow) + maxWindow; got > 3*maxWindow/2 {
+		t.Fatalf("an iOS connection may hold %d unread bytes, want at most %d", got, 3*maxWindow/2)
+	}
+	if got := unreadAllowance("android", maxWindow); got != 2*maxWindow {
+		t.Fatalf("the allowance elsewhere changed to %d", got)
 	}
 }

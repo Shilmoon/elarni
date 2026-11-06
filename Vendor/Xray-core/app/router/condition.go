@@ -394,7 +394,12 @@ func (m *ProcessNameMatcher) Apply(ctx routing.Context) (matched bool) {
 	}
 
 	find := func() (int, string, string, error) {
-		return lookupProcess(network, srcIP, srcPort, dstIP, dstPort)
+		pid, name, path, err := lookupProcess(network, srcIP, srcPort, dstIP, dstPort)
+		if err != nil && err != net.ErrNotLocal {
+			// Elarni: once per connection rather than per process rule, and at info: the connection is still routed by the other rules.
+			errors.LogInfo(context.Background(), "Unables to find local process name: ", err)
+		}
+		return pid, name, path, err
 	}
 	var pid int
 	var name, absPath string
@@ -408,9 +413,6 @@ func (m *ProcessNameMatcher) Apply(ctx routing.Context) (matched bool) {
 		code = "lookup_failed"
 		if err == net.ErrNotLocal {
 			code = "not_local"
-		}
-		if err != net.ErrNotLocal {
-			errors.LogError(context.Background(), "Unables to find local process name: ", err)
 		}
 		return false
 	}

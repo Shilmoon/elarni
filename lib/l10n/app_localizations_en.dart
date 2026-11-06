@@ -575,6 +575,30 @@ class AppLocalizationsEn extends AppLocalizations {
   String get systemWideVpn => 'System-wide VPN';
 
   @override
+  String get connectionMode => 'Connection mode';
+
+  @override
+  String get connectionModeHelp =>
+      'System-wide VPN connects all apps; administrator approval is requested on the first VPN connection in this app session. System proxy points this computer\'s proxy setting at Elarni without administrator approval; only apps that follow it, such as browsers, use it. Local proxy only opens the ports below for apps you set up yourself.';
+
+  @override
+  String get connectionModeServiceHelp =>
+      'System-wide VPN connects all apps; administrator approval is requested on the first VPN connection in this app session, unless Connect without administrator approval is on. System proxy points this computer\'s proxy setting at Elarni without administrator approval; only apps that follow it, such as browsers, use it. Local proxy only opens the ports below for apps you set up yourself.';
+
+  @override
+  String get systemProxy => 'System proxy';
+
+  @override
+  String get localProxyOnly => 'Local proxy only';
+
+  @override
+  String get systemProxyMode => 'System proxy mode';
+
+  @override
+  String get systemProxyListeners =>
+      'In System proxy mode, apps on this computer use the HTTP port without a login.';
+
+  @override
   String get updateDraft => 'Update draft';
 
   @override
@@ -1451,14 +1475,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'Connect without administrator approval';
 
   @override
-  String get systemWideVpnHelp =>
-      'Connects all apps. Administrator approval is requested on the first VPN connection in this app session. Turn off to use only the local proxy.';
-
-  @override
-  String get systemWideVpnServiceHelp =>
-      'Connects all apps. Administrator approval is requested on the first VPN connection in this app session, unless Connect without administrator approval is on. Turn off to use only the local proxy.';
-
-  @override
   String get accentColor => 'Accent color';
 
   @override
@@ -1571,10 +1587,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get onDemandMacHelp =>
       'On Demand controls automatic connection when network access resumes.';
-
-  @override
-  String get onDemandDesktopHelp =>
-      'On Demand reconnects after wake or a network interruption until you press Stop.';
 
   @override
   String get onDemand => 'On Demand';

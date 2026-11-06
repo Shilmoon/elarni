@@ -8,6 +8,7 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.core.content.FileProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
@@ -952,7 +953,10 @@ class AndroidE2E {
                 subscribe(feed)
                 // A run the change started must end first; only the forced run below may remind.
                 ui.waitUntil(10_000) { !shell("cmd jobscheduler get-job-state $job").contains("active") }
+                // The first subscription schedules the job, which then runs at once; its reminder would hold the
+                // forced run's back for the day.
                 manager.cancel(4)
+                ui.activity.getSharedPreferences("reminders", android.content.Context.MODE_PRIVATE).edit().remove("expiry").commit()
                 // Testing a server that never answers holds the catalog, as start-up does when the job starts the app.
                 // Unlike a change, a test schedules nothing that could run the job again afterwards.
                 val id = snapshot().nodes.single().getString("id")
@@ -964,9 +968,22 @@ class AndroidE2E {
                 test.get(15, java.util.concurrent.TimeUnit.SECONDS)
                 // The job's pass waits for the test, then reminds of the expiring subscription.
                 ui.waitUntil(10_000) { manager.activeNotifications.any { it.id == 4 } }
+                // A subscription to refresh keeps an hourly job across reboots; with nothing left to refresh there is none.
+                val scheduler = ui.activity.getSystemService(android.app.job.JobScheduler::class.java)
+                val pending = scheduler.getPendingJob(ElarniApplication.REFRESH_JOB)!!
+                assertTrue(pending.isPersisted && pending.isPeriodic)
+                assertEquals(60 * 60 * 1000L, pending.intervalMillis)
+                call("deleteSource", obj("id" to snapshot().sources.single().getString("id")))
+                assertNull(scheduler.getPendingJob(ElarniApplication.REFRESH_JOB))
             }
             held.forEach { it.close() }
         }
+    }
+    @Test fun e_errorOutsideAnActionIsReportedNotFatal() {
+        // An error that escapes background work must not end the process, and with it the VPN.
+        repo.scope.launch { throw AppFailure("synthetic_failure") }
+        ui.waitUntil(5000) { repo.state.value.error == "synthetic_failure" }
+        assertEquals("synthetic_failure", repo.state.value.issues.first().string("code"))
     }
     @Test fun e_largeRoutingListSavesWithManyJsonServers() {
         val sites = (0 until 15000).map { "full:${"x".repeat(48)}-$it.example" }

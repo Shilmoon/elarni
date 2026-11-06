@@ -36,6 +36,10 @@ type Conn struct {
 
 const tlsCloseTimeout = 250 * time.Millisecond
 
+// HandshakeTimeout is the budget of a client TLS, REALITY or HTTPUpgrade handshake once
+// the TCP connect is done: XHTTP's setup budget. A variable so tests can shorten it.
+var HandshakeTimeout = 16 * time.Second
+
 func (c *Conn) SuppressCloseNotify() {
 	c.suppressCloseNotify.Store(true)
 }

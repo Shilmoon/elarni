@@ -76,7 +76,7 @@ func TestHandlerCloseStopsWritesToReusedTunDescriptor(t *testing.T) {
 	// Open the session from this goroutine: a packet read through the descriptor has no
 	// happens-before edge to Start's handler setup, so the race detector would flag gVisor.
 	network.(*stackGVisor).udpHandler.HandlePacket(net.UDPDestination(net.ParseAddress("198.18.0.2"), 40000),
-		net.UDPDestination(net.ParseAddress("198.18.0.3"), 50000), []byte{1})
+		net.UDPDestination(net.ParseAddress("198.18.0.3"), 50000), buf.FromBytes([]byte{1}))
 	var link *transport.Link
 	select {
 	case link = <-dispatcher.link:

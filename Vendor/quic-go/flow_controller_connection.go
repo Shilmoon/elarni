@@ -3,6 +3,7 @@ package quic
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 
 	"github.com/apernet/quic-go/internal/monotime"
@@ -72,10 +73,20 @@ func (c *connectionFlowController) AddBytesRead(n protocol.ByteCount) (hasWindow
 
 // consumed counts received bytes as read for the connection window. Elarni: bytes held by
 // streams the application stopped reading counted against the connection until a few stalled
-// downloads starved every stream; up to twice the maximum window of them no longer count.
+// downloads starved every stream; up to unreadAllowance of them no longer count.
 // Each stream's own window still bounds what it holds. Needs the mutex.
 func (c *connectionFlowController) consumed() protocol.ByteCount {
-	return c.bytesRead + min(c.highestReceived-c.bytesRead, 2*c.maxReceiveWindowSize)
+	return c.bytesRead + min(c.highestReceived-c.bytesRead, unreadAllowance(runtime.GOOS, c.maxReceiveWindowSize))
+}
+
+// unreadAllowance is how many unread bytes stop counting against a connection whose window
+// grows to maxWindow. iOS kills the packet tunnel above about 50 MB, where three windows per
+// connection (45 MiB for XHTTP/3) are too many; it gets one and a half.
+func unreadAllowance(goos string, maxWindow protocol.ByteCount) protocol.ByteCount {
+	if goos == "ios" {
+		return maxWindow / 2
+	}
+	return 2 * maxWindow
 }
 
 // hasConnectionWindowUpdate is hasWindowUpdate with consumed in place of bytesRead. Needs the mutex.

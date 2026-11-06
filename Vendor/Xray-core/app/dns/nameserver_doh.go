@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync/atomic"
 	"time"
 
 	utls "github.com/refraction-networking/utls"
@@ -26,14 +27,18 @@ import (
 	"golang.org/x/net/http2"
 )
 
+// dohSetupTimeout bounds setting up a DoH connection, as the system dialer bounds a TCP dial.
+var dohSetupTimeout = 16 * time.Second
+
 // DoHNameServer implemented DNS over HTTPS (RFC8484) Wire Format,
 // which is compatible with traditional dns over udp(RFC1035),
 // thus most of the DOH implementation is copied from udpns.go
 type DoHNameServer struct {
 	cacheController *CacheController
-	httpClient      *http.Client
+	httpClient      atomic.Pointer[http.Client]
 	dohURL          string
 	clientIP        net.IP
+	newHTTPClient   func() *http.Client
 }
 
 // NewDoHNameServer creates DOH/DOHL client object for remote/local resolving.
@@ -49,11 +54,15 @@ func NewDoHNameServer(url *url.URL, dispatcher routing.Dispatcher, h2c bool, dis
 		dohURL:          url.String(),
 		clientIP:        clientIP,
 	}
-	s.httpClient = &http.Client{
-		Transport: &http2.Transport{
+	s.newHTTPClient = func() *http.Client {
+		return &http.Client{Transport: &http2.Transport{
 			IdleConnTimeout: net.ConnIdleTimeout,
 			ReadIdleTimeout: net.ChromeH2KeepAlivePeriod,
 			DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
+				// Elarni: net/http dials apart from the query that asked, without any deadline, and later queries
+				// wait for that dial, so a setup stalled on a dead path held every query until the link died.
+				ctx, cancel := context.WithTimeout(ctx, dohSetupTimeout)
+				defer cancel()
 				dest, err := net.ParseDestination(network + ":" + addr)
 				if err != nil {
 					return nil, err
@@ -101,14 +110,31 @@ func NewDoHNameServer(url *url.URL, dispatcher routing.Dispatcher, h2c bool, dis
 				if !h2c {
 					conn = utls.UClient(conn, &utls.Config{ServerName: url.Hostname()}, utls.HelloChrome_Auto)
 					if err := conn.(*utls.UConn).HandshakeContext(ctx); err != nil {
+						conn.Close()
 						return nil, err
 					}
 				}
 				return conn, nil
 			},
-		},
+		}}
 	}
+	s.httpClient.Store(s.newHTTPClient())
 	return s
+}
+
+// retire sends new queries to a fresh connection after a socket path change (contract C1). The old
+// connections finish the queries they carry, each bounded by its own deadline, and close once idle.
+func (s *DoHNameServer) retire(grace time.Duration) {
+	old := s.httpClient.Swap(s.newHTTPClient())
+	old.CloseIdleConnections()
+	// shortcut: a query still running at grace (only with timeoutMs above it) keeps its connection open until the idle timeout; track the connections if that matters.
+	time.AfterFunc(grace, old.CloseIdleConnections)
+}
+
+// Close implements common.Closable.
+func (s *DoHNameServer) Close() error {
+	s.httpClient.Load().CloseIdleConnections()
+	return nil
 }
 
 // Name implements Server.
@@ -235,9 +261,7 @@ func (s *DoHNameServer) dohHTTPSContext(ctx context.Context, b []byte) ([]byte, 
 	utils.TryDefaultHeadersWith(req.Header, "fetch")
 	req.Header.Set("X-Padding", utils.H2Base62Pad(crypto.RandBetween(100, 1000)))
 
-	hc := s.httpClient
-
-	resp, err := hc.Do(req.WithContext(ctx))
+	resp, err := s.httpClient.Load().Do(req.WithContext(ctx))
 	if err != nil {
 		return nil, err
 	}

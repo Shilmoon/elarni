@@ -32,6 +32,8 @@ type LogsResult struct {
 const (
 	logCapacity = 1000
 	maxLogText  = 1000
+	// An outage logs a failed dial per attempt; past this, lines are counted instead of redacted.
+	maxLogsPerSecond = 200
 )
 
 // Index is the severity; a message is kept when its severity is at most the level.
@@ -43,6 +45,9 @@ var (
 	// Line seq sits at logRing[seq%logCapacity].
 	logRing [logCapacity]LogEntry
 	logNext int64
+	// The lines kept in logSecond, and those dropped since the last kept one.
+	logSecond, logInSecond, logDropped int64
+	logNow                             = time.Now
 )
 
 func init() {
@@ -56,6 +61,7 @@ func resetLogs() {
 	logLevel.Store(int32(log.Severity_Warning))
 	logRing = [logCapacity]LogEntry{}
 	logNext = 1
+	logSecond, logInSecond, logDropped = 0, 0, 0
 }
 
 func LogLevel() string { return logLevelNames[logLevel.Load()] }
@@ -103,21 +109,42 @@ func appendLogLocked(entry LogEntry) {
 	logNext++
 }
 
+// admitLog says whether a line of this second is kept, and how many were dropped before it.
+func admitLog(second int64) (int64, bool) {
+	logMu.Lock()
+	defer logMu.Unlock()
+	if second != logSecond {
+		logSecond, logInSecond = second, 0
+	}
+	if logInSecond >= maxLogsPerSecond {
+		logDropped++
+		return 0, false
+	}
+	logInSecond++
+	dropped := logDropped
+	logDropped = 0
+	return dropped, true
+}
+
 func recordLog(message log.Message) {
+	// Access and DNS lines name every destination; they show from info up.
 	severity := log.Severity_Info
+	general, isGeneral := message.(*log.GeneralMessage)
+	if isGeneral {
+		severity = max(general.Severity, log.Severity_Error)
+	}
+	if int32(severity) > logLevel.Load() {
+		return
+	}
+	now := logNow()
+	dropped, kept := admitLog(now.Unix())
+	if !kept {
+		return
+	}
 	var text string
-	switch message := message.(type) {
-	case *log.GeneralMessage:
-		severity = max(message.Severity, log.Severity_Error)
-		if int32(severity) > logLevel.Load() {
-			return
-		}
-		text = fmt.Sprint(message.Content)
-	default:
-		// Access and DNS lines name every destination; they show from info up.
-		if int32(severity) > logLevel.Load() {
-			return
-		}
+	if isGeneral {
+		text = fmt.Sprint(general.Content)
+	} else {
 		text = message.String()
 	}
 	// Redacted whole: a cut first would leave a part of an ID or address no pattern matches.
@@ -125,9 +152,13 @@ func recordLog(message log.Message) {
 	if len(text) > maxLogText {
 		text = strings.ToValidUTF8(text[:maxLogText], "") + "…"
 	}
-	entry := LogEntry{Time: time.Now().UnixMilli(), Level: logLevelNames[severity], Text: text}
+	entry := LogEntry{Time: now.UnixMilli(), Level: logLevelNames[severity], Text: text}
 	logMu.Lock()
 	defer logMu.Unlock()
+	if dropped > 0 {
+		appendLogLocked(LogEntry{Time: entry.Time, Level: logLevelNames[log.Severity_Warning],
+			Text: fmt.Sprintf("%d log lines dropped: more than %d a second", dropped, maxLogsPerSecond)})
+	}
 	appendLogLocked(entry)
 }
 

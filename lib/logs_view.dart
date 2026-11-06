@@ -97,9 +97,15 @@ class _LogsViewState extends State<LogsView> {
           ? (await widget.control.readLogs())['entries']
           : value['entries'];
       if (!mounted) return;
+      final level = _savingLevel ? _level : value['level'] as String? ?? _level;
+      // An idle core sends nothing new; the open dialog need not rebuild.
+      if (!restarted &&
+          (entries as List? ?? const []).isEmpty &&
+          level == _level)
+        return;
       final follow = !_scroll.hasClients || _scroll.position.extentAfter < 24;
       setState(() {
-        if (!_savingLevel) _level = value['level'] as String? ?? _level;
+        _level = level;
         if (restarted) _lines.clear();
         for (final entry in entries as List? ?? const [])
           if (entry is Map && entry['seq'] is int)

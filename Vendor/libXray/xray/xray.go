@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"runtime"
 	"runtime/debug"
+	"runtime/metrics"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -50,11 +50,13 @@ func GetRuntimeMetrics() (RuntimeMetrics, error) {
 	if coreServer == nil {
 		return RuntimeMetrics{}, errors.New("xray is not running")
 	}
-	var memory runtime.MemStats
-	runtime.ReadMemStats(&memory)
+	// Polled every second or two; runtime.ReadMemStats stopped the world for each read.
+	heap := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}, {Name: "/memory/classes/heap/unused:bytes"},
+		{Name: "/memory/classes/heap/free:bytes"}, {Name: "/memory/classes/heap/released:bytes"}}
+	metrics.Read(heap)
 	result := RuntimeMetrics{
-		HeapAllocBytes:   memory.Alloc,
-		HeapSysBytes:     memory.HeapSys,
+		HeapAllocBytes:   heap[0].Value.Uint64(),
+		HeapSysBytes:     heap[0].Value.Uint64() + heap[1].Value.Uint64() + heap[2].Value.Uint64() + heap[3].Value.Uint64(),
 		MemoryLimitBytes: memoryLimit.Load(),
 	}
 	manager, ok := coreServer.GetFeature(featurestats.ManagerType()).(featurestats.Manager)
