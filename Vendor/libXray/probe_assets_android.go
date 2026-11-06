@@ -16,15 +16,15 @@ func prepareProbeAssets(directory *string) (func(), error) {
 		return nil, nil
 	}
 	androidAssets.RLock()
-	previous := androidAssets.files
+	previous, previousDirectory := androidAssets.files, androidAssets.directory
 	androidAssets.RUnlock()
 	if err := UseAndroidAssets(*directory); err != nil {
 		return nil, err
 	}
 	return func() {
 		androidAssets.Lock()
-		changed := !maps.EqualFunc(androidAssets.files, previous, bytes.Equal)
-		androidAssets.files = previous
+		changed := androidAssets.directory != previousDirectory && !maps.EqualFunc(androidAssets.files, previous, bytes.Equal)
+		androidAssets.files, androidAssets.directory = previous, previousDirectory
 		androidAssets.Unlock()
 		if changed {
 			// Matchers the probe built from its files must not serve the active route.

@@ -12,6 +12,7 @@ import (
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/protocol"
 	"github.com/xtls/xray-core/transport/internet"
+	"github.com/xtls/xray-core/transport/internet/stat"
 )
 
 const (
@@ -387,16 +388,33 @@ type UDPReader struct {
 }
 
 func (r *UDPReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
-	// Copy out of one scratch buffer so a queued reply keeps only its own size.
-	if r.scratch == nil {
-		r.scratch = make([]byte, buf.UDPSize)
+	// Copy out of one scratch buffer so a queued reply keeps only its own size. A dialed UDP socket
+	// borrows a pooled one instead while a reply is ready (Elarni), so a waiting flow keeps no 64 KiB.
+	conn, counted := r.Reader, (*stat.CounterConnection)(nil)
+	if c, ok := conn.(*stat.CounterConnection); ok {
+		conn, counted = c.Connection, c
 	}
-	n, err := r.Reader.Read(r.scratch)
-	if err != nil {
-		return nil, err
+	var buffer *buf.Buffer
+	if packets, ok := conn.(*net.PacketConnWrapper); ok {
+		b, _, err := buf.ReadPacketFrom(packets.PacketConn, &r.scratch)
+		if err != nil {
+			return nil, err
+		}
+		if counted != nil && counted.ReadCounter != nil {
+			counted.ReadCounter.Add(int64(b.Len()))
+		}
+		buffer = b
+	} else {
+		if r.scratch == nil {
+			r.scratch = make([]byte, buf.UDPSize)
+		}
+		n, err := r.Reader.Read(r.scratch)
+		if err != nil {
+			return nil, err
+		}
+		buffer = buf.NewWithSize(int32(n))
+		buffer.Write(r.scratch[:n])
 	}
-	buffer := buf.NewWithSize(int32(n))
-	buffer.Write(r.scratch[:n])
 	u, err := DecodeUDPPacket(buffer)
 	if err != nil {
 		buffer.Release()

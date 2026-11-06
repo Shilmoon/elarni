@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/log"
@@ -74,9 +75,18 @@ func TestLogsKeepOnlyTheChosenLevelAndReachEveryReader(t *testing.T) {
 	}
 }
 
+// setLogClock serves times step apart.
+func setLogClock(t *testing.T, step time.Duration) *time.Time {
+	clock := time.Unix(1_700_000_000, 0)
+	logNow = func() time.Time { clock = clock.Add(step); return clock }
+	t.Cleanup(func() { logNow = time.Now })
+	return &clock
+}
+
 func TestLogsKeepTheNewestLinesAndRenumberRelayedOnes(t *testing.T) {
 	defer resetLogs()
 	resetLogs()
+	setLogClock(t, time.Second) // below the per-second cap
 	for index := 0; index < logCapacity+5; index++ {
 		errors.LogWarning(context.Background(), fmt.Sprint("line ", index))
 	}
@@ -102,6 +112,51 @@ func TestLogsKeepTheNewestLinesAndRenumberRelayedOnes(t *testing.T) {
 	relayed := ReadLogs(0).Entries
 	if len(relayed) != 1 || relayed[0].Seq != 1 || relayed[0].Time != 1700000000000 || relayed[0].Level != "error" {
 		t.Fatalf("relayed %+v", relayed)
+	}
+}
+
+// In an outage every failed dial logs a line; past the cap the rest of that second is counted,
+// and the count is kept before the next line.
+func TestLogsKeepAtMostTheCapEachSecond(t *testing.T) {
+	defer resetLogs()
+	resetLogs()
+	clock := setLogClock(t, 0)
+	ctx := context.Background()
+	for index := range maxLogsPerSecond + 50 {
+		errors.LogWarning(ctx, fmt.Sprint("dial ", index, " failed"))
+	}
+	*clock = clock.Add(time.Second)
+	errors.LogWarning(ctx, "after the outage")
+	entries := ReadLogs(0).Entries
+	if len(entries) != maxLogsPerSecond+2 || !strings.HasSuffix(entries[maxLogsPerSecond-1].Text, fmt.Sprint("dial ", maxLogsPerSecond-1, " failed")) {
+		t.Fatalf("kept %d lines, ending %+v", len(entries), entries[len(entries)-1])
+	}
+	if marker := entries[maxLogsPerSecond]; marker.Level != "warning" || marker.Text != fmt.Sprintf("50 log lines dropped: more than %d a second", maxLogsPerSecond) {
+		t.Fatalf("drop marker %+v", marker)
+	}
+	if last := entries[len(entries)-1]; !strings.HasSuffix(last.Text, "after the outage") {
+		t.Fatalf("the next second's line %+v", last)
+	}
+}
+
+// An outage logs a failed dial per connection attempt; "kept" is a line a second, all redacted.
+func BenchmarkRecordLog(b *testing.B) {
+	for _, name := range []string{"flood", "kept"} {
+		b.Run(name, func(b *testing.B) {
+			defer resetLogs()
+			resetLogs()
+			if name == "kept" {
+				clock := time.Unix(1_700_000_000, 0)
+				logNow = func() time.Time { clock = clock.Add(time.Second); return clock }
+				defer func() { logNow = time.Now }()
+			}
+			log.RegisterHandler(noopHandler{})
+			ctx := context.Background()
+			b.ReportAllocs()
+			for b.Loop() {
+				errors.LogWarning(ctx, "transport/internet: failed to dial tcp:www.example.com:443 via 203.0.113.7:8443 > i/o timeout")
+			}
+		})
 	}
 }
 

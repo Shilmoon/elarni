@@ -37,6 +37,17 @@ class AppFailure(val code: String) : Exception(code)
 object NativeBindings {
     init { System.loadLibrary("elarni_jni") }
     external fun domain(input: ByteArray): ByteArray
+    private external fun setDumpable(value: Int): Int
+    /**
+     * Go loaded as a library reads the CPU features (AES, PMULL) and the vDSO from /proc/self/auxv, which a
+     * non-dumpable app process cannot open (golang/go#9229); without them TLS falls back to software AES, about 4x
+     * slower per stream. The process is dumpable only until the Go runtime has started: [firstCall] must call into
+     * Go, since loading the library starts the runtime on its own thread and only a Go call waits for it.
+     */
+    fun startCore(firstCall: () -> Unit) {
+        val previous = setDumpable(1)
+        try { firstCall() } finally { if (previous >= 0) setDumpable(previous) }
+    }
 }
 
 /** All native error messages are replaced by bounded codes before reaching UI. */
@@ -86,8 +97,8 @@ object Native {
         }
     }
 
-    fun cancelOperations() {
-        operations.forEach { (id, kind) -> runCatching { call("cancel$kind", obj("operationId" to id)) } }
+    fun cancelOperations(kind: String? = null) {
+        operations.forEach { (id, running) -> if (kind == null || running == kind) runCatching { call("cancel$running", obj("operationId" to id)) } }
     }
 
     fun qr(bytes: ByteArray): String = try { LibXray.decodeAndroidQRImage(bytes) }

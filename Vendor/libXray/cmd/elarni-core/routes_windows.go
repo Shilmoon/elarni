@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/xtls/xray-core/common/flightrecorder"
 	xnet "github.com/xtls/xray-core/common/net"
@@ -38,27 +39,44 @@ type physicalNetworkSnapshot struct {
 }
 
 type physicalNetworkCache struct {
-	mu       sync.Mutex
-	snapshot atomic.Pointer[physicalNetworkSnapshot]
-	dirty    atomic.Bool
-	load     func() (*physicalNetworkSnapshot, error)
-	wake     chan struct{}
+	mu         sync.Mutex
+	snapshot   atomic.Pointer[physicalNetworkSnapshot]
+	dirty      atomic.Bool
+	refreshing atomic.Bool
+	resumed    atomic.Bool
+	load       func() (*physicalNetworkSnapshot, error)
+	wake       chan struct{}
 }
 
 var physicalNetwork physicalNetworkCache
 var physicalBindingsOnce sync.Once
 
+func (c *physicalNetworkCache) fresh(s *physicalNetworkSnapshot) bool {
+	// DNS-only edits need not generate a route/interface notification.
+	return s != nil && time.Since(s.captured) < 5*time.Second && !c.dirty.Load()
+}
+
 func (c *physicalNetworkCache) get(force bool) (*physicalNetworkSnapshot, error) {
-	fresh := func(s *physicalNetworkSnapshot) bool {
-		// DNS-only edits need not generate a route/interface notification.
-		return s != nil && time.Since(s.captured) < 5*time.Second && !c.dirty.Load()
+	s := c.snapshot.Load()
+	if !force && s != nil && s.err == nil {
+		// Dials keep the last good snapshot while one refresh runs beside them, instead
+		// of all waiting behind the enumeration. bind still checks the chosen interface
+		// and refreshes in line when it is gone.
+		if !c.fresh(s) && c.refreshing.CompareAndSwap(false, true) {
+			go func() {
+				defer c.refreshing.Store(false)
+				_, _ = c.refresh(false)
+			}()
+		}
+		return s, nil
 	}
-	if s := c.snapshot.Load(); !force && fresh(s) {
-		return s, s.err
-	}
+	return c.refresh(force)
+}
+
+func (c *physicalNetworkCache) refresh(force bool) (*physicalNetworkSnapshot, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if s := c.snapshot.Load(); !force && fresh(s) {
+	if s := c.snapshot.Load(); !force && c.fresh(s) {
 		return s, s.err
 	}
 	// Preserve notifications that arrive during enumeration for the next lookup.
@@ -118,9 +136,15 @@ func (c *physicalNetworkCache) invalidate() {
 	}
 }
 
-// The interfaces of the IPv4 and IPv6 default routes.
+// resume reopens long-lived sockets after a sleep even when the routes look the same.
+func (c *physicalNetworkCache) resume() {
+	c.resumed.Store(true)
+	c.invalidate()
+}
+
+// The interfaces of the IPv4 and IPv6 default routes, read now.
 func (c *physicalNetworkCache) defaults() (indexes [2]uint32) {
-	s, _ := c.get(false)
+	s, _ := c.get(true)
 	for i, address := range []netip.Addr{netip.IPv4Unspecified(), netip.IPv6Unspecified()} {
 		if route := selectPhysicalRoute(s.routes, address); route != nil {
 			indexes[i] = route.index
@@ -129,16 +153,22 @@ func (c *physicalNetworkCache) defaults() (indexes [2]uint32) {
 	return indexes
 }
 
-// Sockets keep the interface they were bound to, so long-lived ones (WireGuard)
-// reopen through moved when a default route changes interface.
+// Sockets keep the interface they were bound to, so long-lived ones reopen or
+// verify themselves through moved when a default route changes interface.
 func (c *physicalNetworkCache) watchDefaults(last [2]uint32, settle time.Duration, moved func()) {
-	for range c.wake {
-		time.Sleep(settle) // an adapter change arrives as a burst of notifications
-		if current := c.defaults(); current != last {
-			last = current
-			moved()
-		}
+	watchSocketPath(c.wake, &c.resumed, last, settle, c.defaults, moved)
+}
+
+var queryUnbiasedInterruptTime = windows.NewLazySystemDLL("kernel32.dll").NewProc("QueryUnbiasedInterruptTime")
+
+// windowsSuspended is the time this boot spent asleep or hibernated: the tick count
+// includes it, the unbiased interrupt time does not.
+func windowsSuspended() time.Duration {
+	var unbiased uint64 // 100 ns units
+	if ok, _, _ := queryUnbiasedInterruptTime.Call(uintptr(unsafe.Pointer(&unbiased))); ok == 0 {
+		return 0
 	}
+	return windows.DurationSinceBoot() - time.Duration(unbiased)*100
 }
 
 func selectPhysicalRoute(routes []physicalRoute, address netip.Addr) *physicalRoute {

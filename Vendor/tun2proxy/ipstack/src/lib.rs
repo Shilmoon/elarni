@@ -362,10 +362,7 @@ fn run<Device: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
                         }
                     }
                 }
-                Some(network_tuple) = session_remove_rx.recv() => {
-                    sessions.remove(&network_tuple);
-                    log::debug!("session destroyed: {network_tuple}");
-                }
+                Some(network_tuple) = session_remove_rx.recv() => remove_session(&mut sessions, network_tuple),
                 _ = fragment_expiry.tick(), if !fragments.is_empty() => fragments.expire(),
                 result = &mut upstream.0 => {
                     return result.map_err(std::io::Error::other)?;
@@ -428,29 +425,43 @@ async fn process_device_read(
     }
 
     let network_tuple = packet.network_tuple();
-    match sessions.entry(network_tuple) {
-        std::collections::hash_map::Entry::Occupied(entry) => {
+    // Elarni: a session that ended while its removal is still queued hands the packet to a new session;
+    // the packet was dropped, so a query sent right after the previous answer on the same port was lost.
+    let packet = match sessions.get(&network_tuple) {
+        Some(sender) => {
             let len = packet.payload.as_ref().map(|p| p.len()).unwrap_or(0);
-            log::trace!("packet sent to stream: {network_tuple} len {len}");
-            entry.get().send(packet).map_err(std::io::Error::other)?;
-        }
-        std::collections::hash_map::Entry::Vacant(entry) => {
-            let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-            let ip_stack_stream = create_stream(packet, config, up_pkt_sender.clone(), Some(tx))?;
-            let session_remove_tx = session_remove_tx.clone();
-            tokio::spawn(async move {
-                rx.await.ok();
-                if let Err(e) = session_remove_tx.send(network_tuple) {
-                    log::error!("Failed to send session removal for {network_tuple}: {e}");
+            match sender.send(packet) {
+                Ok(()) => {
+                    log::trace!("packet sent to stream: {network_tuple} len {len}");
+                    return Ok(());
                 }
-            });
-            let packet_sender = ip_stack_stream.stream_sender()?;
-            accept_sender.send(ip_stack_stream)?;
-            entry.insert(packet_sender);
-            log::debug!("session created: {network_tuple}");
+                Err(mpsc::error::SendError(packet)) => packet,
+            }
         }
-    }
+        None => packet,
+    };
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let ip_stack_stream = create_stream(packet, config, up_pkt_sender.clone(), Some(tx))?;
+    let session_remove_tx = session_remove_tx.clone();
+    tokio::spawn(async move {
+        rx.await.ok();
+        if let Err(e) = session_remove_tx.send(network_tuple) {
+            log::error!("Failed to send session removal for {network_tuple}: {e}");
+        }
+    });
+    let packet_sender = ip_stack_stream.stream_sender()?;
+    accept_sender.send(ip_stack_stream)?;
+    sessions.insert(network_tuple, packet_sender);
+    log::debug!("session created: {network_tuple}");
     Ok(())
+}
+
+/// Removes an ended session, unless a new one already took over its tuple.
+fn remove_session(sessions: &mut SessionCollection, network_tuple: NetworkTuple) {
+    if sessions.get(&network_tuple).is_some_and(PacketSender::is_closed) {
+        sessions.remove(&network_tuple);
+        log::debug!("session destroyed: {network_tuple}");
+    }
 }
 
 fn create_stream(

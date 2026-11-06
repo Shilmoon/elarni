@@ -9,11 +9,9 @@ import (
 	"time"
 
 	quic "github.com/sagernet/sing-quic/tuic"
-	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	ST "github.com/sagernet/sing/common/tls"
-	"github.com/xtls/xray-core/common/protocol/tls/cert"
 )
 
 type serverTLS struct{ tlsAdapter }
@@ -48,30 +46,10 @@ func (endless) NewPacketConnectionEx(_ context.Context, conn N.PacketConn, _, _ 
 func TestStalledDownloadsLeaveTheConnectionUsable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	certificate, _ := cert.MustGenerate(nil, cert.DNSNames("localhost"))
-	certPEM, keyPEM := certificate.ToPEM()
-	pair, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		t.Fatal(err)
-	}
-	service, err := quic.NewService[int](quic.ServiceOptions{Context: ctx, Logger: logger.NOP(), Handler: endless{},
-		TLSConfig: &serverTLS{tlsAdapter{config: &tls.Config{Certificates: []tls.Certificate{pair}, NextProtos: []string{"h3"}}, timeout: 10 * time.Second}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := [16]byte{1}
-	service.UpdateUsers([]int{1}, [][16]byte{id}, []string{"p"})
-	socket, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := service.Start(socket); err != nil {
-		t.Fatal(err)
-	}
-	defer service.Close()
-	client, err := quic.NewClient(quic.ClientOptions{Context: ctx, Dialer: N.SystemDialer, ServerAddress: M.SocksaddrFromNet(socket.LocalAddr()),
+	server := startService(t, endless{})
+	client, err := quic.NewClient(quic.ClientOptions{Context: ctx, Dialer: N.SystemDialer, ServerAddress: M.SocksaddrFromNet(server),
 		TLSConfig:   &tlsAdapter{config: &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h3"}, MinVersion: tls.VersionTLS13}, timeout: 10 * time.Second},
-		QUICOptions: clientQUICOptions, UUID: id, Password: "p"})
+		QUICOptions: clientQUICOptions, UUID: userID, Password: "p"})
 	if err != nil {
 		t.Fatal(err)
 	}

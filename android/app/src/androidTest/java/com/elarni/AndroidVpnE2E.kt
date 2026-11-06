@@ -60,6 +60,8 @@ class AndroidVpnE2E {
         assertEquals("Connection error: ${repo.state.value.error}", "connected", repo.state.value.connection)
     }
     private fun shell(command: String) = ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readText() }
+    /** Whether the fixture app's last request had the VPN as its network. */
+    private var inTunnel = false
     private fun traffic(identity: String, mode: String, port: Int, address: String = "10.0.2.2", proxyAddress: String = "", proxyPort: Int = 0, expectReply: Boolean = true): String {
         val token = newId()
         val packageName = "com.elarni.traffic.$identity"
@@ -83,6 +85,7 @@ class AndroidVpnE2E {
         ui.waitUntil(10_000) {
             runCatching { ui.activityRule.scenario.state == Lifecycle.State.RESUMED }.getOrDefault(false)
         }
+        inTunnel = result!!.optBoolean("vpn")
         return result!!.optString("body")
     }
 
@@ -256,7 +259,9 @@ class AndroidVpnE2E {
             call("settings", obj("settings" to obj("excludedRoutes" to JSONArray())))
             call("settings", obj("settings" to obj("perAppMode" to "bypass", "perAppProcesses" to JSONArray(listOf("com.elarni.traffic.a")))))
             assertTrue("Bypass must reach the direct fixture", traffic("a", "tcp", httpPort).contains("direct:elarni-synthetic"))
+            assertFalse("A bypassed app must stay out of the tunnel", inTunnel)
             assertTrue("Unlisted app must retain proxy routing", traffic("b", "tcp", httpPort).contains("proxy:elarni-synthetic"))
+            assertTrue(inTunnel)
             // A listed app can take its own target instead of the mode's: a server from any subscription, a local proxy, or a block.
             SocksFixture().use { other -> SocksFixture().use { local ->
                 val servers = JSONArray(listOf(obj("address" to "127.0.0.1", "port" to other.port)))
@@ -266,6 +271,7 @@ class AndroidVpnE2E {
                 target("node:$secondID")
                 val selectedRequests = upstream.requests
                 assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
+                assertTrue("An app with its own target must enter the tunnel", inTunnel)
                 assertTrue("The app's own server must carry its traffic", other.requests > 0)
                 assertEquals("The app's traffic must skip the selected server", selectedRequests, upstream.requests)
                 assertTrue(traffic("b", "tcp", httpPort).contains("proxy:elarni-synthetic"))
@@ -289,7 +295,9 @@ class AndroidVpnE2E {
             } }
             call("settings", obj("settings" to obj("perAppMode" to "proxyOnly")))
             assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
+            assertTrue(inTunnel)
             assertTrue("Only-listed mode must send other apps directly", traffic("b", "tcp", httpPort).contains("direct:elarni-synthetic"))
+            assertFalse("Only-listed mode must keep other apps out of the tunnel", inTunnel)
             assertEquals("direct:elarni-udp-fixture", traffic("b", "udp", udpPort))
             ui.activityRule.scenario.recreate()
             assertEquals("connected", repo.state.value.connection)
@@ -537,12 +545,15 @@ class AndroidVpnE2E {
                 "targets" to JSONArray(listOf(obj("id" to "fixture", "url" to "http://10.0.2.2:$httpPort/health", "expectedStatus" to 200, "expectedBody" to "proxy:elarni-synthetic"),
                     obj("id" to "unreachable", "url" to "http://198.18.0.99/health", "expectedStatus" to 200, "expectedBody" to "never served"))))))
             connect()
-            ui.waitUntil(30_000) { repo.state.value.catalog.string("selectedNodeId") != primary || first.requests >= 6 }
+            // A server that passed is checked again only once traffic leaves: a SOCKS greeting to the listener counts.
+            val socks = snapshot().settings.getInt("socksPort")
+            fun send() { runCatching { Socket("127.0.0.1", socks).use { it.soTimeout = 2000; it.getOutputStream().write(byteArrayOf(5, 1, 0)); it.getInputStream().read() } } }
+            ui.waitUntil(30_000) { send(); repo.state.value.catalog.string("selectedNodeId") != primary || first.requests >= 6 }
             assertEquals("One failing target switched servers", primary, repo.state.value.catalog.string("selectedNodeId"))
             assertEquals("connected", repo.state.value.connection)
             // With the primary gone, the fallback qualifies on the target that still answers.
             first.close()
-            ui.waitUntil(30_000) { repo.state.value.catalog.string("selectedNodeId") == fallback && repo.state.value.connection == "connected" }
+            ui.waitUntil(30_000) { send(); repo.state.value.catalog.string("selectedNodeId") == fallback && repo.state.value.connection == "connected" }
             assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
         } } } finally { Automation.healthInterval = 30.0 }
     }
@@ -856,12 +867,13 @@ class AndroidVpnE2E {
                     shell("cmd connectivity airplane-mode disable")
                     shell("svc wifi enable")
                 }
-                // Cellular can recover seconds before Wi-Fi associates. Require the
-                // core on the Wi-Fi path we just restored, then verify uninterrupted traffic.
+                // Cellular can recover seconds before Wi-Fi associates, and the core then starts there. Require the
+                // default network on the Wi-Fi path we just restored, which the core's new sockets follow without
+                // a restart while cellular stays, then verify uninterrupted traffic.
                 var stablePath: Long? = null
                 var stableSince = android.os.SystemClock.elapsedRealtime()
                 ui.waitUntil(30_000) {
-                    val network = repo.engine.network
+                    val network = repo.engine.physical()
                     val path = network?.networkHandle
                     val wifiReady = connectivity.getNetworkCapabilities(network)
                         ?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
@@ -879,10 +891,9 @@ class AndroidVpnE2E {
                     assertTrue(Native.call("getXrayState").getBoolean("running"))
                 } finally { shell("cmd deviceidle unforce") }
                 assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
+                // A local server has nothing to refresh, so no background job starts the app (AndroidE2E checks one that does).
                 val scheduler = ui.activity.getSystemService(android.app.job.JobScheduler::class.java)
-                val job = scheduler.getPendingJob(ElarniApplication.REFRESH_JOB)!!
-                assertTrue(job.isPersisted && job.isPeriodic)
-                assertEquals(15 * 60 * 1000L, job.intervalMillis)
+                assertNull(scheduler.getPendingJob(ElarniApplication.REFRESH_JOB))
             } finally {
                 shell("cmd statusbar collapse")
                 shell("cmd statusbar remove-tile $tile")
@@ -918,8 +929,8 @@ class AndroidVpnE2E {
         instrumentation.sendStatus(0, android.os.Bundle().apply { putString("elarni-measurement", text) })
     }
 
-    /** With "Reconnect automatically" off the running core's sockets follow the new default network; with it
-     *  on, the repository restarts the core there. Either way traffic must come back within 30 s. */
+    /** The running core's sockets follow the new default network; with "Reconnect automatically" on, the
+     *  repository also restarts the core when its network is gone. Either way traffic must come back within 30 s. */
     @Test fun wifiToMobileDataHandoverCarriesTraffic() {
         call("import", obj("text" to tuicFixtureProfile("Handover fixture", "native").toString()))
         call("select", obj("id" to snapshot().nodes.single().getString("id")))
@@ -993,7 +1004,7 @@ private fun tuicFixtureProfile(name: String, mode: String): JSONObject {
 }
 
 /** Pairs of processes. The system kills the first with the VPN up, as battery managers do in sleep, and the next process start restores it
- *  without the user; a process that dies after its service ended leaves the VPN down. */
+ *  without the user; a process that dies after its service ended leaves the VPN down. A crash is restored too, but not a second one soon after. */
 class AndroidProcessDeathE2E {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val repo get() = (instrumentation.targetContext.applicationContext as ElarniApplication).repository
@@ -1094,6 +1105,55 @@ class AndroidProcessDeathE2E {
             repo.requestStop(); waitFor(10_000) { repo.state.value.connection == "disconnected" }
             Catalog(call("read")).sources.forEach { call("deleteSource", obj("id" to it.getString("id"))) }
             call("settings", obj("settings" to Settings.defaults()))
+        }
+    }
+    private fun connectFixture(name: String) {
+        assertTrue(BuildConfig.DEBUG && android.os.Build.MODEL.contains("sdk_gphone"))
+        runBlocking { repo.awaitReady() }
+        Catalog(call("read")).sources.forEach { call("deleteSource", obj("id" to it.getString("id"))) }
+        call("settings", obj("settings" to Settings.defaults()))
+        call("import", obj("text" to tuicFixtureProfile(name, "native").toString()))
+        call("select", obj("id" to Catalog(call("read")).nodes.single().getString("id")))
+        shell("appops set ${instrumentation.targetContext.packageName} ACTIVATE_VPN allow")
+        runBlocking { repo.requestConnect() }
+        assertTrue("Connection error: ${repo.state.value.error}", waitFor(15_000) { repo.state.value.connection == "connected" })
+        assertTrue(proxied())
+    }
+    // As an uncaught error does; a Go panic exits the process itself, which is restored the same way.
+    private fun crash(marker: String) {
+        instrumentation.sendStatus(0, android.os.Bundle().apply { putString("elarni", marker) })
+        Thread { throw IllegalStateException("synthetic crash") }.start()
+        Thread.sleep(10_000)
+    }
+    @Test fun g_connectedProcessCrashes() {
+        // An earlier run's restore must not count against this one.
+        instrumentation.targetContext.getSharedPreferences("watch", android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        connectFixture("Crash fixture")
+        crash("crashed-while-connected")
+    }
+    @Test fun h_vpnReturnsAfterACrash() {
+        try {
+            waitFor(20_000) { repo.state.value.connection == "connected" }
+            assertEquals("The VPN stayed down after its process crashed", "connected", repo.state.value.connection)
+            assertTrue(proxied())
+        } finally {
+            repo.requestStop(); waitFor(10_000) { repo.state.value.connection == "disconnected" }
+        }
+    }
+    @Test fun i_restoredProcessCrashesAgain() {
+        connectFixture("Crash fixture")
+        crash("crashed-again")
+    }
+    @Test fun j_secondCrashSoonStaysDown() {
+        try {
+            runBlocking { repo.awaitReady() }
+            assertTrue(Catalog(call("read")).data.optBoolean("connectionIntent"))
+            assertFalse("A crash within 10 minutes of the last restored one brought the VPN back, so a crash could loop",
+                waitFor(15_000) { repo.state.value.connection != "disconnected" || repo.engine.service != null })
+        } finally {
+            repo.requestStop(); waitFor(10_000) { repo.state.value.connection == "disconnected" }
+            Catalog(call("read")).sources.forEach { call("deleteSource", obj("id" to it.getString("id"))) }
+            instrumentation.targetContext.getSharedPreferences("watch", android.content.Context.MODE_PRIVATE).edit().clear().commit()
         }
     }
 }

@@ -74,5 +74,5 @@ func dialWithSession(t *testing.T, config *internet.MemoryStreamConfig) (*grpc.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	return client, weak.Make(values), weak.Make(outbound)
+	return client.ClientConn, weak.Make(values), weak.Make(outbound)
 }

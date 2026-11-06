@@ -15,6 +15,15 @@ and mock directories are left out.
   Test: `flow_controller_stalled_test.go`; end to end in Xray-core's
   `transport/internet/hysteria/stalled_streams_test.go` and
   `transport/internet/splithttp/h3_stall_test.go`.
+  On iOS the allowance is half the maximum window instead of twice it (`unreadAllowance`), so
+  one XHTTP/3 connection holds at most 22.5 MiB unread instead of 45 MiB: iOS kills the packet
+  tunnel above about 50 MB. Test: `TestUnreadAllowanceIsSmallerOnIOS`.
+- `http3/transport.go` (`getClient`): the dial that every request for a host waits on no longer
+  ends when the request that started it is canceled; `Transport.Close` still ends it. One closed
+  app aborted a cold XHTTP/3 handshake for every flow waiting on it. Test: Xray-core's
+  `TestXHTTP3CanceledFirstFlowKeepsTheSharedDial`.
+- `connection.go`: `Conn.Ping` queues a PING, which the peer acknowledges at once; XHTTP/3
+  checks its connections this way after a network change (`TestPathChangeKeepsAnsweringConnections`).
 - `go.mod`, `go.sum`: tidied for the copied sources, without the `tool` block, so
   the workspace does not pull upstream's test and generator dependencies.
 - `http3/{client,headers,request_writer,response_writer,server_conn}.go`: imports

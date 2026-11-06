@@ -6,11 +6,13 @@ import (
 	gonet "net"
 	"net/http"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/session"
+	"github.com/xtls/xray-core/common/signal/done"
 	"github.com/xtls/xray-core/transport/internet"
 	"github.com/xtls/xray-core/transport/internet/stat"
 )
@@ -198,5 +200,130 @@ func TestGetExistingXmuxClient(t *testing.T) {
 		if xmuxManager.GetExistingXmuxClient(context.Background()) != xmuxClient {
 			t.Error("did not reuse the existing client")
 		}
+	}
+}
+
+// dialingConn is warm once up is set: a request on it finds its connection.
+type dialingConn struct{ up *atomic.Bool }
+
+func (dialingConn) IsClosed() bool { return false }
+func (c dialingConn) warm() bool   { return c.up.Load() }
+
+func dialingManager() (*XmuxManager, *[]*atomic.Bool, *int) {
+	var ups []*atomic.Bool
+	m := NewXmuxManager(&XmuxConfig{MaxConnections: &RangeConfig{From: 3, To: 3}}, func() XmuxConn {
+		up := new(atomic.Bool)
+		ups = append(ups, up)
+		return dialingConn{up}
+	})
+	dials := 0
+	m.preDial = func(context.Context, XmuxConn) *done.Instance { dials++; return done.New() }
+	return m, &ups, &dials
+}
+
+// After a retirement the flow that found a connection missing paid for its handshake,
+// although a warm connection was free.
+func TestXmuxGivesNewFlowsAWarmConnectionWhileTheNextOneDials(t *testing.T) {
+	m, ups, dials := dialingManager()
+	warm := m.GetXmuxClient(context.Background())
+	(*ups)[0].Store(true)
+	if got := m.GetXmuxClient(context.Background()); got != warm || *dials != 1 {
+		t.Fatalf("the second flow got a cold connection (%d pre-dials)", *dials)
+	}
+	for range 10 {
+		if m.GetXmuxClient(context.Background()) != warm {
+			t.Fatal("a flow got the connection still doing its handshake")
+		}
+	}
+	(*ups)[1].Store(true)
+	used := map[*XmuxClient]bool{}
+	for range 64 {
+		used[m.GetXmuxClient(context.Background())] = true
+	}
+	if len(used) != 2 || *dials != 1 {
+		t.Fatalf("flows used %d connections after %d pre-dials, want 2 after 1", len(used), *dials)
+	}
+	(*ups)[1].Store(false) // the early connection expired unused
+	for range 10 {
+		if m.GetXmuxClient(context.Background()) != warm {
+			t.Fatal("a flow got a connection that lost its early handshake while a warm one was free")
+		}
+	}
+}
+
+// A new connection is quicker than a warm one queued behind a download, and a connection
+// that is not up is no warm one: packet-up moved its posts to it at once and they waited.
+func TestXmuxTakesTheNewConnectionWhenNoWarmOneIsFree(t *testing.T) {
+	m, ups, dials := dialingManager()
+	first := m.GetXmuxClient(context.Background())
+	if m.GetXmuxClient(context.Background()) == first || *dials != 0 {
+		t.Fatal("a new flow was handed a connection that still needs its handshake")
+	}
+	m, ups, dials = dialingManager()
+	first = m.GetXmuxClient(context.Background())
+	(*ups)[0].Store(true)
+	first.noteDownload(busyBytes, time.Now())
+	if m.GetXmuxClient(context.Background()) == first || *dials != 0 {
+		t.Fatal("a new flow queued behind a download while a new connection was due")
+	}
+}
+
+// HTTP/3 requests beyond the server's stream limit wait for a stream until their response bound retires the connection.
+func TestXmuxCapsSessionsPerHTTP3Connection(t *testing.T) {
+	m := NewXmuxManager(&XmuxConfig{MaxConnections: &RangeConfig{From: 1, To: 1}}, func() XmuxConn { return openConn{} })
+	m.sessionLimit = 2
+	first := m.GetXmuxClient(context.Background())
+	first.AddRunning()
+	if m.GetXmuxClient(context.Background()) != first {
+		t.Fatal("a connection under its session limit was not shared")
+	}
+	first.AddRunning()
+	if m.GetXmuxClient(context.Background()) == first {
+		t.Fatal("a connection at its session limit took another session")
+	}
+}
+
+// A burst of network changes retires the pool once at its start and once at its end, not once per change.
+func TestPathChangeBurstsCoalesce(t *testing.T) {
+	t.Cleanup(SetPathChangeTiming(time.Second, 200*time.Millisecond))
+	m := NewXmuxManager(&XmuxConfig{MaxConnections: &RangeConfig{From: 1, To: 1}}, func() XmuxConn { return openConn{} })
+	key := dialerConf{MemoryStreamConfig: &internet.MemoryStreamConfig{}}
+	globalDialerAccess.Lock()
+	if globalDialerMap == nil {
+		globalDialerMap = map[dialerConf]xmuxDialer{}
+	}
+	globalDialerMap[key] = xmuxDialer{m, func() {}}
+	globalDialerAccess.Unlock()
+	t.Cleanup(func() {
+		globalDialerAccess.Lock()
+		delete(globalDialerMap, key)
+		globalDialerAccess.Unlock()
+	})
+	client := func() *XmuxClient {
+		globalDialerAccess.Lock()
+		defer globalDialerAccess.Unlock()
+		return m.GetXmuxClient(context.Background())
+	}
+	first := client()
+	socketPathChanged()
+	if !first.NotUsed.Load() {
+		t.Fatal("the first change left the old connection in use")
+	}
+	second := client()
+	for range 5 {
+		socketPathChanged()
+	}
+	if second.NotUsed.Load() {
+		t.Fatal("a change during the burst retired the pool again at once")
+	}
+	for deadline := time.Now().Add(time.Second); !second.NotUsed.Load(); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the end of the burst did not retire the connections dialed during it")
+		}
+	}
+	third := client()
+	time.Sleep(500 * time.Millisecond) // two more windows
+	if third.NotUsed.Load() {
+		t.Fatal("the burst retired the pool a third time")
 	}
 }

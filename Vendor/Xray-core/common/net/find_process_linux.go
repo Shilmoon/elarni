@@ -4,9 +4,11 @@ package net
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"slices"
@@ -60,20 +62,17 @@ func FindProcess(network, srcIP string, srcPort uint16, destIP string, destPort 
 			return 0, "", "", err
 		}
 	}
-	inode, err := findInodeInFile(procFile, targetHexAddr, remote, network == "udp")
-	if err != nil {
-		return 0, "", "", errors.New("could not search in ", procFile).Base(err)
+	q := newSocketQuery(procFile, targetHexAddr, remote, network == "udp")
+	lookupSocket(q)
+	if q.err != nil {
+		return 0, "", "", q.err
 	}
-	if inode == "" {
+	if q.inode == "" {
 		return 0, "", "", errors.New("connection for ", srcIP, ":", srcPort, " not found in ", procFile)
 	}
-
-	pidStr, err := findPidByInode(inode)
-	if err != nil {
-		return 0, "", "", errors.New("could not find PID for inode ", inode, ": ", err)
-	}
+	pidStr := q.pid
 	if pidStr == "" {
-		return 0, "", "", errors.New("no process found for inode ", inode)
+		return 0, "", "", errors.New("no process found for inode ", q.inode)
 	}
 
 	absPath, err := getAbsPath(pidStr)
@@ -115,61 +114,149 @@ func formatLittleEndianString(addr net.IP, port Port) (string, error) {
 	return fmt.Sprintf("%s:%s", ipHex, portHex), nil
 }
 
-func findInodeInFile(filePath, targetHexAddr, remote string, udp bool) (string, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
+// socketQuery is one lookup's socket. Its batch fills in inode and pid, then closes done.
+type socketQuery struct {
+	file, local, remote   string
+	wildLocal, wildRemote string
+	port                  []byte // ":PORT " of the local address, to skip other rows cheaply
+	udp                   bool
+	done                  chan struct{}
 
-	scanner := bufio.NewScanner(file)
-
-	wildcard := strings.Repeat("0", strings.IndexByte(targetHexAddr, ':'))
-	wildLocal := wildcard + targetHexAddr[len(wildcard):]
-	wildRemote := wildcard + ":0000"
-	best, inode, ambiguous := -1, "", false
-	for scanner.Scan() {
-		line := scanner.Text()
-		fields := strings.Fields(line)
-
-		if len(fields) < 10 {
-			continue
-		}
-
-		localAddress, remoteAddress := fields[1], fields[2]
-		score := 0
-		if localAddress == targetHexAddr {
-			score += 2
-		} else if !udp || localAddress != wildLocal {
-			continue
-		}
-		if remote != "" {
-			if remoteAddress == remote {
-				score++
-			} else if !udp || remoteAddress != wildRemote {
-				continue
-			}
-		}
-		if fields[9] == "0" {
-			continue
-		}
-		if score > best {
-			best, inode, ambiguous = score, fields[9], false
-		} else if score == best && inode != fields[9] {
-			ambiguous = true
-		}
-	}
-	if scanner.Err() != nil {
-		return "", scanner.Err()
-	}
-	if ambiguous {
-		return "", errors.New("ambiguous socket ownership")
-	}
-	return inode, nil
+	best      int
+	ambiguous bool
+	inode     string
+	pid       string
+	err       error
 }
 
-// readLink is swapped by tests to count reads.
-var readLink = os.Readlink
+func newSocketQuery(file, local, remote string, udp bool) *socketQuery {
+	colon := strings.IndexByte(local, ':')
+	wildcard := strings.Repeat("0", colon)
+	return &socketQuery{
+		file: file, local: local, remote: remote, udp: udp,
+		wildLocal: wildcard + local[colon:], wildRemote: wildcard + ":0000",
+		port: []byte(local[colon:] + " "), best: -1, done: make(chan struct{}),
+	}
+}
+
+// match scores one /proc/net row: the exact local address beats a wildcard UDP bind, and the exact
+// peer beats an unconnected UDP socket. Two sockets with the best score make the owner ambiguous.
+func (q *socketQuery) match(fields []string) {
+	if len(fields) < 10 {
+		return
+	}
+	localAddress, remoteAddress := fields[1], fields[2]
+	score := 0
+	if localAddress == q.local {
+		score += 2
+	} else if !q.udp || localAddress != q.wildLocal {
+		return
+	}
+	if q.remote != "" {
+		if remoteAddress == q.remote {
+			score++
+		} else if !q.udp || remoteAddress != q.wildRemote {
+			return
+		}
+	}
+	if fields[9] == "0" {
+		return
+	}
+	if score > q.best {
+		q.best, q.inode, q.ambiguous = score, fields[9], false
+	} else if score == q.best && q.inode != fields[9] {
+		q.ambiguous = true
+	}
+}
+
+// openTable and readLink are swapped by tests to count and pause reads.
+var (
+	openTable = func(name string) (io.ReadCloser, error) { return os.Open(name) }
+	readLink  = os.Readlink
+)
+
+// scanTable offers each row of one /proc/net table to every query for that table.
+func scanTable(file string, queries []*socketQuery) error {
+	table, err := openTable(file)
+	if err != nil {
+		return err
+	}
+	defer table.Close()
+	scanner := bufio.NewScanner(table)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var fields []string
+		for _, q := range queries {
+			if bytes.Contains(line, q.port) {
+				if fields == nil {
+					fields = strings.Fields(string(line))
+				}
+				q.match(fields)
+			}
+		}
+	}
+	return scanner.Err()
+}
+
+// lookups batches concurrent lookups (Elarni): every new connection of a burst read the whole socket
+// table and walked the same descriptors. A lookup only joins a batch that starts after it asked, so
+// the batch's table and descriptor reads include its socket.
+var lookups struct {
+	sync.Mutex
+	next    []*socketQuery
+	reading bool // a batch is reading the tables; lookups that arrive meanwhile wait for the next one
+}
+
+func lookupSocket(q *socketQuery) {
+	lookups.Lock()
+	lead := !lookups.reading
+	if lead {
+		lookups.reading = true
+	} else {
+		lookups.next = append(lookups.next, q)
+	}
+	lookups.Unlock()
+	if lead {
+		runLookups([]*socketQuery{q})
+	}
+	<-q.done
+}
+
+// runLookups reads each table once for the batch, starts the next batch, and then walks the
+// descriptors once for this batch's sockets, so a slow walk does not hold back later lookups.
+func runLookups(batch []*socketQuery) {
+	tables := map[string][]*socketQuery{}
+	for _, q := range batch {
+		tables[q.file] = append(tables[q.file], q)
+	}
+	wanted := map[string][]*socketQuery{}
+	for file, queries := range tables {
+		err := scanTable(file, queries)
+		for _, q := range queries {
+			switch {
+			case err != nil:
+				q.err = errors.New("could not search in ", file).Base(err)
+			case q.ambiguous:
+				q.err = errors.New("could not search in ", file).Base(errors.New("ambiguous socket ownership"))
+			case q.inode != "":
+				link := "socket:[" + q.inode + "]"
+				wanted[link] = append(wanted[link], q)
+				continue
+			}
+			close(q.done)
+		}
+	}
+
+	lookups.Lock()
+	next := lookups.next
+	lookups.next = nil
+	lookups.reading = next != nil
+	lookups.Unlock()
+	if next != nil {
+		go runLookups(next)
+	}
+	findOwners(wanted)
+}
 
 // recentOwners lists the processes that owned the last looked-up sockets, newest
 // first. A full scan readlinks every open file on the host (14 ms at 10k fds),
@@ -179,36 +266,44 @@ var recentOwners struct {
 	pids []string
 }
 
-func findPidByInode(inode string) (string, error) {
-	targetLink := "socket:[" + inode + "]"
+// findOwners walks the recent owners' descriptors, then every process's, until each wanted socket
+// link has an owner. Each lookup returns as soon as its own socket is found.
+func findOwners(wanted map[string][]*socketQuery) {
+	if len(wanted) == 0 {
+		return
+	}
 	recentOwners.Lock()
 	recent := slices.Clone(recentOwners.pids)
 	recentOwners.Unlock()
 	for _, pid := range recent {
-		if ownsSocket(pid, targetLink) {
-			rememberOwner(pid)
-			return pid, nil
+		if claimSockets(pid, wanted) {
+			return
 		}
 	}
 
 	procDir, err := os.ReadDir("/proc")
-	if err != nil {
-		return "", err
-	}
-	for _, entry := range procDir {
-		pid := entry.Name()
-		if !entry.IsDir() || slices.Contains(recent, pid) {
-			continue
-		}
-		if _, err := strconv.Atoi(pid); err != nil {
-			continue
-		}
-		if ownsSocket(pid, targetLink) {
-			rememberOwner(pid)
-			return pid, nil
+	if err == nil {
+		for _, entry := range procDir {
+			pid := entry.Name()
+			if !entry.IsDir() || slices.Contains(recent, pid) {
+				continue
+			}
+			if _, err := strconv.Atoi(pid); err != nil {
+				continue
+			}
+			if claimSockets(pid, wanted) {
+				return
+			}
 		}
 	}
-	return "", nil
+	for _, queries := range wanted {
+		for _, q := range queries {
+			if err != nil {
+				q.err = errors.New("could not find PID for inode ", q.inode, ": ", err)
+			}
+			close(q.done)
+		}
+	}
 }
 
 func rememberOwner(pid string) {
@@ -218,14 +313,30 @@ func rememberOwner(pid string) {
 	recentOwners.pids = append([]string{pid}, others[:min(len(others), 7)]...)
 }
 
-func ownsSocket(pid, targetLink string) bool {
+// claimSockets hands pid the wanted sockets among its descriptors; true once none is left.
+func claimSockets(pid string, wanted map[string][]*socketQuery) bool {
 	fdPath := "/proc/" + pid + "/fd"
 	fdDir, err := os.ReadDir(fdPath)
 	if err != nil {
 		return false
 	}
+	remembered := false
 	for _, fdEntry := range fdDir {
-		if linkTarget, err := readLink(fdPath + "/" + fdEntry.Name()); err == nil && linkTarget == targetLink {
+		link, err := readLink(fdPath + "/" + fdEntry.Name())
+		queries, ok := wanted[link]
+		if err != nil || !ok {
+			continue
+		}
+		if !remembered {
+			rememberOwner(pid)
+			remembered = true
+		}
+		delete(wanted, link)
+		for _, q := range queries {
+			q.pid = pid
+			close(q.done)
+		}
+		if len(wanted) == 0 {
 			return true
 		}
 	}

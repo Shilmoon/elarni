@@ -7,7 +7,7 @@ multi-ecosystem-groups:
     schedule:
       interval: monthly
 updates:
-  # Version updates wait a week after release (patch-only updates merge on their own once the checks pass).
+  # Version updates wait a week after release.
   - package-ecosystem: github-actions
     directory: /
     patterns: ['*']

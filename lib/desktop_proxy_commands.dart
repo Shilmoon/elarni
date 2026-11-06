@@ -76,8 +76,11 @@ extension _ProxyCommands on DesktopProxy {
         try {
           return await _connectPreparingLostAssets();
         } on PlatformException catch (error) {
-          // Recovery must not repeat a consent prompt the user declined.
-          if ({'elevation_denied', 'vpn_guard_stale'}.contains(error.code)) {
+          // Recovery must not repeat a consent prompt the user declined; one
+          // that timed out unanswered is asked again by the next retry.
+          if (error.code == 'elevation_denied' ||
+              error.code == 'vpn_guard_stale' &&
+                  error.details == 'elevation_denied') {
             _automation.manualStop();
             await _persistAutomation();
           }
@@ -814,7 +817,9 @@ extension _ProxyCommands on DesktopProxy {
     'metricsAvailable':
         _state == 'connected' &&
         _metricsAt != null &&
-        DateTime.now().difference(_metricsAt!).inSeconds < 5,
+        // The core holds back unchanged metrics for up to 10 s at each of its two
+        // relays (metricsHeartbeat in Vendor/libXray/cmd/elarni-core/main.go).
+        DateTime.now().difference(_metricsAt!).inSeconds < 25,
     'connectedSince': _state == 'connected'
         ? _connectedAt?.millisecondsSinceEpoch
         : null,

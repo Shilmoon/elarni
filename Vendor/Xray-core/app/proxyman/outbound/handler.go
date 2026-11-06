@@ -65,8 +65,18 @@ type Handler struct {
 	mux             *mux.ClientManager
 	xudp            *mux.ClientManager
 	udp443          string
+	remote          bool
 	uplinkCounter   stats.Counter
 	downlinkCounter stats.Counter
+}
+
+// Outbounds that connect or answer on this device rather than hand the target to a server.
+var localProxies = map[string]bool{
+	"xray.proxy.freedom.Config":         true,
+	"xray.proxy.blackhole.Config":       true,
+	"xray.proxy.dns.Config":             true,
+	"xray.proxy.loopback.Config":        true,
+	"xray.proxy.wireguard.DeviceConfig": true,
 }
 
 // NewHandler creates a new Handler based on the given configuration.
@@ -102,6 +112,7 @@ func NewHandler(ctx context.Context, config *core.OutboundHandlerConfig) (outbou
 		return nil, err
 	}
 	h.proxyConfig = proxyConfig
+	h.remote = !localProxies[config.ProxySettings.GetType()]
 
 	ctx = session.ContextWithFullHandler(ctx, h)
 
@@ -181,6 +192,15 @@ func (h *Handler) Dispatch(ctx context.Context, link *transport.Link) {
 	outbounds := session.OutboundsFromContext(ctx)
 	ob := outbounds[len(outbounds)-1]
 	content := session.ContentFromContext(ctx)
+	// Elarni: a server routes by name, and its own path may not reach the IP the app picked
+	// (YouTube over IPv6 behind an IPv4-only exit), so it gets the sniffed name. Direct and other
+	// local outbounds keep the IP; UDP keeps it so replies still match the address the app sent to.
+	// A name the profile's DNS hosts pin keeps its IP too: the server would not know the pin.
+	if h.remote && ob.Target.Network == net.Network_TCP && ob.Target.Address != nil && ob.Target.Address.Family().IsIP() &&
+		ob.RouteTarget.Address != nil && ob.RouteTarget.Address.Family().IsDomain() &&
+		len(internet.LookupHostsContext(ctx, ob.RouteTarget.Address.Domain())) == 0 {
+		ob.Target.Address = ob.RouteTarget.Address
+	}
 	if h.senderSettings != nil && h.senderSettings.TargetStrategy.HasStrategy() && ob.Target.Address.Family().IsDomain() && (content == nil || !content.SkipDNSResolve) {
 		strategy := h.senderSettings.TargetStrategy
 		if ob.Target.Network == net.Network_UDP && ob.OriginalTarget.Address != nil {

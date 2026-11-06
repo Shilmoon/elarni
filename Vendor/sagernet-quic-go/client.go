@@ -111,6 +111,7 @@ func DialConn(ctx context.Context, c net.Conn, tlsConf *tls.Config, conf *Config
 		dl.Close()
 		return nil, err
 	}
+	observe(c, conn)
 	return conn, nil
 }
 
@@ -126,19 +127,38 @@ func DialEarlyConn(ctx context.Context, c net.Conn, tlsConf *tls.Config, conf *C
 		dl.Close()
 		return nil, err
 	}
+	observe(c, conn)
 	return conn, nil
+}
+
+// Elarni: the owner of a conn learns the QUIC connection over it, which sing-quic's TUIC client
+// keeps to itself, so it can check the connection after a network change.
+func observe(c net.Conn, conn *Conn) {
+	if o, ok := c.(interface{ SetQUICConn(*Conn) }); ok {
+		o.SetQUICConn(conn)
+	}
 }
 
 func setupTransportConn(c net.Conn, tlsConf *tls.Config, conf *Config) (*Transport, error) {
 	if tlsConf == nil {
 		return nil, errors.New("quic: tls.Config not set")
 	}
-	conn, err := wrapNetConn(c)
-	if err != nil {
-		return nil, err
+	// Elarni: a conn over an unconnected socket, as Xray's UDP dialer returns, names the socket:
+	// the connected path sends without an address, which such a socket rejects, and a wrapper
+	// alone hides the socket's batched receive, GSO, ECN and DF.
+	var pc net.PacketConn
+	if s, ok := c.(interface{ PacketConn() net.PacketConn }); ok {
+		pc = s.PacketConn()
+	}
+	if pc == nil {
+		conn, err := wrapNetConn(c)
+		if err != nil {
+			return nil, err
+		}
+		pc = conn.(net.PacketConn)
 	}
 	tr := &Transport{
-		Conn:        conn.(net.PacketConn),
+		Conn:        pc,
 		isSingleUse: true,
 	}
 	if conf != nil && conf.ChromeParrot {

@@ -70,18 +70,22 @@ func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.Me
 				tlsConfig.NextProtos = []string{"h2", "http/1.1"}
 			}
 		}
+		// Elarni: a handshake DPI swallows would otherwise wait for the kernel to give up.
+		handshakeCtx, cancel := context.WithTimeout(ctx, tls.HandshakeTimeout)
+		defer cancel()
 		if fingerprint := tls.GetFingerprint(config.Fingerprint); fingerprint != nil {
 			conn = tls.UClient(conn, tlsConfig, fingerprint)
 			if len(tlsConfig.NextProtos) == 1 && tlsConfig.NextProtos[0] == "http/1.1" { // allow manually specify
-				err = conn.(*tls.UConn).WebsocketHandshakeContext(ctx)
+				err = conn.(*tls.UConn).WebsocketHandshakeContext(handshakeCtx)
 			} else {
-				err = conn.(*tls.UConn).HandshakeContext(ctx)
+				err = conn.(*tls.UConn).HandshakeContext(handshakeCtx)
 			}
 		} else {
 			conn = tls.Client(conn, tlsConfig)
-			err = conn.(*tls.Conn).HandshakeContext(ctx)
+			err = conn.(*tls.Conn).HandshakeContext(handshakeCtx)
 		}
 		if err != nil {
+			conn.Close()
 			if isFromMitmVerify {
 				return nil, errors.New("MITM freedom RAW TLS: failed to verify Domain Fronting certificate from " + mitmServerName).Base(err)
 			}
@@ -102,10 +106,12 @@ func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.Me
 	if tcpSettings.HeaderSettings != nil {
 		headerConfig, err := tcpSettings.HeaderSettings.GetInstance()
 		if err != nil {
+			conn.Close()
 			return nil, errors.New("failed to get header settings").Base(err)
 		}
 		auth, err := internet.CreateConnectionAuthenticator(headerConfig)
 		if err != nil {
+			conn.Close()
 			return nil, errors.New("failed to create header authenticator").Base(err)
 		}
 		conn = auth.Client(conn)

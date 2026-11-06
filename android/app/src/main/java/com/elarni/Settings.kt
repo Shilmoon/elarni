@@ -84,9 +84,11 @@ object Settings {
     // Check exit reads Cloudflare's trace through the server, on the host health checks already use.
     fun exitArgs(id: String) = obj("id" to id, "protocol" to "proxy", "timeout" to 5, "url" to exitTraceURL, "method" to "GET",
         "mode" to "default", "expectedStatus" to 200, "expectedBody" to "", "trace" to true)
+    // [fields] reads every title from resources; the 2 s tick needs only these, which never change.
+    private val initials by lazy { fields.map { it.key to it.initial } }
     fun defaults() = JSONObject().apply {
         put("schemaVersion", 1)
-        fields.forEach { put(it.key, it.initial) }
+        initials.forEach { (key, value) -> put(key, value) }
         put("perAppMode", "off"); put("perAppProcesses", JSONArray()); put("perAppTargets", JSONObject())
         put("includedRoutes", JSONArray(listOf("0.0.0.0/0", "::/0")))
         put("excludedRoutes", JSONArray())

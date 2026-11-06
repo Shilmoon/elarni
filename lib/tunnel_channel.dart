@@ -768,6 +768,7 @@ final class TunnelSettings {
     this.useDNSFromJSON = true,
     this.resolveServer = false,
     this.xrayTunEnabled = false,
+    this.systemProxyEnabled = false,
     this.perAppMode = 'off',
     this.perAppProcesses = const <String>[],
     this.perAppTargets = const <String, String>{},
@@ -817,6 +818,7 @@ final class TunnelSettings {
     useDNSFromJSON: value['useDNSFromJSON'] as bool? ?? true,
     resolveServer: value['resolveServer'] as bool? ?? false,
     xrayTunEnabled: value['xrayTunEnabled'] as bool? ?? false,
+    systemProxyEnabled: value['systemProxyEnabled'] as bool? ?? false,
     perAppMode: value['perAppMode'] as String? ?? 'off',
     perAppProcesses: List<String>.from(
       value['perAppProcesses'] as List? ?? const <String>[],
@@ -897,6 +899,19 @@ final class TunnelSettings {
   final bool useDNSFromJSON;
   final bool resolveServer;
   final bool xrayTunEnabled;
+  // With the TUN off, Windows and Linux also point the OS proxy at the HTTP listener.
+  final bool systemProxyEnabled;
+  bool get systemProxy => systemProxyEnabled && !xrayTunEnabled;
+
+  /// The listeners the core opens. Apps that follow the system proxy cannot
+  /// log in, so System proxy mode serves this user's apps without one.
+  TunnelSettings get listeners => systemProxy
+      ? copyWith(
+          httpInboundEnabled: true,
+          allowLAN: false,
+          inboundAuthEnabled: false,
+        )
+      : this;
   final String perAppMode;
   final List<String> perAppProcesses;
 
@@ -1013,6 +1028,7 @@ final class TunnelSettings {
     'useDNSFromJSON': useDNSFromJSON,
     'resolveServer': resolveServer,
     'xrayTunEnabled': xrayTunEnabled,
+    'systemProxyEnabled': systemProxyEnabled,
     'perAppMode': perAppMode,
     'perAppProcesses': perAppProcesses,
     'perAppTargets': perAppTargets,
@@ -1054,6 +1070,7 @@ final class TunnelSettings {
     bool? useDNSFromJSON,
     bool? resolveServer,
     bool? xrayTunEnabled,
+    bool? systemProxyEnabled,
     String? perAppMode,
     List<String>? perAppProcesses,
     Map<String, String>? perAppTargets,
@@ -1097,6 +1114,7 @@ final class TunnelSettings {
     useDNSFromJSON: useDNSFromJSON ?? this.useDNSFromJSON,
     resolveServer: resolveServer ?? this.resolveServer,
     xrayTunEnabled: xrayTunEnabled ?? this.xrayTunEnabled,
+    systemProxyEnabled: systemProxyEnabled ?? this.systemProxyEnabled,
     perAppMode: perAppMode ?? this.perAppMode,
     perAppProcesses: perAppProcesses ?? this.perAppProcesses,
     perAppTargets: perAppTargets ?? this.perAppTargets,

@@ -180,8 +180,9 @@ struct AppTunnelSettings: Codable, Equatable {
       throw RunnerTunnelError.invalidSettings
     }
     self = value
-    // Migrate the former 40–50 MiB-only setting: it forces continuous GC on desktop workloads.
-    if (40...50).contains(memoryLimitMB) { memoryLimitMB = 0 }
+    // Migrate the former 40–50 MiB-only setting: it forces continuous GC on desktop workloads, and
+    // the extension runs plans saved with it unlimited. A new choice in that range is refused below.
+    if base == nil, (40...50).contains(memoryLimitMB) { memoryLimitMB = 0 }
     includedRoutes = included
     excludedRoutes = excluded
     try validate()
@@ -227,7 +228,7 @@ struct AppTunnelSettings: Codable, Equatable {
           ["ipv4", "ipv6", "automatic"].contains(preferredIP),
           profilePreferredIP == nil || ["ipv4", "ipv6", "automatic"].contains(profilePreferredIP!),
           profileDNSMode == nil || ["inherit", "routing", "default"].contains(profileDNSMode!),
-          (memoryLimitMB == 0 || (40...4096).contains(memoryLimitMB)),
+          (memoryLimitMB == 0 || (51...4096).contains(memoryLimitMB)),
           (30...3_600).contains(idleTimeoutSeconds),
           (1...4_096).contains(tcpMaxConnections),
           (1...4_096).contains(udpMaxConnections),

@@ -3,31 +3,31 @@
 package tun
 
 import (
+	"bytes"
+	"context"
 	"crypto/md5"
 	"encoding/binary"
 	go_errors "errors"
-	"math/bits"
 	"net"
 	"net/netip"
-	"os"
-	"sort"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unsafe"
 
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/flightrecorder"
 	"github.com/xtls/xray-core/common/probe"
+	"github.com/xtls/xray-core/transport/internet"
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wintun"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
-	"gvisor.dev/gvisor/pkg/buffer"
-	"gvisor.dev/gvisor/pkg/tcpip"
-	"gvisor.dev/gvisor/pkg/tcpip/checksum"
-	"gvisor.dev/gvisor/pkg/tcpip/header"
-	"gvisor.dev/gvisor/pkg/tcpip/stack"
 )
 
 //go:linkname procyield runtime.procyield
@@ -35,18 +35,25 @@ func procyield(cycles uint32)
 
 // WindowsTun is an object that handles tun network interface on Windows
 // current version is heavily stripped to do nothing more,
-// then create a network interface, to be provided as endpoint to gVisor ip stack
+// then create a network interface, whose packets are read and written through a Wintun session
 type WindowsTun struct {
 	sync.RWMutex
 
-	options                                              *Config
-	adapter                                              *wintun.Adapter
-	session                                              wintun.Session
-	readWait                                             windows.Handle
-	luid                                                 winipcfg.LUID
-	changeCallback                                       winipcfg.ChangeCallback
-	closed, started                                      atomic.Bool
-	closeOnce                                            sync.Once
+	options  *Config
+	adapter  *wintun.Adapter
+	session  wintun.Session
+	readWait windows.Handle
+	luid     winipcfg.LUID
+	cbr      winipcfg.ChangeCallback
+	cbi      winipcfg.ChangeCallback
+	guard    outboundGuard
+	wfp      windows.Handle
+	resolver *savedResolver
+	skipStop chan struct{}
+	skipDone chan struct{}
+	closed   bool
+	started  bool // a failed start gets a fresh adapter next time (Elarni)
+
 	diagnosticID                                         uint64
 	diagnosticStop                                       chan struct{}
 	packetsRead, packetsWritten, bytesRead, bytesWritten atomic.Int64
@@ -55,15 +62,12 @@ type WindowsTun struct {
 // WindowsTun implements Tun
 var _ Tun = (*WindowsTun)(nil)
 
-// WindowsTun implements GVisorDevice
-var _ GVisorDevice = (*WindowsTun)(nil)
-
 // NewTun creates a Wintun interface with the given name. Should a Wintun
 // interface with the same name exist, it tried to be reused.
 func NewTun(options *Config) (Tun, error) {
 	adapter, session, err := startAdapter(options)
 	// A device that was disabled when its helper exited comes back disabled under
-	// the same GUID; closing the failed attempt removes it, so the next one starts clean.
+	// the same GUID; closing the failed attempt removes it, so the next one starts clean (Elarni).
 	if go_errors.Is(err, windows.ERROR_DEVICE_NOT_AVAILABLE) {
 		adapter, session, err = startAdapter(options)
 	}
@@ -120,162 +124,16 @@ func AdapterGUID(name string) *windows.GUID {
 	return (*windows.GUID)(unsafe.Pointer(&id[0]))
 }
 
-func open(name, desc string) (*wintun.Adapter, error) {
-	// try to create adapter anew
-	adapter, err := wintun.CreateAdapter(name, desc, AdapterGUID(name))
-	if err == nil {
-		return adapter, nil
-	}
-	return nil, err
-}
-
-func (t *WindowsTun) Start() error {
-	var has4, has6 bool
-	allowedIPs := make([]netip.Prefix, 0, len(t.options.AutoSystemRoutingTable))
-	for _, route := range t.options.AutoSystemRoutingTable {
-		allowedIPs = append(allowedIPs, netip.MustParsePrefix(route))
-	}
-	routesMap := make(map[winipcfg.RouteData]struct{})
-	for _, ip := range allowedIPs {
-		route := winipcfg.RouteData{
-			Destination: ip.Masked(),
-			Metric:      0,
-		}
-		if ip.Addr().Is4() {
-			has4 = true
-			route.NextHop = netip.IPv4Unspecified()
-		} else {
-			has6 = true
-			route.NextHop = netip.IPv6Unspecified()
-		}
-		routesMap[route] = struct{}{}
-	}
-	routesData := make([]*winipcfg.RouteData, 0, len(routesMap))
-	for route := range routesMap {
-		r := route
-		routesData = append(routesData, &r)
-	}
-	err := t.flushRoutes()
-	if err == nil {
-		err = t.luid.AddRoutes(routesData)
-	}
-	if err != nil {
-		return errors.New("unable to set routes").Base(err)
-	}
-
-	if len(t.options.Gateway) > 0 {
-		addresses := make([]netip.Prefix, 0, len(t.options.Gateway))
-		for _, address := range t.options.Gateway {
-			addresses = append(addresses, netip.MustParsePrefix(address))
-		}
-		err := t.luid.SetIPAddresses(addresses)
-		if err != nil {
-			return errors.New("unable to set ips").Base(err)
-		}
-	}
-
-	if has4 {
-		ipif, err := t.luid.IPInterface(windows.AF_INET)
-		if err != nil {
-			return err
-		}
-		ipif.RouterDiscoveryBehavior = winipcfg.RouterDiscoveryDisabled
-		ipif.DadTransmits = 0
-		ipif.ManagedAddressConfigurationSupported = false
-		ipif.OtherStatefulConfigurationSupported = false
-		ipif.NLMTU = t.options.MTU
-		ipif.UseAutomaticMetric = false
-		ipif.Metric = 0
-		err = ipif.Set()
-		if err != nil {
-			return err
-		}
-	}
-	if has6 {
-		ipif, err := t.luid.IPInterface(windows.AF_INET6)
-		if err != nil {
-			return err
-		}
-		ipif.RouterDiscoveryBehavior = winipcfg.RouterDiscoveryDisabled
-		ipif.DadTransmits = 0
-		ipif.ManagedAddressConfigurationSupported = false
-		ipif.OtherStatefulConfigurationSupported = false
-		ipif.NLMTU = t.options.MTU
-		ipif.UseAutomaticMetric = false
-		ipif.Metric = 0
-		err = ipif.Set()
-		if err != nil {
-			return err
-		}
-	}
-
-	if len(t.options.DNS) > 0 {
-		dns := make([]netip.Addr, 0, len(t.options.DNS))
-		for _, ip := range t.options.DNS {
-			dns = append(dns, netip.MustParseAddr(ip))
-		}
-		err := t.luid.SetDNS(windows.AF_INET, dns, nil)
-		if err != nil {
-			return err
-		}
-		err = t.luid.SetDNS(windows.AF_INET6, dns, nil)
-		if err != nil {
-			return err
-		}
-	}
-
-	if updater != nil {
-		t.changeCallback, err = winipcfg.RegisterInterfaceChangeCallback(func(notificationType winipcfg.MibNotificationType, iface *winipcfg.MibIPInterfaceRow) {
-			updater.Update()
-		})
-		if err != nil {
-			return err
-		}
-	}
-
-	t.started.Store(true)
-	return nil
-}
-
-func (t *WindowsTun) Close() error {
-	t.closeOnce.Do(func() {
-		t.closed.Store(true)
-		if flightrecorder.Enabled() {
-			close(t.diagnosticStop)
-		}
-		// Wake Wait before joining readers and destroying their session/event.
-		windows.SetEvent(t.readWait)
-		t.Lock()
-		defer t.Unlock()
-		if t.changeCallback != nil {
-			t.changeCallback.Unregister()
-		}
-		// Ending the session first takes the adapter media-down, so Windows stops
-		// routing into it before its routes, addresses and DNS are removed.
-		t.session.End()
-		// A failed start gets a fresh adapter next time.
-		if !t.started.Load() || t.park() != nil {
-			_ = t.adapter.Close()
-		}
-		if flightrecorder.Enabled() {
-			t.recordPackets()
-			flightrecorder.Record(flightrecorder.Event{Name: "tun_closed", Connection: t.diagnosticID})
-		}
-	})
-
-	return nil
-}
-
 // parked keeps one closed runtime's adapter for the next runtime in this
-// process, saving Wintun's ~1 s create and ~1 s remove per reconnect. Wintun
-// removes it when the process exits, crash included.
+// process, saving Wintun's ~1 s create and ~1 s remove per reconnect (Elarni).
+// Wintun removes it when the process exits, crash included.
 var parked struct {
 	sync.Mutex
 	name    string
 	adapter *wintun.Adapter
 }
 
-// unpark takes the adapter parked under name, or opens a new one.
+// unpark takes the adapter parked under name, or opens one.
 func unpark(name, desc string) (*wintun.Adapter, error) {
 	parked.Lock()
 	adapter, same := parked.adapter, parked.name == name
@@ -290,14 +148,8 @@ func unpark(name, desc string) (*wintun.Adapter, error) {
 	return open(name, desc)
 }
 
-// park keeps the adapter only once it captures nothing: no session, routes,
-// addresses or DNS servers.
+// park keeps the adapter for the next runtime; it fails when one is parked already.
 func (t *WindowsTun) park() error {
-	err := errors.Combine(t.flushRoutes(), t.luid.FlushIPAddresses(windows.AF_UNSPEC),
-		t.luid.FlushDNS(windows.AF_INET), t.luid.FlushDNS(windows.AF_INET6))
-	if err != nil {
-		return err
-	}
 	parked.Lock()
 	defer parked.Unlock()
 	if parked.adapter != nil {
@@ -307,11 +159,11 @@ func (t *WindowsTun) park() error {
 	return nil
 }
 
-// flushRoutes removes the adapter's routes. Deleting a prefix route also removes the
-// broadcast route Windows derived from it, so that row of the same table read is
-// already gone; winipcfg's FlushRoutes fails a parked adapter's reconnect on it.
-func (t *WindowsTun) flushRoutes() error {
-	rows, err := winipcfg.GetIPForwardTable2(windows.AF_UNSPEC)
+// flushRoutes removes the adapter's routes of family. Deleting a prefix route also removes
+// the broadcast route Windows derived from it, so that row of the same table read is already
+// gone; winipcfg's FlushRoutes fails a parked adapter's reconnect on it (Elarni).
+func (t *WindowsTun) flushRoutes(family winipcfg.AddressFamily) error {
+	rows, err := winipcfg.GetIPForwardTable2(family)
 	if err != nil {
 		return err
 	}
@@ -321,6 +173,455 @@ func (t *WindowsTun) flushRoutes() error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+// setRoutes is winipcfg's SetRoutesForFamily over flushRoutes.
+func (t *WindowsTun) setRoutes(family winipcfg.AddressFamily, routes []*winipcfg.RouteData) error {
+	if err := t.flushRoutes(family); err != nil {
+		return err
+	}
+	for _, route := range routes {
+		if route.Destination.Addr().Is4() == (family == windows.AF_INET) {
+			if err := t.luid.AddRoute(route.Destination, route.NextHop, route.Metric); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (t *WindowsTun) recordPackets() {
+	flightrecorder.Record(flightrecorder.Event{Name: "tun_packets", Connection: t.diagnosticID, Values: map[string]int64{"packets_in": t.packetsRead.Load(), "packets_out": t.packetsWritten.Load(), "bytes_in": t.bytesRead.Load(), "bytes_out": t.bytesWritten.Load()}})
+}
+
+func open(name, desc string) (*wintun.Adapter, error) {
+	guid := AdapterGUID(name)
+	// try to open existing adapter by name
+	adapter, err := wintun.OpenAdapter(name)
+	if err == nil {
+		return adapter, nil
+	}
+	// try to create adapter anew
+	adapter, err = wintun.CreateAdapter(name, desc, guid)
+	if err == nil {
+		return adapter, nil
+	}
+	return nil, err
+}
+
+func (t *WindowsTun) Start() (err error) {
+	defer func() { t.started = err == nil }()
+	var address4, address6 bool
+	addresses := make([]netip.Prefix, 0, len(t.options.Gateway))
+	for _, cidr := range t.options.Gateway {
+		prefix := netip.MustParsePrefix(cidr)
+		if prefix.Addr().Is4() {
+			address4 = true
+		} else {
+			address6 = true
+		}
+		addresses = append(addresses, prefix)
+	}
+
+	dns := make([]netip.Addr, 0, len(t.options.DNS))
+	for _, ip := range t.options.DNS {
+		dns = append(dns, netip.MustParseAddr(ip))
+	}
+
+	var route4, route6 bool
+	routesMap := make(map[winipcfg.RouteData]struct{})
+	for _, cidr := range t.options.AutoSystemRoutingTable {
+		prefix := netip.MustParsePrefix(cidr)
+		route := winipcfg.RouteData{
+			Destination: prefix.Masked(),
+			Metric:      0,
+		}
+		if prefix.Addr().Is4() {
+			route4 = true
+			route.NextHop = netip.IPv4Unspecified()
+		} else {
+			route6 = true
+			route.NextHop = netip.IPv6Unspecified()
+		}
+		routesMap[route] = struct{}{}
+	}
+	routesData := make([]*winipcfg.RouteData, 0, len(routesMap))
+	for route := range routesMap {
+		r := route
+		routesData = append(routesData, &r)
+	}
+
+	var retryTimes int
+	var firstErr error
+startOver:
+	if retryTimes > 0 {
+		if retryTimes > 15 {
+			return windows.ERROR_NOT_FOUND
+		}
+		errors.LogErrorInner(context.Background(), firstErr, "Interface configuration failed, retrying attempt ", retryTimes, "/15")
+		time.Sleep(time.Second)
+	}
+	retryTimes++
+	for _, family := range []winipcfg.AddressFamily{windows.AF_INET, windows.AF_INET6} {
+		if family == windows.AF_INET && route4 || family == windows.AF_INET6 && route6 {
+			err = t.setRoutes(family, routesData)
+			if err != nil {
+				firstErr = errors.New("unable to set routes").Base(err)
+				if err == windows.ERROR_NOT_FOUND {
+					goto startOver
+				}
+				return firstErr
+			}
+		}
+		if family == windows.AF_INET && address4 || family == windows.AF_INET6 && address6 {
+			err = t.luid.SetIPAddressesForFamily(family, addresses)
+			if err != nil {
+				firstErr = errors.New("unable to set ips").Base(err)
+				if err == windows.ERROR_NOT_FOUND {
+					goto startOver
+				}
+				return firstErr
+			}
+		}
+		ipif, err := t.luid.IPInterface(family)
+		if err != nil {
+			// With IPv6 disabled system-wide (DisabledComponents), the adapter has no
+			// IPv6 interface at all. Skip the family unless the config asks for it.
+			if err == windows.ERROR_NOT_FOUND && family == windows.AF_INET6 && !address6 && !route6 {
+				continue
+			}
+			return err
+		}
+		ipif.RouterDiscoveryBehavior = winipcfg.RouterDiscoveryDisabled
+		ipif.DadTransmits = 0
+		ipif.ManagedAddressConfigurationSupported = false
+		ipif.OtherStatefulConfigurationSupported = false
+		if family == windows.AF_INET && (address4 || route4) || family == windows.AF_INET6 && (address6 || route6) {
+			ipif.NLMTU = t.options.MTU
+		}
+		if family == windows.AF_INET && route4 || family == windows.AF_INET6 && route6 {
+			ipif.UseAutomaticMetric = false
+			ipif.Metric = 0
+		}
+		err = ipif.Set()
+		if err != nil {
+			firstErr = errors.New("unable to set metric and MTU").Base(err)
+			if err == windows.ERROR_NOT_FOUND {
+				goto startOver
+			}
+			return firstErr
+		}
+		err = t.luid.SetDNS(family, dns, nil)
+		if err != nil {
+			// Skip IPv6 the config does not ask for also when setting its DNS
+			// servers fails, as reported on Windows 11 24H2 with IPv6 disabled
+			// (Access is denied).
+			if family == windows.AF_INET6 && !address6 && !route6 {
+				continue
+			}
+			firstErr = errors.New("unable to set DNS").Base(err)
+			if err == windows.ERROR_NOT_FOUND {
+				goto startOver
+			}
+			return firstErr
+		}
+	}
+
+	// Windows lists the TUN's DNS servers among the system's ones, which Go's
+	// resolver queries for Xray's own lookups past the TUN, where they lead
+	// nowhere or back into Xray. Not skipped are those another interface uses
+	// as well, as that could leave no server at all. As those can change at
+	// any time, they are looked at again as often as Go rereads its servers.
+	if len(dns) > 0 {
+		skipped, err := tunOnlyDNS(t.luid, dns)
+		if err != nil {
+			skipped = dns
+		}
+		internet.SkipDNSServers(skipped)
+		t.skipStop, t.skipDone = make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(t.skipDone)
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					if skipped, err := tunOnlyDNS(t.luid, dns); err == nil {
+						internet.SkipDNSServers(skipped)
+					}
+				case <-t.skipStop:
+					return
+				}
+			}
+		}()
+	}
+
+	// Keep Windows from registering the TUN's addresses, and the host name
+	// with them, through dynamic DNS updates. Best effort.
+	if address4 || address6 {
+		if err := disableDNSRegistration(t.luid, dns); err != nil {
+			errors.LogDebugInner(context.Background(), err, "[tun] unable to disable DNS registration")
+		}
+	}
+
+	// With autoSystemWfpBlockLeak, once the system routes lead to the TUN,
+	// keep the protocols and ports given ("dns" stands for those of DNS),
+	// Windows' DNS Client service, an IP version no route of which leads to
+	// the TUN ("misconfigtun"), or everything ("all", or "allexceptlan" but
+	// for the local network), to the addresses of a CIDR or to all, from
+	// leaving through the other interfaces. The TUN's own addresses do not
+	// matter: without one of a version in gateway, Windows gives it a
+	// link-local one.
+	leaks, err := ExpandWfpBlockLeak(t.options.AutoSystemWfpBlockLeak)
+	if err != nil {
+		return err
+	}
+	block := newLeakFilters(leaks, route4, route6)
+	if route4 || route6 {
+		dnsClient := func(l leak) bool { return l.name == "windnsclient" }
+		if slices.ContainsFunc(block, dnsClient) && !dnsClientUsesAnyPort() {
+			block = slices.DeleteFunc(block, dnsClient)
+			errors.LogInfo(context.Background(), "[tun] windnsclient skipped: before Windows 11 and Server 2022, the DNS Client service only queries port 53")
+		}
+		if block.systemDNS() && len(dns) == 0 {
+			return errors.New("keeping the system's DNS inside the TUN needs dns to be set")
+		}
+	}
+	if blocked := block.String(); (route4 || route6) && blocked != "" {
+		if t.wfp, err = blockLeaks(t.luid, block); err != nil {
+			// Rather no TUN than a leaking one.
+			return errors.New("unable to block ", blocked, " outside the TUN (remove autoSystemWfpBlockLeak to run without)").Base(err)
+		}
+		errors.LogInfo(context.Background(), "[tun] blocked outside the TUN: ", blocked)
+		covered := slices.Clone(addresses)
+		for _, route := range routesData {
+			covered = append(covered, route.Destination)
+		}
+		for _, server := range dnsOutsideTUN(dns, covered, block) {
+			errors.LogWarning(context.Background(), "[tun] DNS server ", server, " is in neither gateway nor autoSystemRoutingTable, so queries to it cannot go through the TUN and are blocked")
+		}
+		// With updater, the dialer controllers bind Xray's own sockets to the
+		// physical interface.
+		if block.systemDNS() && updater != nil {
+			t.resolver = resolveOnOwn()
+		}
+	}
+	if len(dns) > 0 || route4 || route6 {
+		if err := flushDNSCache(); err != nil {
+			errors.LogInfoInner(context.Background(), err, "[tun] unable to flush DNS cache")
+		}
+	}
+
+	if updater != nil {
+		// Xray's own connections have to stay out of the IP versions routed
+		// to the TUN, which needs Windows to honor the binding to updater's
+		// interface.
+		if route4 {
+			t.guard.families = append(t.guard.families, windows.AF_INET)
+		}
+		if route6 {
+			t.guard.families = append(t.guard.families, windows.AF_INET6)
+		}
+		t.guard.check()
+		// Only a registered callback goes into the fields: a nil pointer in
+		// them would not compare equal to nil in Close.
+		cbr, err := winipcfg.RegisterRouteChangeCallback(func(notificationType winipcfg.MibNotificationType, route *winipcfg.MibIPforwardRow2) {
+			updater.Update()
+			t.guard.check()
+		})
+		if err != nil {
+			return err
+		}
+		t.cbr = cbr
+		cbi, err := winipcfg.RegisterInterfaceChangeCallback(func(notificationType winipcfg.MibNotificationType, iface *winipcfg.MibIPInterfaceRow) {
+			updater.Update()
+			t.guard.check()
+		})
+		if err != nil {
+			return err
+		}
+		t.cbi = cbi
+	}
+	return nil
+}
+
+func (t *WindowsTun) Close() error {
+	t.Lock()
+	defer t.Unlock()
+	if t.closed {
+		return nil
+	}
+	t.closed = true
+	if t.diagnosticStop != nil {
+		close(t.diagnosticStop)
+	}
+
+	if t.cbr != nil {
+		t.cbr.Unregister()
+	}
+	if t.cbi != nil {
+		t.cbi.Unregister()
+	}
+	t.guard.restore()
+	// Ending the session first takes the adapter media-down, so Windows stops
+	// routing into it before its routes, addresses and DNS are removed (Elarni).
+	if t.session != (wintun.Session{}) {
+		// ReadPacket may be waiting for a packet
+		_ = windows.SetEvent(t.readWait)
+		t.session.End()
+	}
+	// Only an adapter that captures nothing (no session, routes, addresses or DNS servers) is parked.
+	var flushed error
+	if t.luid != 0 {
+		flushed = errors.Combine(t.flushRoutes(windows.AF_UNSPEC), t.luid.FlushIPAddresses(windows.AF_UNSPEC),
+			t.luid.FlushDNS(windows.AF_INET), t.luid.FlushDNS(windows.AF_INET6))
+	}
+	if t.wfp != 0 {
+		closeWFPEngine(t.wfp)
+	}
+	if t.resolver != nil {
+		t.resolver.restore()
+	}
+	if t.skipStop != nil {
+		close(t.skipStop)
+		<-t.skipDone
+	}
+	internet.SkipDNSServers(nil)
+	if len(t.options.DNS) > 0 || len(t.options.AutoSystemRoutingTable) > 0 {
+		flushDNSCache()
+	}
+	if t.adapter != nil && (!t.started || flushed != nil || t.park() != nil) {
+		t.adapter.Close()
+	}
+	if t.diagnosticStop != nil {
+		t.recordPackets()
+		flightrecorder.Record(flightrecorder.Event{Name: "tun_closed", Connection: t.diagnosticID})
+	}
+	return nil
+}
+
+type savedResolver struct {
+	preferGo bool
+	dial     func(ctx context.Context, network, address string) (net.Conn, error)
+}
+
+// resolveOnOwn has Go resolve the names Xray would otherwise ask Windows for,
+// on Xray's own sockets, which the dialer controllers bind to the physical
+// interface, and skipping the TUN's DNS servers, as localdns does. Windows'
+// resolver runs in the DNS Client service, whose queries the DNS filter lets
+// through the TUN only, so Xray's own lookups, like of an outbound's server
+// domain, would go into Xray again and could end up waiting on themselves.
+//
+// It changes net.DefaultResolver for the whole process, which covers every
+// lookup that would reach Windows' resolver; restore undoes it.
+func resolveOnOwn() *savedResolver {
+	saved := &savedResolver{net.DefaultResolver.PreferGo, net.DefaultResolver.Dial}
+	dialer := &net.Dialer{Control: func(network, address string, c syscall.RawConn) error {
+		for _, ctl := range internet.Controllers {
+			if err := ctl(network, address, c); err != nil {
+				return err
+			}
+		}
+		return nil
+	}}
+	// Go's resolver moves on to the next server right away when a dial fails.
+	net.DefaultResolver.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if internet.IsSkippedDNSServer(address) {
+			return nil, errors.New("skipped DNS server ", address)
+		}
+		// A socket of the server's IP version only needs that version bound
+		// to the interface, which a dual-stack one would need both of.
+		if ap, err := netip.ParseAddrPort(address); err == nil && (network == "udp" || network == "tcp") {
+			if ap.Addr().Unmap().Is4() {
+				network += "4"
+			} else {
+				network += "6"
+			}
+		}
+		return dialer.DialContext(ctx, network, address)
+	}
+	net.DefaultResolver.PreferGo = true
+	return saved
+}
+
+func (s *savedResolver) restore() {
+	net.DefaultResolver.PreferGo = s.preferGo
+	net.DefaultResolver.Dial = s.dial
+}
+
+// tunOnlyDNS returns those of servers, the TUN's DNS servers, that Go's
+// resolver does not also get from another interface: one that is up and has
+// a gateway, as it reads them.
+func tunOnlyDNS(tun winipcfg.LUID, servers []netip.Addr) ([]netip.Addr, error) {
+	adapters, err := winipcfg.GetAdaptersAddresses(windows.AF_UNSPEC, winipcfg.GAAFlagIncludeGateways)
+	if err != nil {
+		return nil, err
+	}
+	var others []netip.Addr
+	for _, adapter := range adapters {
+		if adapter.LUID == tun || adapter.OperStatus != winipcfg.IfOperStatusUp || adapter.FirstGatewayAddress == nil {
+			continue
+		}
+		for server := adapter.FirstDNSServerAddress; server != nil; server = server.Next {
+			if addr, ok := netip.AddrFromSlice(server.Address.IP()); ok {
+				others = append(others, addr.Unmap())
+			}
+		}
+	}
+	return slices.DeleteFunc(slices.Clone(servers), func(server netip.Addr) bool {
+		return slices.Contains(others, server.Unmap())
+	}), nil
+}
+
+// disableDNSRegistration turns off the dynamic DNS registration of the
+// interface's addresses. dns are its DNS servers.
+func disableDNSRegistration(luid winipcfg.LUID, dns []netip.Addr) error {
+	guid, err := luid.GUID()
+	if err != nil {
+		return err
+	}
+	err = winipcfg.SetInterfaceDnsSettings(*guid, &winipcfg.DnsInterfaceSettings{
+		Version: winipcfg.DnsInterfaceSettingsVersion1,
+		Flags:   winipcfg.DnsInterfaceSettingsFlagRegistrationEnabled,
+	})
+	if err == nil || !go_errors.Is(err, windows.ERROR_PROC_NOT_FOUND) {
+		return err
+	}
+	return disableDNSRegistrationByNetsh(luid, dns)
+}
+
+// disableDNSRegistrationByNetsh does it for Windows before 10 1809, which
+// lacks SetInterfaceDnsSettings. The setting is the interface's, not the
+// address family's, but netsh only applies it along with a DNS server, which
+// replaces the IPv4 ones, so they are set again afterwards.
+func disableDNSRegistrationByNetsh(luid winipcfg.LUID, dns []netip.Addr) error {
+	row, err := luid.Interface()
+	if err != nil {
+		return err
+	}
+	server := "127.0.0.1" // any will do when there is no IPv4 one
+	if i := slices.IndexFunc(dns, netip.Addr.Is4); i >= 0 {
+		server = dns[i].String()
+	}
+	err = runNetsh("interface", "ipv4", "set", "dnsservers", "name="+strconv.FormatUint(uint64(row.InterfaceIndex), 10), "source=static", "address="+server, "register=none", "validate=no")
+	return errors.Combine(err, luid.SetDNS(windows.AF_INET, dns, nil))
+}
+
+// runNetsh runs netsh.exe from the system directory. netsh reports some
+// failures, like a syntax error, only in its output, even with exit code 0,
+// so any output counts as a failure.
+func runNetsh(args ...string) error {
+	system32, err := windows.GetSystemDirectory()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(filepath.Join(system32, "netsh.exe"), args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	output, err := cmd.CombinedOutput()
+	if output = bytes.TrimSpace(output); err != nil || len(output) > 0 {
+		return errors.New("netsh ", strings.Join(args, " "), ": ", string(output)).Base(err)
 	}
 	return nil
 }
@@ -341,32 +642,24 @@ func (t *WindowsTun) Index() (int, error) {
 	return int(row.InterfaceIndex), nil
 }
 
-// WritePacket implements GVisorDevice method to write one packet to the tun device
-func (t *WindowsTun) WritePacket(packetBuffer *stack.PacketBuffer) tcpip.Error {
+// WritePacket implements Tun: the two parts are copied into the ring of Wintun
+func (t *WindowsTun) WritePacket(header, payload []byte) error {
 	t.RLock()
 	defer t.RUnlock()
-	if t.closed.Load() {
-		return &tcpip.ErrClosedForSend{}
+	if t.closed {
+		return windows.ERROR_HANDLE_EOF
 	}
 
-	// request buffer from Wintun
-	packet, err := t.session.AllocateSendPacket(packetBuffer.Size())
+	packet, err := t.session.AllocateSendPacket(len(header) + len(payload))
 	if err != nil {
-		if flightrecorder.Enabled() {
+		if t.diagnosticStop != nil {
 			flightrecorder.Record(flightrecorder.Event{Name: "tun_write_error", Code: probe.Code(err), Connection: t.diagnosticID})
 		}
-		return &tcpip.ErrAborted{}
+		return err
 	}
-
-	// copy the bytes of slices that compose the packet into the allocated buffer
-	var index int
-	for _, packetElement := range packetBuffer.AsSlices() {
-		index += copy(packet[index:], packetElement)
-	}
-
-	// signal Wintun to send that buffer as the packet
+	copy(packet[copy(packet, header):], payload)
 	t.session.SendPacket(packet)
-	if flightrecorder.Enabled() {
+	if t.diagnosticStop != nil {
 		t.packetsWritten.Add(1)
 		t.bytesWritten.Add(int64(len(packet)))
 	}
@@ -374,126 +667,36 @@ func (t *WindowsTun) WritePacket(packetBuffer *stack.PacketBuffer) tcpip.Error {
 	return nil
 }
 
-// ReadPacket implements GVisorDevice method to read one packet from the tun device
-// It is expected that the method will not block, rather return ErrQueueEmpty when there is nothing on the line,
-// which will make the stack call Wait which should implement desired push-back
-func (t *WindowsTun) ReadPacket() (byte, *stack.PacketBuffer, error) {
-	t.RLock()
-	defer t.RUnlock()
-	if t.closed.Load() {
-		return 0, nil, os.ErrClosed
-	}
-	packet, err := t.session.ReceivePacket()
-	if go_errors.Is(err, windows.ERROR_NO_MORE_ITEMS) {
-		return 0, nil, ErrQueueEmpty
-	}
-	if err != nil {
-		if flightrecorder.Enabled() {
-			flightrecorder.Record(flightrecorder.Event{Name: "tun_read_error", Code: probe.Code(err), Connection: t.diagnosticID})
+// ReadPacket implements Tun: it waits until Wintun has a packet and copies it out of the ring
+func (t *WindowsTun) ReadPacket(b []byte) ([]byte, error) {
+	for {
+		t.RLock()
+		if t.closed {
+			t.RUnlock()
+			return nil, windows.ERROR_HANDLE_EOF
 		}
-		return 0, nil, err
-	}
-
-	defer t.session.ReleaseReceivePacket(packet)
-	if len(packet) == 0 {
-		return 0, nil, windows.ERROR_INVALID_DATA
-	}
-	version := packet[0] >> 4
-	if flightrecorder.Enabled() {
-		t.packetsRead.Add(1)
-		t.bytesRead.Add(int64(len(packet)))
-	}
-	view := buffer.NewViewWithData(packet)
-	clampGuestMSS(view.AsSlice())
-	packetBuffer := buffer.MakeWithView(view)
-	return version, stack.NewPacketBuffer(stack.PacketBufferOptions{
-		Payload:           packetBuffer,
-		IsForwardedPacket: true,
-	}), nil
-}
-
-// clampGuestMSS caps the MSS of a TCP SYN that the Windows stack did not send at what
-// a 1500-byte frame carries. WSL's mirrored networking gives its guest this adapter's
-// MTU, but drops larger replies to it without ICMP (microsoft/WSL#41419). Windows sends
-// with TTL 128 and keeps jumbo segments; other senders sit behind a 1500-byte link.
-// The guest's own jumbo frames do reach the TUN, so gVisor's SYN-ACK keeps its MSS.
-func clampGuestMSS(packet []byte) {
-	var segment []byte
-	limit := uint16(1500 - header.IPv4MinimumSize - header.TCPMinimumSize)
-	switch {
-	case len(packet) >= header.IPv4MinimumSize && packet[0]>>4 == 4:
-		ip := header.IPv4(packet)
-		length, total := int(ip.HeaderLength()), int(ip.TotalLength())
-		if ip.TTL() >= 128 || ip.Protocol() != uint8(header.TCPProtocolNumber) || ip.FragmentOffset() != 0 ||
-			length < header.IPv4MinimumSize || total < length || total > len(packet) {
-			return
-		}
-		segment = packet[length:total]
-	case len(packet) >= header.IPv6MinimumSize && packet[0]>>4 == 6:
-		ip := header.IPv6(packet)
-		total := header.IPv6MinimumSize + int(ip.PayloadLength())
-		if ip.HopLimit() >= 128 || ip.NextHeader() != uint8(header.TCPProtocolNumber) || total > len(packet) {
-			return
-		}
-		segment = packet[header.IPv6MinimumSize:total]
-		limit = 1500 - header.IPv6MinimumSize - header.TCPMinimumSize
-	default:
-		return
-	}
-	if len(segment) < header.TCPMinimumSize {
-		return
-	}
-	tcp := header.TCP(segment)
-	offset := int(tcp.DataOffset())
-	if tcp.Flags()&(header.TCPFlagSyn|header.TCPFlagAck) != header.TCPFlagSyn ||
-		offset < header.TCPMinimumSize || offset > len(segment) {
-		return
-	}
-	for at := header.TCPMinimumSize; at < offset; {
-		switch segment[at] {
-		case header.TCPOptionEOL:
-			return
-		case header.TCPOptionNOP:
-			at++
-			continue
-		}
-		if at+1 >= offset || segment[at+1] < 2 || at+int(segment[at+1]) > offset {
-			return
-		}
-		if segment[at] == header.TCPOptionMSS && segment[at+1] == header.TCPOptionMSSLength {
-			old := binary.BigEndian.Uint16(segment[at+2:])
-			if old <= limit {
-				return
+		packet, err := t.session.ReceivePacket()
+		if err == nil {
+			n := copy(b, packet)
+			t.session.ReleaseReceivePacket(packet)
+			t.RUnlock()
+			if t.diagnosticStop != nil {
+				t.packetsRead.Add(1)
+				t.bytesRead.Add(int64(n))
 			}
-			binary.BigEndian.PutUint16(segment[at+2:], limit)
-			// Incremental update (RFC 1624); a field at an odd offset sums byte-swapped.
-			before, after := old, limit
-			if at%2 == 1 {
-				before, after = bits.ReverseBytes16(before), bits.ReverseBytes16(after)
-			}
-			tcp.SetChecksum(^checksum.Combine(checksum.Combine(^tcp.Checksum(), ^before), after))
-			return
+			clampGuestMSS(b[:n])
+			return b[:n], nil
 		}
-		at += int(segment[at+1])
+		t.RUnlock()
+		if !go_errors.Is(err, windows.ERROR_NO_MORE_ITEMS) {
+			if t.diagnosticStop != nil {
+				flightrecorder.Record(flightrecorder.Event{Name: "tun_read_error", Code: probe.Code(err), Connection: t.diagnosticID})
+			}
+			return nil, err
+		}
+		procyield(1)
+		_, _ = windows.WaitForSingleObject(t.readWait, windows.INFINITE)
 	}
-}
-
-func (t *WindowsTun) recordPackets() {
-	flightrecorder.Record(flightrecorder.Event{Name: "tun_packets", Connection: t.diagnosticID, Values: map[string]int64{"packets_in": t.packetsRead.Load(), "packets_out": t.packetsWritten.Load(), "bytes_in": t.bytesRead.Load(), "bytes_out": t.bytesWritten.Load()}})
-}
-
-func (t *WindowsTun) Wait() {
-	t.RLock()
-	defer t.RUnlock()
-	if t.closed.Load() {
-		return
-	}
-	procyield(1)
-	_, _ = windows.WaitForSingleObject(t.readWait, windows.INFINITE)
-}
-
-func (t *WindowsTun) newEndpoint() (stack.LinkEndpoint, error) {
-	return &LinkEndpoint{deviceMTU: t.options.MTU, device: t}, nil
 }
 
 const (
@@ -509,9 +712,21 @@ func setinterface(network, address string, fd uintptr, iface *net.Interface) err
 
 	switch network {
 	case "tcp6", "udp6", "ip6":
+		dualStack := false
+		if network == "udp6" {
+			ipv6Only, err := windows.GetsockoptInt(windows.Handle(fd), windows.IPPROTO_IPV6, windows.IPV6_V6ONLY)
+			if err != nil {
+				return internet.NewBindError(err)
+			}
+			dualStack = ipv6Only == 0
+		}
 		err1 = windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IPV6, IPV6_UNICAST_IF, iface.Index)
 		if network == "udp6" {
 			err2 = windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IPV6, windows.IPV6_MULTICAST_IF, iface.Index)
+		}
+		// Only dual-stack UDP can send to both IPv4 and IPv6 destinations.
+		if !dualStack {
+			break
 		}
 		fallthrough
 	case "tcp4", "udp4", "ip4":
@@ -523,79 +738,56 @@ func setinterface(network, address string, fd uintptr, iface *net.Interface) err
 		panic(network + " " + address)
 	}
 
-	return errors.Combine(err1, err2, err3, err4)
+	if err := errors.Combine(err1, err2, err3, err4); err != nil {
+		return internet.NewBindError(err)
+	}
+	return nil
 }
 
 func findOutboundInterface(tunIndex int, fixedName string) (*net.Interface, error) {
-	interfaces, err := net.Interfaces()
+	if fixedName != "" {
+		return net.InterfaceByName(fixedName)
+	}
+
+	r, err := winipcfg.GetIPForwardTable2(windows.AF_UNSPEC)
 	if err != nil {
 		return nil, err
 	}
+	lowestMetric := ^uint32(0)
+	index := uint32(0)
+	lowestMetricWifi := ^uint32(0)
+	indexWifi := uint32(0)
+	for i := range r {
+		if r[i].DestinationPrefix.PrefixLength != 0 || r[i].InterfaceIndex == uint32(tunIndex) {
+			continue
+		}
+		ifrow, err := r[i].InterfaceLUID.Interface()
+		if err != nil || ifrow.OperStatus != winipcfg.IfOperStatusUp {
+			continue
+		}
 
-	if fixedName != "" {
-		for _, iface := range interfaces {
-			if iface.Index != tunIndex && iface.Name == fixedName {
-				return &iface, nil
+		iface, err := r[i].InterfaceLUID.IPInterface(windows.AF_INET)
+		if err != nil {
+			iface, err = r[i].InterfaceLUID.IPInterface(windows.AF_INET6)
+			if err != nil {
+				continue
 			}
 		}
-		return nil, nil
-	}
 
-	var candidates []struct {
-		index int
-		score int
-	}
-	for i, iface := range interfaces {
-		if iface.Index == tunIndex {
+		if ifrow.Type == windows.IF_TYPE_IEEE80211 {
+			if r[i].Metric+iface.Metric < lowestMetricWifi {
+				lowestMetricWifi = r[i].Metric + iface.Metric
+				indexWifi = r[i].InterfaceIndex
+			}
 			continue
 		}
-		if strings.Contains(iface.Name, "vEthernet") {
-			continue
-		}
-		if iface.Flags&net.FlagUp == 0 {
-			continue
-		}
-		if iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil || len(addrs) == 0 {
-			continue
-		}
-		candidates = append(candidates, struct {
-			index int
-			score int
-		}{i, scoreWindowsInterface(&iface, addrs)})
-	}
-
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].score != candidates[j].score {
-			return candidates[i].score > candidates[j].score
-		}
-		return interfaces[candidates[i].index].Name < interfaces[candidates[j].index].Name
-	})
-	if len(candidates) == 0 {
-		return nil, nil
-	}
-
-	iface := interfaces[candidates[0].index]
-	return &iface, nil
-}
-
-func scoreWindowsInterface(iface *net.Interface, addrs []net.Addr) int {
-	score := 0
-
-	name := strings.ToLower(iface.Name)
-	if strings.Contains(name, "wlan") || strings.Contains(name, "wi-fi") {
-		score += 2
-	}
-
-	for _, addr := range addrs {
-		if strings.HasPrefix(addr.String(), "192.168.") {
-			score++
-			break
+		if r[i].Metric+iface.Metric < lowestMetric {
+			lowestMetric = r[i].Metric + iface.Metric
+			index = r[i].InterfaceIndex
 		}
 	}
-
-	return score
+	if indexWifi != 0 {
+		index = indexWifi
+	}
+	return net.InterfaceByIndex(int(index))
 }

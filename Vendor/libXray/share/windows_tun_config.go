@@ -307,6 +307,10 @@ func dnsForwardTarget(servers any) (string, int, string) {
 		address, _ := server.(string)
 		port, network := 53, ""
 		if object, ok := server.(map[string]any); ok {
+			// One that skips fallback serves only its domains, as in the Rust compiler.
+			if object["skipFallback"] == true {
+				continue
+			}
 			address, _ = object["address"].(string)
 			if value, ok := object["port"].(float64); ok && value >= 1 && value <= 65535 && value == float64(int(value)) {
 				port = int(value)

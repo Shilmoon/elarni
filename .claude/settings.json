@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(python scripts/check-changed *)",
+      "Bash(python3 scripts/check-changed *)",
+      "Bash(sh scripts/check-tests *)",
+      "Bash(cargo test *)",
+      "Bash(go test *)",
+      "Bash(flutter analyze *)",
+      "Bash(flutter test *)"
+    ],
+    "deny": [
+      "Bash(*check-windows-vpn*)",
+      "Bash(*check-linux-vpn*)",
+      "Bash(*check-linux-elevation*)",
+      "Bash(*check-headless*)",
+      "Bash(netsh *)",
+      "Bash(*netsh.exe *)",
+      "Bash(route *)",
+      "Bash(*route.exe *)",
+      "Bash(*ip *route add *)",
+      "Bash(*ip *route del*)",
+      "Bash(*ip *route replace *)",
+      "Bash(*ip *route change *)",
+      "Bash(*ip *route flush*)",
+      "Bash(*ip *rule add *)",
+      "Bash(*ip *rule del*)",
+      "Bash(*resolvectl dns *)",
+      "Bash(*resolvectl domain *)",
+      "Bash(*resolvectl default-route *)",
+      "Bash(*resolvectl revert *)",
+      "Bash(*networksetup -set*)",
+      "Bash(*networksetup -add*)",
+      "Bash(*networksetup -remove*)",
+      "Bash(*networksetup -create*)",
+      "Bash(*networksetup -delete*)",
+      "PowerShell(netsh *)",
+      "PowerShell(route *)",
+      "PowerShell(*check-windows-vpn*)",
+      "PowerShell(Set-DnsClient*)",
+      "PowerShell(New-NetRoute *)",
+      "PowerShell(Set-NetRoute *)",
+      "PowerShell(Remove-NetRoute *)",
+      "PowerShell(Disable-NetAdapter *)",
+      "PowerShell(Set-NetIPInterface *)"
+    ]
+  }
+}

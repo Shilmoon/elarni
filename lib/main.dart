@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +9,7 @@ import 'elarni_app.dart';
 import 'desktop_proxy.dart';
 import 'desktop_camera.dart';
 import 'headless.dart';
+import 'system_proxy.dart';
 import 'strings.dart';
 
 Future<void> main(List<String> arguments) async {
@@ -22,6 +24,10 @@ Future<void> main(List<String> arguments) async {
   final desktop = Platform.isWindows || Platform.isLinux
       ? DesktopProxy(
           unattended: headless,
+          // The daemon has no desktop session whose proxy it could set.
+          systemProxy: headless
+              ? null
+              : SystemProxySession.forPlatform(Platform.environment),
           cameraScan: camera.scan,
           cancelCamera: camera.cancel,
           confirmLink: headless
@@ -124,6 +130,14 @@ Future<void> main(List<String> arguments) async {
     }
     exit(exitCode);
   }
+  // Closing the window ends the process without waiting for dispose.
+  if (desktop != null)
+    AppLifecycleListener(
+      onExitRequested: () async {
+        await desktop.releaseSystemProxy();
+        return AppExitResponse.exit;
+      },
+    );
   runApp(
     ElarniApp(
       tunnelControl: desktop?.control,

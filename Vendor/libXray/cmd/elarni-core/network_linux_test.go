@@ -520,3 +520,33 @@ func TestLinuxChildFixture(t *testing.T) {
 	}
 	os.Exit(0)
 }
+
+// Regression: a failed nft delete left the DNS redirect, but cleanup still deleted
+// every rule, so staleVPNGuard reported nothing and lookups stayed broken.
+func TestLinuxCleanupKeepsTheMarkerWhileTheRedirectMayRemain(t *testing.T) {
+	network := linuxNetwork{Name: "rv0123456789ab", Table: 12001, Priority: 12001, Mark: 0x52562ee1}
+	other := linuxNetwork{Name: "rv0123456789cd", Table: 12002, Priority: 12002, Mark: 0x52562ee2}
+	marker, policy := *network.markerRule(netlink.FAMILY_V4), *network.rule(netlink.FAMILY_V6)
+	foreign := *network.rule(netlink.FAMILY_V4)
+	foreign.Protocol = 0
+	rules := []netlink.Rule{marker, policy, *other.markerRule(netlink.FAMILY_V4), foreign}
+	if got := network.staleRules(rules, false); !reflect.DeepEqual(got, []netlink.Rule{marker, policy}) {
+		t.Fatalf("a full cleanup deletes %v", got)
+	}
+	if got := network.staleRules(rules, true); !reflect.DeepEqual(got, []netlink.Rule{policy}) {
+		t.Fatalf("with the redirect left, cleanup deletes %v", got)
+	}
+}
+
+// The Linux C1 producer compares the route marked sockets take; the lookup must work
+// with a mark, without privileges, or route moves are never noticed.
+func TestLinuxPhysicalPathFollowsTheMarkedRoute(t *testing.T) {
+	routes, err := netlink.RouteGet(net.ParseIP("192.0.2.1"))
+	if err != nil || len(routes) == 0 {
+		t.Skip("no IPv4 route on this host:", err)
+	}
+	path := linuxPhysicalPath(0x52562ee1) // no rule matches the mark, so the main table answers
+	if want := (linuxRoute{routes[0].LinkIndex, routes[0].Gw.String(), routes[0].Src.String()}); path[0] != want || want.link == 0 {
+		t.Fatalf("marked path %+v, want %+v", path[0], want)
+	}
+}

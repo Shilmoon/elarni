@@ -121,7 +121,8 @@ object WiFiRule {
                 }
                 override fun onLost(lost: Network) { if (lost == network) result.complete(null) }
             }
-            connectivity.registerNetworkCallback(wifi, callback)
+            // Android caps an app's callbacks; without one the name stays unknown, and the next check asks again.
+            if (runCatching { connectivity.registerNetworkCallback(wifi, callback) }.isFailure) return null
             try { withTimeoutOrNull(5000) { result.await() } } finally { connectivity.unregisterNetworkCallback(callback) }
         } else @Suppress("DEPRECATION") app.getSystemService(WifiManager::class.java).connectionInfo
             ?.takeIf { app.getSystemService(ConnectivityManager::class.java).getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true }?.ssid

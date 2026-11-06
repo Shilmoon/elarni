@@ -37,12 +37,17 @@ func newResolver(server string, protect protectSocket) (*net.Resolver, error) {
 		}
 	}
 
+	cache := newAnswerCache()
 	return &net.Resolver{
 		PreferGo: true,
-		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 			// Android may report a loopback resolver to Go. Always use the DNS
 			// endpoint selected by the VPN configuration instead.
-			return dialer.DialContext(ctx, network, server)
+			dial := func(ctx context.Context) (net.Conn, error) { return dialer.DialContext(ctx, network, server) }
+			if network == "udp" {
+				return &cachedConn{cache: cache, ctx: ctx, address: address, dial: dial}, nil
+			}
+			return dial(ctx)
 		},
 	}, nil
 }

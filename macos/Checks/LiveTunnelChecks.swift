@@ -19,6 +19,7 @@ struct LiveTunnelChecks {
 
   static func run() async throws {
     try await resolverCancellation()
+    try await preparedReuse()
     try require(elarni_packet_abi_version() == ELARNI_PACKET_ABI_VERSION, "packet bridge ABI")
     let hosts = try invoke("profileHostMappings", ["configJSON": "{\"dns\":{\"hosts\":{\"domain:provider.test\":\"192.0.2.8\"}}}", "hosts": ["edge.provider.test"]]) as! [String: Any]
     let host = hosts["edge.provider.test"] as? [String: Any]
@@ -135,7 +136,9 @@ struct LiveTunnelChecks {
     _ = try invoke("runXrayFromJson", ["configJSON": String(decoding: try JSONSerialization.data(withJSONObject: deadConfig), as: UTF8.self)])
     tracker.record(passed: passes(), uplink: try uplink(), at: 3)
     try require(tracker.state == "noTraffic", "a dead server was not reported: \(tracker.state ?? "nil")")
-    try require(tracker.needsProbe(uplink: try uplink(), at: 4), "a failed check was not repeated")
+    // The failed check itself sends nothing through the inbound, so an idle tunnel is not checked again.
+    try require(!tracker.needsProbe(uplink: try uplink(), at: 4), "an idle tunnel was checked again after a failure")
+    try require(tracker.needsProbe(uplink: try uplink() + 1, at: 5), "traffic after a failed check was not checked")
     print("PASS liveness tells a working server from one that passes no traffic")
   }
 
@@ -383,6 +386,51 @@ struct LiveTunnelChecks {
     print("PASS provider Stop joins real pending DNS preparation without quarantine")
   }
 
+  // A restart with the same inputs and resolved addresses gets the running configuration back
+  // instead of compiling next to the running core; any other input compiles its own.
+  static func preparedReuse() async throws {
+    let attempt = ProviderBoundaryEvidence.reset()
+    defer { ProviderBoundaryEvidence.finish(attempt) }
+    let socks = try boundSocket(SOCK_STREAM)
+    Darwin.close(socks.fd)
+    let plan = TunnelPlan(schemaVersion: 1, secretRef: "reuse-check", socksPort: socks.port, mtu: 1500,
+      dnsServers: ["192.0.2.53"], controlledRoutes: [], staticHosts: [:], outboundFormat: .xrayOutbound,
+      fallbackAction: .proxy, routingRevision: nil, routingDigest: nil, assetRevision: nil,
+      backend: .nativeTun2Proxy, settings: nil)
+    let core = NativeXrayCore()
+    func prepare(port: Int) async throws -> PreparedXray {
+      // Sorted keys: two equal dictionaries can serialize in different orders, and the stored endpoint
+      // a real restart reuses has fixed bytes.
+      var endpoint = SecretValue(bytes: try JSONSerialization.data(withJSONObject: ["protocol": "socks",
+        "settings": ["servers": [["address": "localhost", "port": port]]]], options: [.sortedKeys]))
+      defer { endpoint.clear() }
+      return try await core.prepare(plan: plan, endpoint: &endpoint, servers: [:], inboundCredentials: nil, attempt: attempt)
+    }
+    // An equal compile has its own buffer; the running configuration handed back shares the first one's.
+    func storage(_ text: String) -> UnsafeRawPointer? {
+      text.utf8.withContiguousStorageIfAvailable { UnsafeRawPointer($0.baseAddress) } ?? nil
+    }
+    let first = try await prepare(port: 9)
+    try await core.start(first, attempt: attempt)
+    do {
+      let again = try await prepare(port: 9)
+      try require(first.source != nil && again.source == first.source && again.config == first.config &&
+        storage(again.config) != nil && storage(again.config) == storage(first.config) &&
+        again.addresses == first.addresses, "the same inputs compiled again instead of reusing the running configuration")
+      let other = try await prepare(port: 10)
+      try require(other.source != first.source && other.config != first.config,
+        "another server reused the running configuration")
+      try await core.stop()
+    } catch {
+      try? await core.stop()
+      throw error
+    }
+    let stopped = try await prepare(port: 9)
+    try require(stopped.config == first.config && storage(stopped.config) != storage(first.config),
+      "a stopped core's configuration was kept, or a compile after Stop differed from the first")
+    print("PASS a restart with unchanged inputs reuses the running configuration and other inputs compile")
+  }
+
   // Packet-flow readers must accept complete offloaded packets and IP fragments.
   // Deliver fragments backwards so a first-fragment-only parser cannot pass.
   // VLESS sends UDP as XUDP frames that standard servers cap at 8 KiB, so a
@@ -539,7 +587,8 @@ struct LiveTunnelChecks {
   }
 
   static func packetRoundTrip(socksPort: UInt16, echo: (fd: Int32, port: UInt16), cycle: Int) throws {
-    guard let bridge = elarni_packet_bridge_new(socksPort, 1500, 1, 1, 64, 65535) else {
+    // 10 s UDP idle timeout, not the production 60 s, so the idle check below ends within its 12 s.
+    guard let bridge = elarni_packet_bridge_new_with_udp_timeout(socksPort, 1500, 1, 1, 64, 65535, 10) else {
       throw Failure(message: "packet bridge creation")
     }
     defer { elarni_packet_bridge_free(bridge) }

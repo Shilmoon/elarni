@@ -54,9 +54,9 @@ extension TunnelMethodChannel {
       try Task.checkCancellation()
       if current?.connection.status == .connected &&
           (pingProtocol == "activeProxy" || settingsStore.current.includeAllNetworks) {
-        guard store.selectedNodeID() == nodeID, commands.intent == .connected else {
-          throw RunnerTunnelError.pingFailure
-        }
+        // The tunnel carries only the selected server's path.
+        guard store.selectedNodeID() == nodeID else { throw RunnerTunnelError.disconnectToTest }
+        guard commands.intent == .connected else { throw RunnerTunnelError.pingFailure }
         let subscriptionID = try store.subscriptionID(nodeID: nodeID)
         let started = automationNow()
         var diagnostic = ProbeDiagnostic(targetOrdinal: 1, revision: intentRevision,
@@ -203,6 +203,10 @@ extension TunnelMethodChannel {
       exit = nativeResult["exit"]
     case "tcp":
       guard !trace else { throw RunnerTunnelError.pingFailure }
+      // Include all networks sends even a socket bound to Wi-Fi into the tunnel.
+      if settingsStore.current.includeAllNetworks, (try? await loadManager())?.connection.status == .connected {
+        throw RunnerTunnelError.disconnectToTest
+      }
       let endpoint = try Self.outboundEndpoint(outbound, requireTCP: true)
       delay = try await Self.measureTCP(
         host: endpoint.host,
@@ -259,6 +263,9 @@ extension TunnelMethodChannel {
     }
     let queue = DispatchQueue(label: "com.elarni.tcp-ping")
     let parameters = NWParameters.tcp
+    // Direct means outside the VPN, as on Windows and Linux: the tunnel's own stack would
+    // complete the handshake for any address. A tunnel's interface type is .other.
+    parameters.prohibitedInterfaceTypes = [.other]
     if preferredIP == "ipv4" {
       (parameters.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options)?.version = .v4
     }

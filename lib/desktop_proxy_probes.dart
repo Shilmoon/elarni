@@ -1,6 +1,12 @@
 part of 'desktop_proxy.dart';
 
 extension _ProxyProbes on DesktopProxy {
+  // Ports handed to probe cores that are still running; parallel picks repeat
+  // one. Two probes on one port fail: with SO_REUSEPORT (Linux, macOS) each gets
+  // some of the other's connections and its SOCKS login fails, and on Windows
+  // the second core cannot listen.
+  static final _probePorts = <int>{};
+
   Future<CatalogMap> _pingICMP(CatalogMap args, int generation) async {
     final catalog = _catalog!;
     if (_state != 'connected' || !catalog.settings.xrayTunEnabled)
@@ -33,6 +39,8 @@ extension _ProxyProbes on DesktopProxy {
           throw desktopError('icmp_restore_failed');
         }
       }
+      // This probe stopped and restarted the connection.
+      _listener?.call(null);
     }
   }
 
@@ -49,8 +57,9 @@ extension _ProxyProbes on DesktopProxy {
       throw desktopError('invalid_profile');
     final timeout = args['timeout']! as int;
     if (automatic) {
-      // TSPU counts handshakes to one server under ~50 ms apart, and the core
-      // finishes a probe of a near server sooner than that.
+      // TSPU freezes an SNI after more than 3 handshakes under ~50 ms apart.
+      // A near server's probe can end sooner, so starts 40 ms apart keep any
+      // 50 ms window to two.
       final wait = _lastAutomaticProbe + 40 - _clock.elapsedMilliseconds;
       if (wait > 0) await Future<void>.delayed(Duration(milliseconds: wait));
       _lastAutomaticProbe = _clock.elapsedMilliseconds;
@@ -72,7 +81,7 @@ extension _ProxyProbes on DesktopProxy {
         _state == 'connected' &&
         catalog.settings.xrayTunEnabled)
       throw desktopError('unavailableProbePath');
-    var failed = false;
+    int? reserved;
     try {
       int latency;
       Object? exit;
@@ -102,7 +111,11 @@ extension _ProxyProbes on DesktopProxy {
         );
         _checkGeneration(generation);
         if (protocol == 'tcp') {
-          if (Platform.isWindows || Platform.isLinux) {
+          // Only a running VPN captures this app's own connections. Elsewhere
+          // a core per probe (about 33 MiB while it waits) measures the same.
+          if ((Platform.isWindows || Platform.isLinux) &&
+              catalog.settings.xrayTunEnabled &&
+              !{'disconnected', 'prepared'}.contains(_state)) {
             final result = await _native('pingEndpoint', {
               'address': addresses.first.address,
               'port': endpoint['port'],
@@ -141,20 +154,7 @@ extension _ProxyProbes on DesktopProxy {
             catalog.settings.perAppMode != 'proxyOnly') {
           payload['packetPath'] = true;
         } else if (active) {
-          final credentials = catalog.settings.inboundAuthEnabled
-              ? catalogMap(catalog.data['inboundCredentials'] ?? {})
-              : catalog.settings.xrayTunEnabled
-              ? _vpnLogin
-              : null;
-          final userInfo = credentials != null
-              ? '${Uri.encodeComponent(credentials['username']! as String)}:${Uri.encodeComponent(credentials['password']! as String)}'
-              : '';
-          payload['proxy'] = Uri(
-            scheme: 'socks5',
-            host: '127.0.0.1',
-            port: catalog.settings.socksPort,
-            userInfo: userInfo,
-          ).toString();
+          payload['proxy'] = _listenerProxy(catalog);
           payload['configJSON'] = jsonEncode({
             'inbounds': [],
             'outbounds': [
@@ -162,12 +162,16 @@ extension _ProxyProbes on DesktopProxy {
             ],
           });
         } else {
-          final socket = await ServerSocket.bind(
-            InternetAddress.loopbackIPv4,
-            0,
-          );
-          final port = socket.port;
-          await socket.close();
+          int port;
+          do {
+            final socket = await ServerSocket.bind(
+              InternetAddress.loopbackIPv4,
+              0,
+            );
+            port = socket.port;
+            await socket.close();
+          } while (!_probePorts.add(port));
+          reserved = port;
           final probe = catalog.copy();
           // Other local apps, including ones the VPN excludes, must not
           // borrow this listener while the probe runs.
@@ -180,6 +184,7 @@ extension _ProxyProbes on DesktopProxy {
           probe.data['settings'] = catalog.settings
               .copyWith(
                 xrayTunEnabled: false,
+                systemProxyEnabled: false,
                 perAppMode: 'off',
                 socksPort: port,
                 httpInboundEnabled: false,
@@ -197,10 +202,12 @@ extension _ProxyProbes on DesktopProxy {
           payload['proxy'] = 'socks5://$username:$password@127.0.0.1:$port';
         }
         _checkGeneration(generation);
+        // Automatic probes keep their whole timeout for the core, which ends
+        // them itself; the margin only bounds a hung core.
         final response = await _native(
           'ping',
           payload,
-          timeout: automatic ? null : timeLeft(),
+          timeout: automatic ? Duration(seconds: timeout + 5) : timeLeft(),
         );
         latency = response['delay']! as int;
         if (latency < 0) throw desktopError('ping_failed');
@@ -223,7 +230,6 @@ extension _ProxyProbes on DesktopProxy {
         _checkGeneration(generation);
         rethrow;
       }
-      failed = true;
       _checkGeneration(generation);
       const code = 'ping_failed';
       throw PlatformException(
@@ -232,7 +238,7 @@ extension _ProxyProbes on DesktopProxy {
         details: error is PlatformException ? error.details : null,
       );
     } finally {
-      if (failed) _listener?.call(null);
+      if (reserved != null) _probePorts.remove(reserved);
     }
   }
 
@@ -296,6 +302,15 @@ extension _ProxyProbes on DesktopProxy {
         ? hints.map(InternetAddress.new).toList()
         : literal != null
         ? [literal]
+        // The VPN answers this app's lookups, with Fake DNS addresses that lead
+        // nowhere outside it; the core asks a real resolver instead.
+        : _state == 'connected' && _catalog?.settings.xrayTunEnabled == true
+        ? [
+            for (final address
+                in (await _native('lookupHost', {'host': host}))['addresses']!
+                    as List)
+              InternetAddress(address as String),
+          ]
         : await InternetAddress.lookup(
             host,
           ).timeout(const Duration(seconds: 5));

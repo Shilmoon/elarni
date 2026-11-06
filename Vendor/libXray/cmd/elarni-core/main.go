@@ -48,7 +48,8 @@ func dispatch(raw string) (result response) {
 			ReuseSession bool `json:"reuseSession"`
 		}
 		_ = json.Unmarshal(request.Payload, &options)
-		result.session = result.run && options.ReuseSession
+		// A failed runVPN may leave a live elevated owner for the next connect.
+		result.session = string(request.Method) == "runVPN" && options.ReuseSession
 		return
 	}
 	if data, err, handled := dataRequest(string(request.Method), request.Payload); handled {
@@ -130,7 +131,7 @@ func nativeResponse(data any, err error) string {
 	return string(encoded)
 }
 
-func serve(input io.Reader, output io.Writer, invoke func(string) response, stop func() error, running func() bool) int {
+func serve(input io.Reader, output io.Writer, invoke func(string) response, stop func() error, running, up func() bool) int {
 	logCursor := xray.LastLogSeq()
 	// EOF detection cannot wait for Invoke: startup can hold the core mutex.
 	requests := make(chan string, 1)
@@ -202,8 +203,8 @@ func serve(input io.Reader, output io.Writer, invoke func(string) response, stop
 		} `json:"payload"`
 	}
 	_ = json.Unmarshal([]byte(raw), &options)
-	if result.session {
-		return serveVPNSession(requests, closed, output, invoke, running, options.Payload.StreamMetrics, logCursor)
+	if result.session && (result.run || running()) {
+		return serveVPNSession(requests, closed, output, invoke, running, up, result.run, options.Payload.StreamMetrics, logCursor)
 	}
 	if result.hold {
 		return serveCatalogLease(requests, closed, output, invoke)
@@ -213,26 +214,28 @@ func serve(input io.Reader, output io.Writer, invoke func(string) response, stop
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var gate metricsGate
 	for {
 		select {
 		case <-closed:
 			return 0
-		case <-ticker.C:
+		case now := <-ticker.C:
 			if result.run && !running() {
 				return 1
 			}
 			var events []any
+			logs := logEvent(&logCursor)
 			if result.run && options.Payload.StreamMetrics {
 				metrics, err := platformMetrics()
 				if err != nil {
 					metrics, err = xray.GetRuntimeMetrics()
 				}
-				if err == nil {
+				if err == nil && gate.due(metrics, logs != nil, now) {
 					events = append(events, map[string]any{"event": "metrics", "data": metrics})
 				}
 			}
-			if event := logEvent(&logCursor); event != nil {
-				events = append(events, event)
+			if logs != nil {
+				events = append(events, logs)
 			}
 			for _, event := range events {
 				go func() { written <- json.NewEncoder(output).Encode(event) }()
@@ -251,10 +254,12 @@ func serve(input io.Reader, output io.Writer, invoke func(string) response, stop
 
 // A session only accepts tunnel start/stop operations. All other native methods
 // keep their one-shot lifetime, including probes with independent Xray globals.
-func serveVPNSession(requests <-chan string, closed <-chan struct{}, output io.Writer, invoke func(string) response, running func() bool, streamMetrics bool, logCursor int64) int {
-	active := true
+// Its elevated owner outlives a tunnel that failed or ended by itself, so the next
+// connect needs no new consent: running reports the owner, up its tunnel.
+func serveVPNSession(requests <-chan string, closed <-chan struct{}, output io.Writer, invoke func(string) response, running, up func() bool, active, streamMetrics bool, logCursor int64) int {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var gate metricsGate
 	write := func(value any) bool {
 		done := make(chan error, 1)
 		go func() { done <- json.NewEncoder(output).Encode(value) }()
@@ -296,28 +301,64 @@ func serveVPNSession(requests <-chan string, closed <-chan struct{}, output io.W
 				var reply struct {
 					Success bool `json:"success"`
 				}
-				if json.Unmarshal([]byte(result.text), &reply) != nil || !reply.Success {
+				if (json.Unmarshal([]byte(result.text), &reply) != nil || !reply.Success) && !running() {
 					return 1
 				}
 				active = result.run
 				streamMetrics = request.Payload.StreamMetrics
+				gate = metricsGate{} // a new tunnel reports at once
 			case <-closed:
 				return 0
 			}
-		case <-ticker.C:
+		case now := <-ticker.C:
 			if !running() {
 				return 1
 			}
+			logs := logEvent(&logCursor)
 			if active && streamMetrics {
-				if metrics, err := platformMetrics(); err == nil && !write(map[string]any{"event": "metrics", "data": metrics}) {
+				if metrics, err := platformMetrics(); err == nil && gate.due(metrics, logs != nil, now) &&
+					!write(map[string]any{"event": "metrics", "data": metrics}) {
 					return 1
 				}
 			}
-			if event := logEvent(&logCursor); active && event != nil && !write(event) {
+			if active && logs != nil && !write(logs) {
 				return 1
+			}
+			if active && !up() {
+				// The app reports the drop and may reconnect through this owner. The
+				// tunnel's last lines, logged before its loss, say why it ended.
+				active = false
+				if event := logEvent(&logCursor); event != nil && !write(event) {
+					return 1
+				}
+				if !write(map[string]any{"event": "stopped"}) {
+					return 1
+				}
 			}
 		}
 	}
+}
+
+// metricsHeartbeat is how long an unchanged metrics frame is held back. The desktop app counts metrics older
+// than 25 s as unavailable (runtimeMetrics in lib/desktop_proxy_commands.dart), so that bound must stay above
+// two heartbeats: the worker's gate and the session's gate each add up to one.
+const metricsHeartbeat = 10 * time.Second
+
+// metricsGate passes a frame when traffic or sessions changed, logs came, or a heartbeat passed. An idle tunnel then
+// wakes the supervisor, the session and the app every 10 s instead of every second; heap sizes ride along.
+type metricsGate struct {
+	last xray.RuntimeMetrics
+	at   time.Time
+	sent bool
+}
+
+func (gate *metricsGate) due(metrics xray.RuntimeMetrics, logs bool, now time.Time) bool {
+	metrics.HeapAllocBytes, metrics.HeapSysBytes = 0, 0
+	if gate.sent && !logs && metrics == gate.last && now.Sub(gate.at) < metricsHeartbeat {
+		return false
+	}
+	gate.last, gate.at, gate.sent = metrics, now, true
+	return true
 }
 
 // logEvent carries the lines recorded after the cursor and moves it past them.
@@ -381,7 +422,7 @@ func main() {
 	protocol := os.Stdout
 	os.Stdout = os.Stderr // Reserve the original stdout for protocol responses.
 	code := serve(os.Stdin, protocol, dispatch, func() error { platformStop(); return xray.StopXray() },
-		func() bool { return platformRunning() || xray.GetXrayState() })
+		func() bool { return platformRunning() || xray.GetXrayState() }, platformTunnelUp)
 	diagnosticsFlush()
 	os.Exit(code)
 }

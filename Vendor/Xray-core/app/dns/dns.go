@@ -35,6 +35,7 @@ type DNS struct {
 	matcherInfos           []*DomainMatcherInfo
 	checkSystem            bool
 	script                 *scriptEngine
+	stopRetiring           func()
 }
 
 // DomainMatcherInfo contains information attached to index returned by Server.domainMatcher.
@@ -207,13 +208,27 @@ func (s *DNS) Start() error {
 			return errors.New("failed to initialize DNS script").Base(err)
 		}
 	}
+	// Elarni: name server connections left on the old path after a network change stalled every query on them.
+	s.stopRetiring = onSocketPathChange(func(grace time.Duration) {
+		for _, client := range s.clients {
+			if server, ok := client.server.(interface{ retire(time.Duration) }); ok {
+				server.retire(grace)
+			}
+		}
+	})
 	return nil
 }
 
 // Close implements common.Closable.
 func (s *DNS) Close() error {
+	if s.stopRetiring != nil {
+		s.stopRetiring()
+	}
 	if s.script != nil {
 		s.script.close()
+	}
+	for _, client := range s.clients {
+		common.Close(client.server)
 	}
 	return nil
 }

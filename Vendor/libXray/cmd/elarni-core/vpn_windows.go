@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,6 +39,8 @@ var vpnBroker struct {
 	pipe    *os.File
 	process windows.Handle
 	closed  bool
+	up      bool   // the child's tunnel started and was neither stopped nor lost, in pipe order
+	assets  string // the revision of the child's last started tunnel, whose files it may still hold
 	metrics *xray.RuntimeMetrics
 	replies chan vpnReply
 }
@@ -59,8 +62,11 @@ type vpnHandshake struct {
 	Action            string                    `json:"action,omitempty"`
 	Config            string                    `json:"config"`
 	Assets            map[string]int            `json:"assets"`
+	AssetRevision     string                    `json:"assetRevision,omitempty"`
+	ReuseAssets       bool                      `json:"reuseAssets,omitempty"` // no files follow; the child uses the ones it holds
 	MemoryLimitMB     int                       `json:"memoryLimitMB"`
 	LogLevel          string                    `json:"logLevel,omitempty"`
+	StreamMetrics     bool                      `json:"streamMetrics,omitempty"`
 	TCPMaxConnections int                       `json:"tcpMaxConnections"`
 	UDPMaxConnections int                       `json:"udpMaxConnections"`
 	RoutePolicy       *share.WindowsRoutePolicy `json:"routePolicy"`
@@ -73,6 +79,7 @@ type vpnReply struct {
 	Error   string               `json:"error,omitempty"`
 	Metrics *xray.RuntimeMetrics `json:"metrics,omitempty"`
 	Logs    []xray.LogEntry      `json:"logs,omitempty"`
+	Lost    bool                 `json:"lost,omitempty"` // the tunnel ended without a stop; the child waits
 }
 
 // SHELLEXECUTEINFOW is pointer-aligned by Go on the supported Windows x64 build.
@@ -144,6 +151,12 @@ func readFrame(reader io.Reader, value any) error {
 }
 
 func runVPN(payload json.RawMessage) (any, error) {
+	// The broker lives for the whole session; its geodata copies are garbage now.
+	defer debug.FreeOSMemory()
+	return startVPN(payload)
+}
+
+func startVPN(payload json.RawMessage) (any, error) {
 	var request vpnRequest
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
@@ -160,9 +173,18 @@ func runVPN(payload json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, errors.New("assets_unavailable")
 	}
-	assets, err := readAssets(filepath.Join(root, "Elarni", "assets"), request.AssetRevision)
-	if err != nil {
-		return nil, err
+	root = filepath.Join(root, "Elarni", "assets")
+	// Revisions are immutable, so the live child's files from the last tunnel are this
+	// revision's: nothing is read, sent or checked again.
+	vpnBroker.Lock()
+	reuse := request.AssetRevision != "" && request.AssetRevision == vpnBroker.assets
+	vpnBroker.Unlock()
+	reuse = reuse && platformRunning()
+	var assets map[string][]byte
+	if !reuse {
+		if assets, err = readAssets(root, request.AssetRevision); err != nil {
+			return nil, err
+		}
 	}
 	if !platformRunning() {
 		if err := connectVPN(); err != nil {
@@ -172,31 +194,32 @@ func runVPN(payload json.RawMessage) (any, error) {
 	vpnBroker.Lock()
 	pipe, process, replies := vpnBroker.pipe, vpnBroker.process, vpnBroker.replies
 	vpnBroker.metrics = nil
+	vpnBroker.assets = "" // until the child confirms this start
 	vpnBroker.Unlock()
 	if pipe == nil {
 		return nil, errors.New("cancelled")
 	}
-	sizes := map[string]int{}
-	for name, data := range assets {
-		sizes[name] = len(data)
+	handshake := vpnHandshake{Version: 1, Config: request.Config, AssetRevision: request.AssetRevision, ReuseAssets: reuse, MemoryLimitMB: request.MemoryLimitMB,
+		LogLevel: request.LogLevel, StreamMetrics: request.StreamMetrics, TCPMaxConnections: request.TCPMaxConnections, UDPMaxConnections: request.UDPMaxConnections, RoutePolicy: request.RoutePolicy,
+		RecordDiagnostics: request.RecordDiagnostics}
+	reply, ok, err := sendVPNStart(pipe, replies, handshake, assets)
+	if err == nil && ok && reuse && reply.Error == errAssetsReleased.Error() {
+		// The child gave them back after its idle hold.
+		if assets, err = readAssets(root, request.AssetRevision); err != nil {
+			return nil, err
+		}
+		handshake.ReuseAssets = false
+		reply, ok, err = sendVPNStart(pipe, replies, handshake, assets)
 	}
-	if err = writeFrame(pipe, vpnHandshake{Version: 1, Config: request.Config, Assets: sizes, MemoryLimitMB: request.MemoryLimitMB,
-		LogLevel: request.LogLevel, TCPMaxConnections: request.TCPMaxConnections, UDPMaxConnections: request.UDPMaxConnections, RoutePolicy: request.RoutePolicy,
-		RecordDiagnostics: request.RecordDiagnostics}); err != nil {
+	if err != nil {
 		platformStop()
 		return nil, errors.New("vpn_failed")
 	}
-	for _, name := range []string{"geoip.dat", "geosite.dat"} {
-		if data := assets[name]; data != nil {
-			if _, err = io.Copy(pipe, bytes.NewReader(data)); err != nil {
-				platformStop()
-				return nil, errors.New("vpn_failed")
-			}
-		}
-	}
-	reply, ok := <-replies
 	if !ok || !reply.Ready {
-		platformStop()
+		// A live child failed only this tunnel and waits for the next connect.
+		if !ok || !platformRunning() {
+			platformStop()
+		}
 		if strings.HasPrefix(reply.Error, "vpn_") && len(reply.Error) < 96 {
 			return nil, errors.New(reply.Error)
 		}
@@ -206,7 +229,32 @@ func runVPN(payload json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, errors.New("vpn_failed")
 	}
+	vpnBroker.Lock()
+	if vpnBroker.pipe == pipe {
+		vpnBroker.assets = request.AssetRevision
+	}
+	vpnBroker.Unlock()
 	return map[string]any{"adapter": reply.Adapter, "helperPid": expected}, nil
+}
+
+// sendVPNStart writes a start and the geofiles that follow it, then waits for the child's answer.
+func sendVPNStart(pipe io.Writer, replies <-chan vpnReply, handshake vpnHandshake, assets map[string][]byte) (vpnReply, bool, error) {
+	handshake.Assets = map[string]int{}
+	for name, data := range assets {
+		handshake.Assets[name] = len(data)
+	}
+	if err := writeFrame(pipe, handshake); err != nil {
+		return vpnReply{}, false, err
+	}
+	for _, name := range []string{"geoip.dat", "geosite.dat"} {
+		if data := assets[name]; data != nil {
+			if _, err := io.Copy(pipe, bytes.NewReader(data)); err != nil {
+				return vpnReply{}, false, err
+			}
+		}
+	}
+	reply, ok := <-replies
+	return reply, ok, nil
 }
 
 func stopVPN() (any, error) {
@@ -222,6 +270,10 @@ func stopVPN() (any, error) {
 	}
 	select {
 	case reply, ok := <-replies:
+		if ok && reply.Ready && reply.Error != "" {
+			// Disconnected, but DNS stays blocked: the child retries the release each second.
+			return map[string]any{"warning": reply.Error}, nil
+		}
 		if ok && reply.Ready {
 			return map[string]any{}, nil
 		}
@@ -260,6 +312,8 @@ func connectVPN() error {
 		return errors.New("cancelled")
 	}
 	vpnBroker.pipe = pipe
+	vpnBroker.up = false
+	vpnBroker.assets = ""
 	vpnBroker.metrics = nil
 	vpnBroker.Unlock()
 	connected := make(chan error, 1)
@@ -329,14 +383,22 @@ func connectVPN() error {
 			if readFrame(pipe, &reply) != nil {
 				return
 			}
-			if reply.Metrics != nil {
-				vpnBroker.Lock()
-				if vpnBroker.pipe == pipe && !vpnBroker.closed {
+			// Metrics, log lines and a tunnel loss are events, not replies.
+			event := reply.Metrics != nil || len(reply.Logs) > 0 || reply.Lost
+			vpnBroker.Lock()
+			if vpnBroker.pipe == pipe && !vpnBroker.closed {
+				if reply.Metrics != nil || reply.Lost {
 					vpnBroker.metrics = reply.Metrics
-					xray.AppendLogs(reply.Logs)
 				}
-				vpnBroker.Unlock()
-			} else {
+				xray.AppendLogs(reply.Logs)
+				if reply.Lost {
+					vpnBroker.up = false
+				} else if !event {
+					vpnBroker.up = reply.Ready && reply.Adapter != ""
+				}
+			}
+			vpnBroker.Unlock()
+			if !event {
 				select {
 				case replies <- reply:
 				default:
@@ -355,6 +417,12 @@ func platformMetrics() (xray.RuntimeMetrics, error) {
 		return xray.RuntimeMetrics{}, errors.New("not_running")
 	}
 	return *vpnBroker.metrics, nil
+}
+
+func platformTunnelUp() bool {
+	vpnBroker.Lock()
+	defer vpnBroker.Unlock()
+	return !vpnBroker.closed && vpnBroker.up
 }
 
 func platformRunning() bool {
@@ -378,6 +446,7 @@ func platformStop() error {
 	pipe, process := vpnBroker.pipe, vpnBroker.process
 	vpnBroker.pipe = nil
 	vpnBroker.process = 0
+	vpnBroker.up = false
 	vpnBroker.metrics = nil
 	vpnBroker.Unlock()
 	if pipe != nil {
@@ -481,6 +550,10 @@ func vpnChild(name string, brokerPID uint32) int {
 			}
 		}
 	}()
+	var guard childGuard
+	defer guard.settle()
+	var held heldAssets
+	var heldUntil time.Time
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -492,16 +565,83 @@ func vpnChild(name string, brokerPID uint32) int {
 			if err != nil || state != uint32(windows.WAIT_TIMEOUT) {
 				return 1
 			}
+			guard.settle()
+			if held.files != nil && time.Now().After(heldUntil) {
+				// No reconnect came: give the files back, as the core's stop did its buffers.
+				held, filesystem.NewAssetReader = heldAssets{}, nil
+				debug.FreeOSMemory()
+			}
 		case command := <-commands:
+			// This elevated child outlives a tunnel that failed or ended by itself, so
+			// the broker's next connect needs no new consent.
+			reply, fatal := vpnReply{Ready: true}, false
+			if command.ReuseAssets && !held.holds(command.AssetRevision) {
+				// Given back after the hold, or never here: the broker sends the files.
+				if writeFrame(pipe, vpnReply{Error: errAssetsReleased.Error()}) != nil {
+					return 1
+				}
+				continue
+			}
 			if command.Action != "stop" {
-				if code := runVPNTunnel(pipe, parent, command, commands, closed); code != 0 {
-					return code
+				var code int
+				var ready bool
+				code, ready, fatal = runVPNTunnel(pipe, parent, command, commands, closed, &guard, &held)
+				heldUntil = time.Now().Add(childAssetHold)
+				// With Block traffic without VPN, only a requested stop lifts the guard. After
+				// any other end it blocks traffic, still claimed by this child, until the next
+				// tunnel replaces it, Repair VPN setup or a restart.
+				guard.keep = code != 0 && command.RoutePolicy != nil && command.RoutePolicy.BlockWithoutVPN
+				guard.settle()
+				switch {
+				case code == 0: // A requested stop is answered even when this child cannot be reused.
+				case ready && !fatal:
+					reply = vpnReply{Lost: true}
+				case fatal:
+					return 1
+				default:
+					continue // The failed start was answered.
 				}
 			}
-			if writeFrame(pipe, vpnReply{Ready: true}) != nil {
+			if reply.Ready && guard.failed {
+				reply.Error = "vpn_dns_release_failed"
+			}
+			if writeFrame(pipe, reply) != nil || fatal {
 				return 1
 			}
 		}
+	}
+}
+
+// childGuard is this child's claim on the machine-wide DNS guard (claimGuard) and
+// the state of its guard. The claim is held while the guard stays in place, so the
+// broker's next connect sees a live owner instead of a stale guard to clear elevated.
+type childGuard struct {
+	owner     windows.Handle
+	installed bool // this child's guard is in place
+	keep      bool // Block traffic without VPN keeps it after a tunnel that ended by itself
+	failed    bool // the last release failed; each settle retries it
+}
+
+func (g *childGuard) claim() error {
+	if g.owner != 0 {
+		return nil
+	}
+	owner, err := claimGuard()
+	if err == nil {
+		g.owner = owner
+	}
+	return err
+}
+
+// settle lifts a guard that is not kept and gives up the claim once none is left.
+func (g *childGuard) settle() {
+	if g.installed && !g.keep {
+		g.failed = releaseGuard() != nil // On failure the marker also stays, for Repair.
+		g.installed = g.failed
+	}
+	if !g.installed && g.owner != 0 {
+		windows.CloseHandle(g.owner)
+		g.owner = 0
 	}
 }
 
@@ -510,10 +650,47 @@ type vpnCommand struct {
 	assets map[string][]byte
 }
 
+// childAssetHold covers a reconnect's stop, config build and endpoint lookups; after a
+// disconnect the files go back once it passes.
+const childAssetHold = 30 * time.Second
+
+var errAssetsReleased = errors.New("vpn_assets_released")
+
+// heldAssets are the geodata of this child's last tunnel, verified when they came.
+type heldAssets struct {
+	revision string
+	files    map[string][]byte
+}
+
+func (held *heldAssets) holds(revision string) bool {
+	return held.files != nil && held.revision == revision
+}
+
+// load serves a start's geodata: sent files only once verified, and with ReuseAssets
+// the held files, never files the broker sends or names without this child's check.
+func (held *heldAssets) load(command vpnCommand) error {
+	if command.ReuseAssets {
+		if !held.holds(command.AssetRevision) {
+			return errAssetsReleased
+		}
+		useAssets(held.files)
+		return nil
+	}
+	*held = heldAssets{}
+	if err := installAssets(command.assets); err != nil {
+		return err
+	}
+	if command.AssetRevision != "" {
+		*held = heldAssets{revision: command.AssetRevision, files: command.assets}
+	}
+	return nil
+}
+
 func readVPNCommand(pipe io.Reader) (vpnCommand, error) {
 	request := vpnCommand{assets: map[string][]byte{}}
 	if readFrame(pipe, &request.vpnHandshake) != nil || request.Version != 1 || (request.Action != "" && request.Action != "stop") ||
-		len(request.Assets) > 2 || request.MemoryLimitMB < 0 || request.MemoryLimitMB > 4096 ||
+		len(request.Assets) > 2 || request.AssetRevision != "" && !assetRevision.MatchString(request.AssetRevision) ||
+		request.ReuseAssets && (request.AssetRevision == "" || len(request.Assets) > 0) || request.MemoryLimitMB < 0 || request.MemoryLimitMB > 4096 ||
 		request.TCPMaxConnections < 0 || request.TCPMaxConnections > 4096 || request.UDPMaxConnections < 0 || request.UDPMaxConnections > 4096 {
 		return request, errors.New("invalid_vpn_request")
 	}
@@ -551,7 +728,9 @@ func tunnelInterface(guid *windows.GUID) (*winipcfg.MibIfRow2, error) {
 	return luid.Interface()
 }
 
-func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, commands <-chan vpnCommand, closed <-chan struct{}) (code int) {
+// runVPNTunnel runs one tunnel. code 0 is a requested stop; ready says the tunnel
+// was up; fatal says this process cannot run another one.
+func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, commands <-chan vpnCommand, closed <-chan struct{}, guard *childGuard, held *heldAssets) (code int, ready, fatal bool) {
 	// Elevated by the same account, the child records into the user's own cache.
 	defer startRecording(request.RecordDiagnostics, userRecordingDirectory(), 0)()
 	recordRuntimeConfig(request.Config, request.MemoryLimitMB, request.TCPMaxConnections, request.UDPMaxConnections, true)
@@ -559,10 +738,14 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 		version := windows.RtlGetVersion()
 		flightrecorder.Record(flightrecorder.Event{Name: "windows_vpn_start", Values: map[string]int64{"parent_pid": int64(os.Getppid()), "windows_major": int64(version.MajorVersion), "windows_minor": int64(version.MinorVersion), "windows_build": int64(version.BuildNumber)}})
 		defer func() {
-			flightrecorder.Record(flightrecorder.Event{Name: "windows_vpn_stop", Values: map[string]int64{"exit_code": int64(code)}})
+			stop := map[string]int64{"exit_code": int64(code)}
+			if fatal {
+				stop["fatal"] = 1
+			}
+			flightrecorder.Record(flightrecorder.Event{Name: "windows_vpn_stop", Values: stop})
 		}()
 	}
-	fail := func(stage string, err error) int {
+	fail := func(stage string, err error) (int, bool, bool) {
 		code := "vpn_" + stage + "_failed"
 		var native syscall.Errno
 		if errors.As(err, &native) {
@@ -572,9 +755,9 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 			flightrecorder.Record(flightrecorder.Event{Name: "windows_vpn_failure", Code: code, Values: map[string]int64{"native_error": int64(native)}})
 		}
 		writeFrame(pipe, map[string]any{"ready": false, "error": code})
-		return 1
+		return 1, false, false
 	}
-	if installAssets(request.assets) != nil {
+	if held.load(request) != nil {
 		return fail("assets", nil)
 	}
 	filesystem.NewFileReader = func(string) (io.ReadCloser, error) { return nil, errors.New("file_access_denied") }
@@ -591,19 +774,18 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 	config, err := share.WindowsTunnelConfig([]byte(request.Config), adapter, request.RoutePolicy)
 	if err != nil {
 		writeFrame(pipe, map[string]any{"ready": false, "error": "invalid_vpn_config"})
-		return 1
+		return 1, false, false
 	}
 	// Claimed before any route or adapter exists, so another user's live helper
-	// keeps the machine untouched; held until the deferred DNS release has run.
-	owner, err := claimGuard()
+	// keeps the machine untouched; held until the guard has been released.
+	err = guard.claim()
 	if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
 		writeFrame(pipe, map[string]any{"ready": false, "error": "vpn_guard_busy"})
-		return 1
+		return 1, false, false
 	}
 	if err != nil {
 		return fail("dns", err)
 	}
-	defer windows.CloseHandle(owner)
 	if err = bindPhysicalRoutes(); err != nil {
 		return fail("routes", err)
 	}
@@ -616,7 +798,7 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 	}
 	if request.LogLevel != "" && xray.SetLogLevel(request.LogLevel) != nil {
 		writeFrame(pipe, map[string]any{"ready": false, "error": "invalid_vpn_config"})
-		return 1
+		return 1, false, false
 	}
 	logCursor := xray.LastLogSeq()
 	started := make(chan error, 1)
@@ -626,15 +808,8 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 	} else {
 		xray.SetMemoryLimit(math.MaxInt64)
 	}
-	// Deferred before the core's stop so DNS stays blocked until the tunnel is gone.
-	// With Block traffic without VPN, only a requested stop lifts it: after any other
-	// exit the guard blocks traffic until the next connect or Repair VPN setup.
-	var releaseDNS func()
-	defer func() {
-		if releaseDNS != nil && (code == 0 || request.RoutePolicy == nil || !request.RoutePolicy.BlockWithoutVPN) {
-			releaseDNS()
-		}
-	}()
+	// The caller lifts the DNS guard after this returns, so DNS stays blocked until
+	// the tunnel is gone.
 	go func() { started <- xray.RunXrayFromJSON(string(config)) }()
 	defer func() {
 		done := make(chan error, 1)
@@ -642,24 +817,26 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 		select {
 		case err := <-done:
 			if err != nil {
-				code = 1
+				fatal = true
 			} else {
-				// The elevated owner survives disconnect; raw geodata need not.
+				// The elevated owner survives disconnect; only heldAssets keeps the raw geodata.
 				filesystem.NewAssetReader = nil
 			}
-		case <-time.After(2 * time.Second):
-			code = 1 // Never reuse globals while a previous runtime is stopping.
+		// Below the broker's 8 s stop wait. Hundreds of flows and the Wintun close can
+		// pass 2 s, which then ended the elevated owner on a server switch.
+		case <-time.After(6 * time.Second):
+			fatal = true // Never reuse globals while a previous runtime is stopping.
 		}
 	}()
 	select {
 	case err = <-started:
 	case <-closed:
-		return 1
+		return 1, false, true
 	case <-time.After(30 * time.Second):
 		if flightrecorder.Enabled() {
 			flightrecorder.Record(flightrecorder.Event{Name: "windows_vpn_failure", Code: "startup_timeout"})
 		}
-		return 1
+		return 1, false, true
 	}
 	if err != nil {
 		return fail("core", err)
@@ -672,45 +849,56 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 	if err != nil {
 		return fail("routes", err)
 	}
-	guard, err := protectDNS(uint64(iface.InterfaceLUID), protected)
-	if err != nil {
+	if err := protectDNS(uint64(iface.InterfaceLUID), protected); err != nil {
 		return fail("dns", err)
 	}
-	releaseDNS = guard
+	// It also replaced any guard a lost tunnel kept.
+	guard.installed, guard.keep, guard.failed = true, false, false
 	if flightrecorder.Enabled() {
 		flightrecorder.Record(flightrecorder.Event{Name: "windows_vpn_ready", Values: map[string]int64{"interface_index": int64(iface.InterfaceIndex)}})
 	}
 	if writeFrame(pipe, map[string]any{"ready": true, "adapter": iface.Alias()}) != nil {
-		return 1
+		return 1, true, true
 	}
+	sleep := newResumeClock(windowsSuspended)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var gate metricsGate
 	for {
 		select {
 		case <-closed:
-			return 1
+			return 1, true, true
 		case command := <-commands:
 			if command.Action != "stop" {
-				return 1
+				return 1, true, true
 			}
-			return 0
-		case <-ticker.C:
-			state, err := windows.WaitForSingleObject(parent, 0)
-			if err != nil || state != uint32(windows.WAIT_TIMEOUT) || !xray.GetXrayState() {
-				return 1
+			return 0, true, false
+		case now := <-ticker.C:
+			if state, err := windows.WaitForSingleObject(parent, 0); err != nil || state != uint32(windows.WAIT_TIMEOUT) {
+				return 1, true, true
+			}
+			if !xray.GetXrayState() {
+				return 1, true, false
 			}
 			// A disabled or removed adapter carries nothing while the core keeps running.
 			if current, err := iface.InterfaceLUID.Interface(); err != nil || current.OperStatus != winipcfg.IfOperStatusUp {
-				return 1
+				return 1, true, false
 			}
-			if metrics, err := xray.GetRuntimeMetrics(); err == nil {
-				logs := xray.ReadLogs(logCursor).Entries
-				if len(logs) > 0 {
-					logCursor = logs[len(logs)-1].Seq
+			if sleep.resumed() {
+				physicalNetwork.resume()
+			}
+			var reply vpnReply
+			if logs := xray.ReadLogs(logCursor).Entries; len(logs) > 0 {
+				logCursor = logs[len(logs)-1].Seq
+				reply.Logs = logs
+			}
+			if request.StreamMetrics {
+				if metrics, err := xray.GetRuntimeMetrics(); err == nil && gate.due(metrics, reply.Logs != nil, now) {
+					reply.Metrics = &metrics
 				}
-				if writeFrame(pipe, vpnReply{Metrics: &metrics, Logs: logs}) != nil {
-					return 1
-				}
+			}
+			if (reply.Metrics != nil || reply.Logs != nil) && writeFrame(pipe, reply) != nil {
+				return 1, true, true
 			}
 		}
 	}

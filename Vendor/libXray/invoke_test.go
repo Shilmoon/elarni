@@ -13,6 +13,7 @@ import (
 
 	"github.com/xtls/libxray/xray"
 	"github.com/xtls/xray-core/common/errors"
+	"github.com/xtls/xray-core/transport/internet"
 )
 
 // A single successful probe cannot catch serial admission or one temporary
@@ -360,5 +361,16 @@ func TestLogsThroughInvoke(t *testing.T) {
 	if !ok || data["level"] != "info" || len(entries) != 1 ||
 		!strings.HasSuffix(entries[0].(map[string]any)["text"].(string), "reached [ip]") {
 		t.Fatalf("readLogs: %v %v", ok, data)
+	}
+}
+
+// The Apple path monitor reports a move of the default path through Invoke, as the
+// desktop helpers do in process, so long-lived connections can reopen on it.
+func TestSocketPathChangedThroughInvoke(t *testing.T) {
+	signals := 0
+	defer internet.OnSocketPathChange(func() { signals++ })()
+	reply := Invoke(`{"apiVersion":1,"method":"socketPathChanged"}`)
+	if reply != `{"success":true,"data":{},"error":""}` || signals != 1 {
+		t.Fatalf("reply %s, %d signals", reply, signals)
 	}
 }

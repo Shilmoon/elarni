@@ -533,7 +533,8 @@ void main() {
             throw StateError('synthetic fetch failure');
         await refreshFromHome();
         expect(find.text(failed), findsOneWidget);
-        // A scheduled download that succeeds later clears the mark.
+        // A scheduled download that succeeds later clears the mark. Windows
+        // and Linux announce every catalog change; macOS polls for it.
         control.snapshot = SubscriptionSnapshot(
           selectedNodeId: 'second',
           subscriptions: [
@@ -544,6 +545,7 @@ void main() {
             }, fetched: 1000),
           ],
         );
+        if (windows || linux) control.importListener!(null);
         await tester.pump(const Duration(seconds: 5));
         await tester.pumpAndSettle();
         expect(find.text(failed), findsNothing);

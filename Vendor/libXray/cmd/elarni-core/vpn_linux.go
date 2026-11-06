@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/vishvananda/netlink"
 	"github.com/xtls/libxray/geo"
 	"github.com/xtls/libxray/share"
 	"github.com/xtls/libxray/xray"
@@ -30,6 +32,7 @@ import (
 	"github.com/xtls/xray-core/common/platform/filesystem"
 	"github.com/xtls/xray-core/proxy/tun"
 	"github.com/xtls/xray-core/transport/internet"
+	"golang.org/x/sys/unix"
 )
 
 type vpnRequest struct {
@@ -86,13 +89,15 @@ type linuxReply struct {
 	PID     int                  `json:"helperPid,omitempty"`
 	Metrics *xray.RuntimeMetrics `json:"metrics,omitempty"`
 	Logs    []xray.LogEntry      `json:"logs,omitempty"`
+	Lost    bool                 `json:"lost,omitempty"` // the tunnel ended without a stop; its supervisor waits
 }
 type linuxChild struct {
 	command *exec.Cmd
 	input   io.WriteCloser
 	replies chan linuxReply
 	done    chan struct{}
-	err     error // published by closing done
+	err     error       // published by closing done
+	up      atomic.Bool // a started tunnel that was neither stopped nor lost, in pipe order
 }
 
 var linuxBroker struct {
@@ -181,7 +186,7 @@ func validLinuxRequest(request vpnRequest) error {
 	return err
 }
 
-func startLinuxChild(command *exec.Cmd, metrics func(linuxReply)) (*linuxChild, error) {
+func startLinuxChild(command *exec.Cmd, events func(linuxReply)) (*linuxChild, error) {
 	input, err := command.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -212,12 +217,17 @@ func startLinuxChild(command *exec.Cmd, metrics func(linuxReply)) (*linuxChild, 
 			if linuxReadFrame(output, &reply) != nil {
 				break
 			}
-			if reply.Metrics != nil {
-				if metrics != nil {
-					metrics(reply)
+			// Metrics, log lines and a tunnel loss are events, not replies.
+			if reply.Metrics != nil || len(reply.Logs) > 0 || reply.Lost {
+				if reply.Lost {
+					child.up.Store(false)
+				}
+				if events != nil {
+					events(reply)
 				}
 				continue
 			}
+			child.up.Store(reply.Ready && reply.Adapter != "")
 			select {
 			case child.replies <- reply:
 			default:
@@ -292,6 +302,12 @@ func (child *linuxChild) request(command linuxCommand, timeout time.Duration) (l
 	}
 }
 func runVPN(payload json.RawMessage) (any, error) {
+	// The broker lives for the whole session; its geodata copies are garbage now.
+	defer debug.FreeOSMemory()
+	return startVPN(payload)
+}
+
+func startVPN(payload json.RawMessage) (any, error) {
 	var request vpnRequest
 	if decodeLinuxJSON(payload, &request) != nil {
 		return nil, errors.New("invalid_vpn_request")
@@ -335,14 +351,16 @@ func runVPN(payload json.RawMessage) (any, error) {
 	if child == nil && command == nil {
 		// The running child exited between the locks; start over as idle.
 		linuxBroker.Unlock()
-		return runVPN(payload)
+		return startVPN(payload)
 	}
 	if child == nil {
 		child, err = startLinuxChild(command, func(reply linuxReply) {
 			linuxBroker.Lock()
 			defer linuxBroker.Unlock()
 			if linuxBroker.child != nil && !linuxBroker.closed {
-				linuxBroker.metrics = reply.Metrics
+				if reply.Metrics != nil || reply.Lost {
+					linuxBroker.metrics = reply.Metrics
+				}
 				xray.AppendLogs(reply.Logs)
 			}
 		})
@@ -356,6 +374,10 @@ func runVPN(payload json.RawMessage) (any, error) {
 	linuxBroker.Unlock()
 	reply, err := child.request(linuxCommand{Action: "start", Request: request, assets: assets}, 110*time.Second)
 	if err != nil {
+		// A supervisor that answered failed only this tunnel and waits for the next connect.
+		if reply.Error != "" && platformRunning() {
+			return nil, err
+		}
 		_ = platformStop()
 		var exit *exec.ExitError
 		if !platformRunning() && child.exitedWith(&exit) && (exit.ExitCode() == 126 || exit.ExitCode() == 127) {
@@ -420,6 +442,11 @@ func platformRunning() bool {
 	default:
 		return true
 	}
+}
+func platformTunnelUp() bool {
+	linuxBroker.Lock()
+	defer linuxBroker.Unlock()
+	return !linuxBroker.closed && linuxBroker.child != nil && linuxBroker.child.up.Load()
 }
 func platformStop() error {
 	linuxBroker.Lock()
@@ -508,7 +535,16 @@ func pinnedLinuxExecutable() (*os.File, string, error) {
 	return file, "/proc/" + strconv.Itoa(os.Getpid()) + "/fd/" + strconv.Itoa(int(file.Fd())), nil
 }
 
-func linuxSupervisor(ctx context.Context, input io.Reader, output io.Writer) (code int) {
+// linuxTunnelHost is what the supervisor does to the machine; tests replace it.
+type linuxTunnelHost struct {
+	lock    func() (*os.File, error)
+	reserve func() (linuxNetwork, error) // reaps dead supervisors' networks and records the new one
+	cleanup func(linuxNetwork) error
+	forget  func(linuxNetwork)
+	worker  func(events func(linuxReply)) (*linuxChild, error)
+}
+
+func linuxSupervisor(ctx context.Context, input io.Reader, output io.Writer) int {
 	uid := os.Getuid()
 	if value := os.Getenv("PKEXEC_UID"); value != "" {
 		parsed, err := strconv.Atoi(value)
@@ -518,41 +554,12 @@ func linuxSupervisor(ctx context.Context, input io.Reader, output io.Writer) (co
 		uid = parsed
 	}
 	commands, closed := linuxCommands(ctx, input)
-	var worker *linuxChild
-	var network linuxNetwork
-	var active *os.File
 	var stableMark atomic.Uint32
-	// With Block traffic without VPN, only a requested stop removes the guard. After
-	// any other exit it blocks traffic until the next connect reaps the network.
-	var block bool
 	var writer sync.Mutex
 	send := func(reply linuxReply) error {
 		writer.Lock()
 		defer writer.Unlock()
 		return linuxWriteFrame(output, reply)
-	}
-	cleanup := func() error {
-		var failures []error
-		if network.Name != "" {
-			failures = append(failures, network.cleanup())
-		}
-		if worker != nil {
-			failures = append(failures, worker.stop())
-			worker = nil
-		}
-		if network.Name != "" {
-			err := network.cleanup()
-			if err == nil {
-				network.forget(linuxNetworkRecords)
-			}
-			failures = append(failures, err)
-			network = linuxNetwork{}
-		}
-		if active != nil {
-			active.Close()
-			active = nil
-		}
-		return errors.Join(failures...)
 	}
 	self, executable, err := pinnedLinuxExecutable()
 	if err != nil {
@@ -563,60 +570,14 @@ func linuxSupervisor(ctx context.Context, input io.Reader, output io.Writer) (co
 	if err != nil {
 		return 1
 	}
-	defer func() {
-		if block && network.Name != "" {
-			if worker != nil {
-				_ = worker.stop()
-			}
-			if active != nil {
-				active.Close()
-			}
-		} else if cleanup() != nil {
-			code = 1
-		}
-		probeServer()
-	}()
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return 0
-		case <-closed:
-			return 0
-		case <-ticker.C:
-			if worker != nil {
-				select {
-				case <-worker.done:
-					return 1
-				default:
-				}
-			}
-		case command := <-commands:
-			if command.Action == "stop" {
-				block = false
-				if cleanup() != nil || send(linuxReply{Ready: true, PID: os.Getpid()}) != nil {
-					return 1
-				}
-				continue
-			}
-			if worker != nil || validLinuxRequest(command.Request) != nil {
-				_ = send(linuxReply{Error: "invalid_vpn_request"})
-				return 1
-			}
-			if active, err = acquireLinuxVPNLock(linuxVPNLock); err != nil {
-				_ = send(linuxReply{Error: err.Error()})
-				return 1
-			}
+	defer probeServer()
+	return superviseLinuxTunnels(ctx, commands, closed, send, uid, linuxTunnelHost{
+		lock: func() (*os.File, error) { return acquireLinuxVPNLock(linuxVPNLock) },
+		reserve: func() (linuxNetwork, error) {
 			reapLinuxNetworks(linuxNetworkRecords, linuxNetwork.cleanup)
-			network, err = reserveLinuxNetwork()
+			network, err := reserveLinuxNetwork()
 			if err != nil {
-				code := "vpn_resources_failed"
-				if errors.Is(err, errLinuxFirewallUnavailable) {
-					code = err.Error()
-				}
-				_ = send(linuxReply{Error: code})
-				return 1
+				return network, err
 			}
 			if stableMark.Load() == 0 {
 				stableMark.Store(network.Mark)
@@ -626,38 +587,170 @@ func linuxSupervisor(ctx context.Context, input io.Reader, output io.Writer) (co
 			// Without a record only a reboot reaps the table if both processes are killed.
 			// It is written with the mark the policy rules use, or reaping misses them.
 			_ = network.record(linuxNetworkRecords)
-			command.Network = network
-			block = command.Request.RoutePolicy != nil && command.Request.RoutePolicy.BlockWithoutVPN
-			command.Owner = uid
-			worker, err = startLinuxChild(exec.Command(executable, "--linux-worker"), func(reply linuxReply) { _ = send(reply) })
-			if err != nil {
-				_ = send(linuxReply{Error: "vpn_worker_failed"})
+			return network, nil
+		},
+		cleanup: linuxNetwork.cleanup,
+		forget:  func(network linuxNetwork) { network.forget(linuxNetworkRecords) },
+		worker: func(events func(linuxReply)) (*linuxChild, error) {
+			return startLinuxChild(exec.Command(executable, "--linux-worker"), events)
+		},
+	})
+}
+
+// superviseLinuxTunnels runs one tunnel at a time for the broker. A tunnel that fails
+// to start or ends by itself is reported and this root process waits for the next
+// connect, which then needs no new consent. It exits on a stop it cannot clean up,
+// on a protocol violation and when its owner goes.
+func superviseLinuxTunnels(ctx context.Context, commands <-chan linuxCommand, closed <-chan struct{}, send func(linuxReply) error, owner int, host linuxTunnelHost) (code int) {
+	var worker *linuxChild
+	var network linuxNetwork
+	var active *os.File
+	// With Block traffic without VPN, only a requested stop removes the network. After
+	// any other end it stays, with the tunnel lock, and blocks traffic until the next
+	// tunnel replaces it or the next connect after this process exits reaps it.
+	var block bool
+	// release removes interception before the worker's DNS listener and tunnel, then the
+	// rest. A failure keeps the network recorded for another attempt. A worker that had to
+	// be killed leaves no state in this process.
+	release := func() error {
+		if worker != nil {
+			if network.Name != "" {
+				_ = host.cleanup(network)
+			}
+			_ = worker.stop()
+			worker = nil
+		}
+		if network.Name == "" {
+			return nil
+		}
+		if err := host.cleanup(network); err != nil {
+			return err
+		}
+		host.forget(network)
+		network = linuxNetwork{}
+		return nil
+	}
+	// ended follows a tunnel that ended without a requested stop.
+	ended := func() error {
+		if !block || network.Name == "" {
+			return release()
+		}
+		if worker != nil {
+			_ = worker.stop()
+			worker = nil
+		}
+		return nil
+	}
+	unlock := func() {
+		if active != nil && network.Name == "" {
+			active.Close()
+			active = nil
+		}
+	}
+	defer func() {
+		if ended() != nil {
+			code = 1
+		}
+		if active != nil {
+			active.Close()
+		}
+	}()
+	workerDone := func() <-chan struct{} {
+		if worker == nil {
+			return nil
+		}
+		return worker.done
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return 0
+		case <-closed:
+			return 0
+		case <-workerDone():
+			// Its core stopped or it was killed. A cleanup failure exits, so the next
+			// connect sees the leftover guard and offers to clear it.
+			if ended() != nil {
 				return 1
 			}
-			started := make(chan struct {
-				reply linuxReply
-				err   error
-			}, 1)
-			go func(child *linuxChild, command linuxCommand) {
-				reply, err := child.request(command, 40*time.Second)
-				started <- struct {
-					reply linuxReply
-					err   error
-				}{reply, err}
-			}(worker, command)
-			select {
-			case <-ctx.Done():
-				return 0
-			case <-closed:
-				return 0
-			case result := <-started:
-				if result.err != nil {
-					_ = send(linuxReply{Error: "vpn_start_failed"})
+			unlock()
+			if send(linuxReply{Lost: true}) != nil {
+				return 1
+			}
+		case command := <-commands:
+			if command.Action == "stop" {
+				// An idle stop keeps a lost tunnel's kill switch, like the Windows helper:
+				// only the next tunnel, Repair or a reboot lifts it.
+				if worker != nil {
+					block = false
+					if release() != nil {
+						return 1
+					}
+					unlock()
+				}
+				if send(linuxReply{Ready: true, PID: os.Getpid()}) != nil {
 					return 1
 				}
-				if send(linuxReply{Ready: true, Adapter: network.Name, PID: os.Getpid()}) != nil {
+				continue
+			}
+			if worker != nil || validLinuxRequest(command.Request) != nil {
+				_ = send(linuxReply{Error: "invalid_vpn_request"})
+				return 1
+			}
+			// A kill switch kept from a lost tunnel goes first: two tunnels' policy rules
+			// would each capture the other's traffic.
+			if release() != nil {
+				return 1
+			}
+			reply := linuxReply{Error: "vpn_start_failed"}
+			var err error
+			if active == nil {
+				active, err = host.lock()
+			}
+			if err != nil {
+				reply.Error = err.Error()
+			} else if network, err = host.reserve(); err != nil {
+				network = linuxNetwork{}
+				reply.Error = "vpn_resources_failed"
+				if errors.Is(err, errLinuxFirewallUnavailable) {
+					reply.Error = err.Error()
+				}
+			} else {
+				command.Network = network
+				block = command.Request.RoutePolicy != nil && command.Request.RoutePolicy.BlockWithoutVPN
+				command.Owner = owner
+				if worker, err = host.worker(func(reply linuxReply) { _ = send(reply) }); err != nil {
+					worker = nil
+					reply.Error = "vpn_worker_failed"
+				} else {
+					started := make(chan error, 1)
+					go func(child *linuxChild, command linuxCommand) {
+						_, err := child.request(command, 40*time.Second)
+						started <- err
+					}(worker, command)
+					select {
+					case <-ctx.Done():
+						return 0
+					case <-closed:
+						return 0
+					case err := <-started:
+						if err == nil {
+							reply = linuxReply{Ready: true, Adapter: network.Name, PID: os.Getpid()}
+						}
+					}
+				}
+			}
+			// This long-lived root process's copy of the geodata is garbage now.
+			command.assets = nil
+			debug.FreeOSMemory()
+			if !reply.Ready {
+				if ended() != nil {
 					return 1
 				}
+				unlock()
+			}
+			if send(reply) != nil {
+				return 1
 			}
 		}
 	}
@@ -736,11 +829,34 @@ func linuxWorker(ctx context.Context, input io.Reader, output io.Writer) (code i
 	if err := network.install(command.Request.RoutePolicy); err != nil {
 		return 1
 	}
+	// Marked sockets follow the kernel's physical route without re-binding, but pooled
+	// connections must learn that it moved, or that the system slept, and verify themselves.
+	wake := make(chan struct{}, 1)
+	var resumed atomic.Bool
+	notify := func() {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
+	routes, unsubscribe := make(chan netlink.RouteUpdate, 16), make(chan struct{})
+	defer close(unsubscribe)
+	if netlink.RouteSubscribe(routes, unsubscribe) == nil {
+		go func() {
+			for range routes {
+				notify()
+			}
+		}()
+	}
+	physical := func() [2]linuxRoute { return linuxPhysicalPath(network.Mark) }
+	go watchSocketPath(wake, &resumed, physical(), time.Second, physical, internet.SocketPathChanged)
+	sleep := newResumeClock(linuxSuspended)
 	if linuxWriteFrame(output, linuxReply{Ready: true}) != nil {
 		return 1
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var gate metricsGate
 	for {
 		select {
 		case <-ctx.Done():
@@ -749,19 +865,53 @@ func linuxWorker(ctx context.Context, input io.Reader, output io.Writer) (code i
 			return 0
 		case <-commands:
 			return 0
-		case <-ticker.C:
+		case now := <-ticker.C:
 			if !xray.GetXrayState() {
 				return 1
 			}
-			if metrics, err := xray.GetRuntimeMetrics(); err == nil {
-				logs := xray.ReadLogs(logCursor).Entries
-				if len(logs) > 0 {
-					logCursor = logs[len(logs)-1].Seq
+			if sleep.resumed() {
+				resumed.Store(true)
+				notify()
+			}
+			var reply linuxReply
+			if logs := xray.ReadLogs(logCursor).Entries; len(logs) > 0 {
+				logCursor = logs[len(logs)-1].Seq
+				reply.Logs = logs
+			}
+			if command.Request.StreamMetrics {
+				if metrics, err := xray.GetRuntimeMetrics(); err == nil && gate.due(metrics, reply.Logs != nil, now) {
+					reply.Metrics = &metrics
 				}
-				if linuxWriteFrame(output, linuxReply{Metrics: &metrics, Logs: logs}) != nil {
-					return 1
-				}
+			}
+			if (reply.Metrics != nil || reply.Logs != nil) && linuxWriteFrame(output, reply) != nil {
+				return 1
 			}
 		}
 	}
+}
+
+type linuxRoute struct {
+	link            int
+	gateway, source string
+}
+
+// linuxPhysicalPath is the route the kernel picks for marked sockets, per family. The
+// lookup (ip route get ... mark) sends nothing; documentation addresses follow the default.
+func linuxPhysicalPath(mark uint32) (path [2]linuxRoute) {
+	for i, destination := range []string{"192.0.2.1", "2001:db8::1"} {
+		if routes, err := netlink.RouteGetWithOptions(net.ParseIP(destination), &netlink.RouteGetOptions{Mark: mark}); err == nil && len(routes) > 0 {
+			path[i] = linuxRoute{routes[0].LinkIndex, routes[0].Gw.String(), routes[0].Src.String()}
+		}
+	}
+	return path
+}
+
+// linuxSuspended is the time this boot spent suspended: CLOCK_MONOTONIC stops then,
+// CLOCK_BOOTTIME does not.
+func linuxSuspended() time.Duration {
+	var boot, monotonic unix.Timespec
+	if unix.ClockGettime(unix.CLOCK_BOOTTIME, &boot) != nil || unix.ClockGettime(unix.CLOCK_MONOTONIC, &monotonic) != nil {
+		return 0
+	}
+	return time.Duration(boot.Nano() - monotonic.Nano())
 }

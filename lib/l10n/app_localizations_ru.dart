@@ -581,6 +581,30 @@ class AppLocalizationsRu extends AppLocalizations {
   String get systemWideVpn => 'Системный VPN';
 
   @override
+  String get connectionMode => 'Режим подключения';
+
+  @override
+  String get connectionModeHelp =>
+      'Системный VPN подключает все приложения; разрешение администратора запрашивается при первом подключении VPN в этом сеансе приложения. Системный прокси направляет настройку прокси этого компьютера в Elarni без разрешения администратора; его используют только приложения, которые её учитывают, например браузеры. Только локальный прокси открывает порты ниже для приложений, которые вы настроите сами.';
+
+  @override
+  String get connectionModeServiceHelp =>
+      'Системный VPN подключает все приложения; разрешение администратора запрашивается при первом подключении VPN в этом сеансе приложения, если не включено «Подключаться без разрешения администратора». Системный прокси направляет настройку прокси этого компьютера в Elarni без разрешения администратора; его используют только приложения, которые её учитывают, например браузеры. Только локальный прокси открывает порты ниже для приложений, которые вы настроите сами.';
+
+  @override
+  String get systemProxy => 'Системный прокси';
+
+  @override
+  String get localProxyOnly => 'Только локальный прокси';
+
+  @override
+  String get systemProxyMode => 'Режим системного прокси';
+
+  @override
+  String get systemProxyListeners =>
+      'В режиме системного прокси приложения на этом компьютере используют HTTP-порт без входа.';
+
+  @override
   String get updateDraft => 'Обновить черновик';
 
   @override
@@ -1114,6 +1138,10 @@ class AppLocalizationsRu extends AppLocalizations {
       'Пропущено: транспорт этого сервера не поддерживает прямой TCP. Используйте проверку через прокси.';
 
   @override
+  String get pingNeedsDisconnect =>
+      'Пропущено: при подключении эта проверка не доходит до сервера. Отключитесь, чтобы проверить его.';
+
+  @override
   String get routeTableUnreadable =>
       'Не удалось прочитать текущую таблицу маршрутов.';
 
@@ -1164,6 +1192,11 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String pingSkippedIncompatible(int count) {
     return 'Пропущено $count: не подходят для этого способа проверки.';
+  }
+
+  @override
+  String pingSkippedWhileConnected(int count) {
+    return 'Пропущено $count: отключитесь, чтобы проверить их.';
   }
 
   @override
@@ -1467,14 +1500,6 @@ class AppLocalizationsRu extends AppLocalizations {
       'Подключаться без разрешения администратора';
 
   @override
-  String get systemWideVpnHelp =>
-      'Подключает все приложения. Разрешение администратора запрашивается при первом подключении VPN в этом сеансе приложения. Выключите, чтобы использовать только локальный прокси.';
-
-  @override
-  String get systemWideVpnServiceHelp =>
-      'Подключает все приложения. Разрешение администратора запрашивается при первом подключении VPN в этом сеансе приложения, если не включено «Подключаться без разрешения администратора». Выключите, чтобы использовать только локальный прокси.';
-
-  @override
   String get accentColor => 'Цвет акцента';
 
   @override
@@ -1588,10 +1613,6 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get onDemandMacHelp =>
       '«По требованию» управляет автоматическим подключением, когда сеть снова доступна.';
-
-  @override
-  String get onDemandDesktopHelp =>
-      '«По требованию» переподключает после пробуждения или обрыва сети, пока вы не нажмёте «Стоп».';
 
   @override
   String get onDemand => 'По требованию';

@@ -40,6 +40,10 @@ final class TunnelMethodChannel {
   var physicalPaths: [Int: (signature: String, available: Bool,
                                    status: String, unsatisfiedReason: String)] = [:]
   var observedProviderStatus: NEVPNStatus?
+  // The connection whose success the state poll last recorded: node, provider instance, generation and plan digest.
+  private var recordedSession: String?
+  // The provider instance whose version the app last compared with its own.
+  private var versionCheckedInstance: String?
   var automationNow: () -> Double = { ProcessInfo.processInfo.systemUptime }
   var automationSleep: (Double) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }
   var automationJitter: () -> Double = { Double.random(in: -1...1) }
@@ -541,6 +545,8 @@ final class TunnelMethodChannel {
           result(Self.flutterError("icmp_failed_restored"))
         } catch RunnerTunnelError.icmpRestoreFailed {
           result(Self.flutterError("icmp_restore_failed"))
+        } catch RunnerTunnelError.disconnectToTest {
+          result(FlutterError(code: "disconnect_to_test", message: "While connected, this test can't reach the server. Disconnect to test it.", details: nil))
         } catch RunnerTunnelError.unsupportedPingMethod {
           result(FlutterError(code: "unsupported_ping_method", message: "Direct TCP is not supported by this endpoint's transport. Use Proxy testing.", details: nil))
         } catch RunnerTunnelError.listenerUnavailable(let port) {
@@ -766,18 +772,41 @@ final class TunnelMethodChannel {
           let object = try JSONSerialization.jsonObject(with: response) as? [String: Any] else {
       return [:]
     }
+    // A stale build that registered its own extension can run instead of this app's.
+    if let instance = object["instanceID"] as? String, instance != versionCheckedInstance {
+      versionCheckedInstance = instance
+      let running = object["extensionVersion"] as? String ?? "?"
+      if let own = Self.bundleVersion, running != own {
+        channel.invokeMethod("subscriptionsChanged", arguments: ["error": String(localized:
+          "The VPN extension that is running (\(running)) is not this app's (\(own)). Delete other copies of Elarni, then disconnect and connect again.")])
+      }
+    }
     if object["state"] as? String == "connected", commands.intent == .connected,
        let instance = object["instanceID"] as? String, let generation = object["generation"] as? UInt64,
        let store = try? subscriptionStore(), let node = store.selectedNodeID() {
-      do {
-        let routing = try store.routing.runtimeRevision(subscriptionID: store.subscriptionID(nodeID: node))
-        let plan = try makePlan(secretRef: store.outboundRef(nodeID: node), routingRevision: routing)
-        if object["configurationDigest"] as? String == Data(SHA256.hash(data: plan)).base64EncodedString() {
-          try store.recordSuccess(nodeID: node, revision: store.configurationRevision(nodeID: node), session: "\(instance):\(generation)")
-        }
-      } catch { /* A failed history write must not change the connection. */ }
+      // Hashing the route model and the plan takes tens of milliseconds with a large profile, on the
+      // main thread at every poll; once per node, session and running plan is enough.
+      let session = "\(node) \(instance):\(generation) \(object["configurationDigest"] as? String ?? "")"
+      if session != recordedSession {
+        do {
+          let routing = try store.routing.runtimeRevision(subscriptionID: store.subscriptionID(nodeID: node))
+          let plan = try makePlan(secretRef: store.outboundRef(nodeID: node), routingRevision: routing)
+          if object["configurationDigest"] as? String == Data(SHA256.hash(data: plan)).base64EncodedString() {
+            try store.recordSuccess(nodeID: node, revision: store.configurationRevision(nodeID: node), session: "\(instance):\(generation)")
+          }
+          recordedSession = session
+        } catch { /* A failed history write must not change the connection; the next poll tries again. */ }
+      }
     }
     return object
+  }
+
+  /// The pubspec version, in the version+build form the desktop builds report.
+  nonisolated static var bundleVersion: String? {
+    guard let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+          !version.isEmpty else { return nil }
+    let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+    return build.isEmpty ? version : "\(version)+\(build)"
   }
 
   @MainActor
@@ -1215,11 +1244,7 @@ final class TunnelMethodChannel {
       "physicalMemoryBytes": process.physicalMemory,
       "launchAtLoginStatus": loginStatus,
     ]
-    // The pubspec version, in the version+build form the desktop builds report.
-    if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, !version.isEmpty {
-      let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
-      info["appVersion"] = build.isEmpty ? version : "\(version)+\(build)"
-    }
+    if let version = bundleVersion { info["appVersion"] = version }
     if let version = (try? SubscriptionFeedFetcher.invoke("xrayVersion", [:]))?["version"] as? String { info["coreVersion"] = version }
     return info
   }
@@ -1293,6 +1318,7 @@ enum RunnerTunnelError: Error {
   case nodeSwitchRestoreFailed
   case pingFailure
   case unsupportedPingMethod
+  case disconnectToTest
   case icmpFailedRestored
   case icmpRestoreFailed
 }

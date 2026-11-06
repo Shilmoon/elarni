@@ -38,6 +38,7 @@ const (
 	LibXrayMethodGetRuntimeMetrics           LibXrayMethod = "getRuntimeMetrics"
 	LibXrayMethodSetLogLevel                 LibXrayMethod = "setLogLevel"
 	LibXrayMethodReadLogs                    LibXrayMethod = "readLogs"
+	LibXrayMethodSocketPathChanged           LibXrayMethod = "socketPathChanged"
 )
 
 type LibXrayInvokeRequest struct {

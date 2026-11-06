@@ -557,6 +557,47 @@ void main() {
     );
 
     testWidgets(
+      'an unchanged unavailable state does not rebuild the server list on ${windows ? 'Windows' : 'macOS'}',
+      (tester) async {
+        final messenger = tester.binding.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(DesktopIntegration.channel, (
+          call,
+        ) async {
+          return call.method == 'getPreferences' ? '{}' : null;
+        });
+        addTearDown(
+          () => messenger.setMockMethodCallHandler(
+            DesktopIntegration.channel,
+            null,
+          ),
+        );
+        await tester.binding.setSurfaceSize(const Size(1280, 900));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final control = MetricsControl()
+          ..snapshot = countryFixture()
+          ..phase = 'unavailable';
+        await tester.pumpWidget(
+          ElarniApp(tunnelControl: control, windows: windows),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Connection status unavailable'), findsWidgets);
+        final country = find.byKey(const ValueKey('country:daily:DE::all'));
+        final initial = tester.widget(country);
+        final stateReads = control.stateReads;
+        await tester.pump(const Duration(seconds: 4));
+        await tester.pumpAndSettle();
+        expect(control.stateReads, greaterThan(stateReads));
+        expect(tester.widget(country), same(initial));
+        control.phase = 'disconnected';
+        await tester.pump(const Duration(seconds: 2));
+        await tester.pumpAndSettle();
+        expect(find.text('Connection status unavailable'), findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+
+    testWidgets(
       'state polling continues when desktop preferences are unreadable on ${windows ? 'Windows' : 'macOS'}',
       (tester) async {
         final messenger = tester.binding.defaultBinaryMessenger;

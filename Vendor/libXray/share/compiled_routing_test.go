@@ -10,10 +10,12 @@ import (
 	"testing"
 	"time"
 
+	dnsapp "github.com/xtls/xray-core/app/dns"
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/features/routing"
 	routingsession "github.com/xtls/xray-core/features/routing/session"
+	"github.com/xtls/xray-core/infra/conf"
 )
 
 // Configs written by native/elarni-domain/src/router_fixtures.rs. Their dns.hosts
@@ -68,6 +70,30 @@ func TestCompiledRoutingMatchesIPRulesForHostnames(t *testing.T) {
 		if got := pickCompiledRoute(t, router, "elarni-socks", fixture.target); got != fixture.want {
 			t.Errorf("%s: got %s, want %s", fixture.target, got, fixture.want)
 		}
+	}
+}
+
+// Xray's JSON reader skips keys it does not know, so a config that loads proves nothing
+// about the compiler's DNS keys; the built DNS app must carry them.
+func TestCompiledDNSKeysReachTheDNSApp(t *testing.T) {
+	raw, err := json.Marshal(compiledRoutingFixture(t, "outbound")["dns"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config conf.DNSConfig
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	built, err := config.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !built.ServeStale || built.ServeExpiredTTL != 3600 || built.QueryStrategy != dnsapp.QueryStrategy_USE_IP4 {
+		t.Errorf("serveStale %v, serveExpiredTTL %d, queryStrategy %v", built.ServeStale, built.ServeExpiredTTL, built.QueryStrategy)
+	}
+	// Only the remote resolver gives up early.
+	if len(built.NameServer) != 2 || built.NameServer[0].TimeoutMs != 2000 || built.NameServer[1].TimeoutMs != 0 {
+		t.Errorf("name servers %v", built.NameServer)
 	}
 }
 

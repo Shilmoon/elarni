@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -60,6 +61,16 @@ func TestPhysicalNetworkRefreshInvalidatesRoutesAndDNS(t *testing.T) {
 	var loadErr error
 	loads := 0
 	cache := &physicalNetworkCache{load: func() (*physicalNetworkSnapshot, error) { loads++; return current, loadErr }}
+	// A stale good snapshot is served while one refresh runs beside the dial.
+	refreshed := func(stale *physicalNetworkSnapshot) (*physicalNetworkSnapshot, error) {
+		if got, err := cache.get(false); err != nil || got != stale {
+			t.Fatal("a dial waited for the refresh", err)
+		}
+		for cache.refreshing.Load() {
+			time.Sleep(time.Millisecond)
+		}
+		return cache.get(false)
+	}
 	first, err := cache.get(false)
 	if err != nil || first.dns != firstDNS {
 		t.Fatal("initial snapshot failed", err)
@@ -69,23 +80,76 @@ func TestPhysicalNetworkRefreshInvalidatesRoutesAndDNS(t *testing.T) {
 	}
 	current = &physicalNetworkSnapshot{dns: secondDNS, routes: []physicalRoute{{prefix: netip.MustParsePrefix("0.0.0.0/0"), index: 2}}}
 	cache.dirty.Store(true)
-	second, err := cache.get(false)
+	second, err := refreshed(first)
 	if err != nil || second.routes[0].index != 2 || second.dns != secondDNS || first.routes[0].index != 1 {
 		t.Fatal("network change did not atomically replace routes and DNS", err)
 	}
 	// DNS-only edits also expire without depending on an interface notification.
-	cache.snapshot.Store(&physicalNetworkSnapshot{captured: time.Now().Add(-time.Minute), dns: firstDNS})
-	if got, err := cache.get(false); err != nil || got.dns != secondDNS {
+	expired := &physicalNetworkSnapshot{captured: time.Now().Add(-time.Minute), dns: firstDNS}
+	cache.snapshot.Store(expired)
+	if got, err := refreshed(expired); err != nil || got.dns != secondDNS {
 		t.Fatal("expired DNS snapshot retained", err)
 	}
 	loadErr = errors.New("fixture enumeration failed")
 	cache.dirty.Store(true)
-	if _, err := cache.get(false); err == nil {
+	if _, err := refreshed(cache.snapshot.Load()); err == nil {
 		t.Fatal("failed refresh reused stale routes")
 	}
 	before := loads
 	if _, err := cache.get(false); err == nil || loads != before {
 		t.Fatal("failed enumeration must be cached until invalidated or expired")
+	}
+}
+
+// Regression: after every route or interface notification (the tunnel's own too),
+// and every 5 s, the first dial enumerated the network while all others waited.
+func TestPhysicalNetworkDialsDoNotWaitForARefresh(t *testing.T) {
+	release := make(chan struct{})
+	var loads atomic.Int32
+	cache := &physicalNetworkCache{load: func() (*physicalNetworkSnapshot, error) {
+		loads.Add(1)
+		<-release
+		return &physicalNetworkSnapshot{routes: []physicalRoute{{prefix: netip.MustParsePrefix("0.0.0.0/0"), index: 2}}}, nil
+	}}
+	stale := &physicalNetworkSnapshot{captured: time.Now(), routes: []physicalRoute{{prefix: netip.MustParsePrefix("0.0.0.0/0"), index: 1}}}
+	cache.snapshot.Store(stale)
+	cache.dirty.Store(true)
+	served := make(chan *physicalNetworkSnapshot, 8)
+	for range 8 {
+		go func() { s, _ := cache.get(false); served <- s }()
+	}
+	for range 8 {
+		select {
+		case s := <-served:
+			if s != stale {
+				t.Fatal("dial was not served the last snapshot")
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("a dial waited for the enumeration")
+		}
+	}
+	close(release)
+	for cache.refreshing.Load() {
+		time.Sleep(time.Millisecond)
+	}
+	if s, err := cache.get(false); err != nil || s.routes[0].index != 2 || loads.Load() != 1 {
+		t.Fatalf("refresh result %v, %d enumerations; want one", err, loads.Load())
+	}
+}
+
+// After a sleep, sockets on the same interface may be dead too.
+func TestResumeReopensSocketsOnUnchangedRoutes(t *testing.T) {
+	cache := &physicalNetworkCache{wake: make(chan struct{}, 1), load: func() (*physicalNetworkSnapshot, error) {
+		return &physicalNetworkSnapshot{routes: []physicalRoute{{prefix: netip.MustParsePrefix("0.0.0.0/0"), index: 7}}}, nil
+	}}
+	defer close(cache.wake)
+	moved := make(chan struct{}, 4)
+	go cache.watchDefaults(cache.defaults(), 0, func() { moved <- struct{}{} })
+	cache.resume()
+	select {
+	case <-moved:
+	case <-time.After(5 * time.Second):
+		t.Fatal("resume did not reopen sockets")
 	}
 }
 

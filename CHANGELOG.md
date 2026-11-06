@@ -4,6 +4,162 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Security
+
+- Imported profiles can no longer read the core's environment through a field name
+  that only matches under Unicode case folding, such as `addreſs`.
+- The core's brotli and zstd decoders are updated (brotli 1.2.7, klauspost/compress 1.20.2): a crafted brotli stream
+  could allocate excessive memory (GO-2026-6888) and a crafted zstd frame could crash the core (GO-2026-6865).
+
+### Added
+
+- Windows and Linux: Settings › Connection › Connection mode picks System-wide VPN (the default),
+  System proxy or Local proxy only. System proxy points the Windows proxy setting, or
+  GNOME's and KDE Plasma's, at Elarni's HTTP listener while connected and puts the
+  previous setting back on disconnect, on quit, and at the next start after a crash.
+- macOS: the app warns when the VPN extension that runs is another build's (a leftover
+  development build's extension used 6.6 GB).
+
+### Changed
+
+- A release is built only from a commit whose checks passed, and every main commit
+  is checked (a newer push no longer cancels a pending run).
+- Windows and Linux: a dropped connection is retried on the selected server without
+  automation turned on: after 1, 2, 4, 8, 16 and 30 s, then every minute for as long as
+  you stay connected and online. Failover to other servers still needs automation. A
+  connection left on when Elarni quits comes back at the next start; Disconnect ends it.
+  The On Demand switch, which did nothing there, is gone.
+- Windows and Linux: the elevated helper outlives a tunnel that failed or ended by
+  itself, so reconnecting asks for administrator approval only once per session.
+- Windows and Linux: with automation on, a failed server check is repeated after 10 s
+  instead of 30 s, so failover leaves a dead server within about 80 s instead of 120 s.
+  Each backup is tried in turn without saving the catalog again or restarting the
+  failed server in between; the original comes back only if no backup works.
+- iOS: On Demand is on for new installs; a saved choice is kept.
+- Android: apps that need no tunnel (bypassed apps going direct, and unlisted apps in
+  Only listed mode) stay out of the VPN entirely while lockdown is off, and use the
+  system's DNS.
+- Android: after a crash the VPN comes back by itself, at most once in 10 minutes, and
+  the watchdog also runs while the phone dozes.
+- Android: the background refresh job runs hourly, and only when a subscription, route
+  list or expiry reminder is due. Server checks run only while traffic flows.
+- The bundled Xray core is upstream main a52db8f6 (v26.10.31 and later), which adds Windows
+  TUN fixes (starting with IPv6 disabled, reusing an adapter by name), MPTCP off on listeners
+  by default, and fixes for QUIC sniffing and HTTP 100-continue.
+
+### Fixed
+
+- A TLS, REALITY or HTTPUpgrade handshake that DPI swallows gives up after 16 s and frees
+  its socket; a failed handshake no longer leaks it. A refused or timed-out server fails
+  at once instead of after five tries.
+- DNS: a lookup that fails is answered with SERVFAIL, so apps try again at once instead
+  of waiting out their own timeout; a lost query is sent again after 1 s; a remote
+  resolver that stalls gives up after 2 s, and expired answers are served while they
+  refresh. A DoH server that stalls while connecting gives up after 16 s instead of
+  holding every lookup. A plain-UDP remote resolver now goes through the proxy, and
+  `+local` resolvers in imported profiles, which bypassed the tunnel, are dropped.
+- After a network change, pooled XHTTP, gRPC, Hysteria, TUIC and DNS connections are
+  checked and only dead ones are closed; new connections use the new network (Windows,
+  Linux, Android, macOS, iOS). Android and macOS keep the core running instead of
+  restarting it, and Linux and Windows also do this after sleep.
+- XHTTP/3: a failed dial no longer leaks its socket, more than 100 sessions no longer
+  stall for 16 s, and closing the first app no longer aborts the shared dial.
+- Routing with IP rules uses the connection's own address instead of looking its domain
+  up again.
+- Android: an error in a background task no longer ends the app and its VPN; a failed
+  save no longer undoes a connect.
+- Android: in Only listed mode, a connection whose app Android cannot identify stays in
+  the tunnel.
+- Android: the Quick Settings tile shows a VPN paused for sleep as off.
+- iOS and macOS: a stalled core is restarted after two failed checks, and packet writes
+  refused while settings change no longer end the tunnel.
+- Linux: a failed nft cleanup keeps the marker, so Repair VPN setup still finds the
+  leftover redirect.
+- Windows: a DNS setting that could not be restored on disconnect is reported, and
+  retried.
+- Testing many servers at once no longer fails a server now and then: two probes could be
+  given the same local port and fail each other's login (Windows, Linux, macOS, Android).
+- A server now gets the site name it routes by, not the app's IP, when the app
+  connected to a real address (for example over IPv6). Servers that send YouTube
+  through an IPv4-only exit no longer stall YouTube on IPv6 phones. Direct
+  connections, UDP and names the profile pins in its DNS hosts still use the
+  app's address.
+- With a Fake DNS routing profile, refreshing a subscription, geofile or managed list
+  while connected asked to approve a "private network address", or failed, and paused
+  automatic refresh, on every platform. Downloads now look such names up over DNS over
+  TLS through the VPN, which does not answer with Fake DNS addresses, and fall back to
+  the VPN's own DNS where DNS over TLS is blocked.
+- Windows, Linux: with a Fake DNS routing profile, testing servers other than the
+  connected one failed while connected, so failover found no backup.
+- Android: the update notice never appeared; the daily check failed before it fetched.
+- Windows, Linux: SRV, TXT and other lookups that aren't for addresses went to a
+  resolver the routing profile lists for its own domains only.
+- SRV, TXT and other lookups that aren't for addresses, asked over TCP through the VPN,
+  came back truncated whenever the answer passed 512 bytes, so they failed; they now
+  stay on TCP.
+- macOS: while connected, Direct TCP showed 1-5 ms for every server, dead ones too, because
+  the tunnel itself answered; it now tests outside the tunnel. Tests the tunnel cannot run
+  while connected (Direct TCP and other servers' proxy tests with Include all networks
+  on, and other servers' "Current rules / active tunnel" tests) are marked Skipped with a
+  hint to disconnect, instead of failing and marking the server Unavailable.
+- Windows and Linux: importing a subscription or routing profile while the VPN is
+  connected with FakeDNS no longer fails with "This source needs approval before it
+  can be contacted." Geofile and managed-list downloads now resolve and connect
+  through the VPN's SOCKS listener, as on Android.
+
+### Performance
+
+- iOS and macOS: faster downloads through the packet tunnel (TCP window scaling, one copy
+  per segment, half the ACKs); a burst of packets waits up to 10 ms instead of being
+  dropped; DNS sessions end with their answers.
+- Fewer copies and allocations per UDP datagram in the TUN stack, Hysteria, TUIC and
+  WireGuard; TUIC uses batched reads and GSO.
+- Idle UDP flows in the TUN stack end after 2 minutes instead of 5; a full table refuses
+  new connections before their handshake; near the memory limit, idle sessions are
+  replaced first.
+- Hysteria keeps its connection alive (10 s keepalive) and shares one dial between
+  flows; XHTTP gives new flows a connection that is already up.
+- Android: the core's DNS answers are cached for their TTL, routing data is not read
+  again for the same route, and logs are capped at 200 lines a second.
+- The core returns memory after light traffic at most once a minute instead of every
+  5 s, and still at once after a large download or when many connections close.
+- iOS: lower peak memory for XHTTP and QUIC downloads, and the core is not compiled
+  again for a restart with the same settings.
+- Desktop: no window rebuilds or catalog saves on unchanged state, direct TCP tests use
+  sockets instead of a core per server, and the helper returns memory after each start.
+- Windows: reconnecting with unchanged routing data no longer sends and checks the
+  geofiles again (80 ms and about 100 MB of copies for 18 MiB of geodata).
+- Linux: per-app routing looks up the owners of a burst of new connections in one
+  pass (64 connections: 9 ms instead of 36 ms).
+- Windows: an idle direct UDP flow no longer holds a 64 KiB read buffer.
+- A connection closes as soon as the app closes it, instead of up to a second later (Xray's default `downlinkOnly`). A
+  burst of short connections no longer holds hundreds of TLS sessions: on the test phone the app peaked at 88 instead
+  of 231 MB during 2000 short connections and opened 739 instead of 633 per second; the desktop daemon peaked at 82
+  instead of 225 MB on Linux and 102 instead of 265 MB on Windows. An app that half-closes a connection and then waits
+  for the reply loses the reply, as with the mihomo-based clients; a profile's own `policy` value still wins.
+- Android: the core now uses the CPU's AES and carry-less multiply instructions. Go, loaded as a library, could not
+  read the CPU features in a release build, so TLS ran on software AES. On a Snapdragon 8 Gen 3 test phone one
+  download now runs at 136 instead of 37 MB/s and eight at 907 instead of 201, at a third to a seventh of the CPU
+  per MB; uploads and new connections per second gain too.
+- UDP in VPN (TUN) mode: datagrams waiting on a flow go to the server together, packed into
+  full TLS records, instead of one record and one write each. On the test phone UDP bulk
+  rises from 4.5 to 10.7 MB/s at half the CPU per MB; on desktops by 8-12%.
+- The VPN (TUN) mode on Windows, Linux and Android runs on Xray's own TCP/IP stack instead
+  of gVisor. One connection downloads up to 2.5x faster (VLESS: 2.75 vs 1.08 GB/s on the
+  test host) at less than half the CPU per MB, now level with upstream Xray on every protocol.
+- Linux: without a GPU (virtual machines, remote desktops), the window draws with Flutter's own
+  CPU renderer instead of Mesa's software OpenGL: 80 MB less memory and a quarter of the CPU
+  while it repaints. Set `FLUTTER_LINUX_RENDERER=opengl` to keep OpenGL.
+- The window no longer redraws every second while the connection status is unavailable.
+- Windows and Linux: a connected but idle VPN uses about 40% less CPU (Linux test namespace: 65 instead of 112 ms
+  per minute across the app and its core processes). The core passes its traffic counters on only when they change,
+  or every 10 s, instead of every second through each process; it reads its heap size without pausing the program;
+  and the Linux network check reads link state without a thread handoff.
+- Android: the 2-second status refresh no longer asks the system for home screen widgets each time.
+- Android: the 2-second status refresh no longer reloads every settings title, and the screen's clock stops while
+  the app is in the background. Idle CPU in the minute after heavy traffic drops by about a fifth (1020 vs 1260 ms
+  per minute on the test phone); settled idle is unchanged.
+
 ## 0.4.1 - 2026-11-04
 
 ### Changed

@@ -395,8 +395,10 @@ void tray_action(GtkMenuItem* item, gpointer data) {
   if (GTK_WIDGET(item) == host->connect || GTK_WIDGET(item) == host->disconnect) {
     g_autoptr(FlValue) action = fl_value_new_string(GTK_WIDGET(item) == host->connect ? "connect" : "disconnect");
     notify(host->desktop, "action", action);
-  } else if (g_object_get_data(G_OBJECT(item), "quit")) g_application_quit(G_APPLICATION(host->app));
-  else gtk_window_present(host->window);
+  } else if (g_object_get_data(G_OBJECT(item), "quit")) {
+    // Closing the window sends Dart the exit request, which restores the system proxy.
+    gtk_window_close(host->window);
+  } else gtk_window_present(host->window);
 }
 void desktop_call(FlMethodChannel*, FlMethodCall* call, gpointer data) {
   auto* host = static_cast<DesktopHost*>(data);
@@ -521,7 +523,7 @@ void sleep_changed(GDBusConnection*, const gchar*, const gchar*, const gchar*, c
   notify(host->platform, "sleepChanged", value);
 }
 void quit_action(GSimpleAction*, GVariant*, gpointer data) {
-  g_application_quit(G_APPLICATION(static_cast<DesktopHost*>(data)->app));
+  gtk_window_close(static_cast<DesktopHost*>(data)->window);
 }
 void settings_action(GSimpleAction*, GVariant*, gpointer data) {
   auto* host = static_cast<DesktopHost*>(data);

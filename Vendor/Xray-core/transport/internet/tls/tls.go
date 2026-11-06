@@ -36,6 +36,10 @@ type Conn struct {
 
 const tlsCloseTimeout = 250 * time.Millisecond
 
+// HandshakeTimeout is the budget of a client TLS, REALITY or HTTPUpgrade handshake once
+// the TCP connect is done: XHTTP's setup budget. A variable so tests can shorten it.
+var HandshakeTimeout = 16 * time.Second
+
 func (c *Conn) SuppressCloseNotify() {
 	c.suppressCloseNotify.Store(true)
 }
@@ -102,6 +106,14 @@ func (c *UConn) Close() error {
 	})
 	defer timer.Stop()
 	return c.Conn.Close()
+}
+
+// WriteMultiBuffer packs small buffers into full ones first, as Conn does: each Write is a TLS record and a syscall.
+func (c *UConn) WriteMultiBuffer(mb buf.MultiBuffer) error {
+	mb = buf.Compact(mb)
+	mb, err := buf.WriteMultiBuffer(c, mb)
+	buf.ReleaseMulti(mb)
+	return err
 }
 
 func (c *UConn) HandshakeContextServerName(ctx context.Context) string {

@@ -109,7 +109,7 @@ func newUDPFlowFixture(t *testing.T, handler *Handler) *udpFlowFixture {
 func (f *udpFlowFixture) exchange(t *testing.T, client, server net.Port) {
 	t.Helper()
 	f.udp.HandlePacket(net.UDPDestination(net.ParseAddress("198.18.0.2"), client),
-		net.UDPDestination(net.ParseAddress("198.18.0.3"), server), []byte("x"))
+		net.UDPDestination(net.ParseAddress("198.18.0.3"), server), buf.FromBytes([]byte("x")))
 	select {
 	case got := <-f.replies:
 		if got != client {
@@ -210,6 +210,67 @@ func TestDNSFlowsReleaseSoonAfterTheyGoQuiet(t *testing.T) {
 	}
 }
 
+// A QUIC connection the browser closed sends nothing more: its flow must end after the UDP idle
+// interval, not hold its outbound for the connection idle timeout, while a flow with traffic stays.
+func TestUDPFlowsEndAfterTheyGoQuiet(t *testing.T) {
+	handler := &Handler{udpIdle: 150 * time.Millisecond}
+	f := newUDPFlowFixture(t, handler)
+	for range 4 { // a keepalive every 50 ms keeps the flow past its idle interval
+		f.exchange(t, 40000, 443)
+		time.Sleep(50 * time.Millisecond)
+	}
+	if len(f.done) != 0 {
+		t.Fatal("a flow closed while it still carried traffic")
+	}
+	f.finished(t, 40000, time.Second)
+	if len(handler.udpAdmission.sessions) != 0 {
+		t.Fatal("quiet flow kept its slot")
+	}
+}
+
+// fakeHeap makes admission read live heap live out of a limit of 100 until the test ends.
+func fakeHeap(t *testing.T, live int64) *atomic.Int32 {
+	reads := new(atomic.Int32)
+	saved := readHeap
+	readHeap = func() (int64, int64) { reads.Add(1); return live, 100 }
+	heapCheck.next.Store(0)
+	t.Cleanup(func() { readHeap = saved; heapCheck.next.Store(0); heapCheck.high.Store(false) })
+	return reads
+}
+
+// Near Android's Go memory limit the GC takes up to half the CPU long before the session limits fill:
+// admission must then treat the table as full, replacing an idle session or refusing while all are active.
+func TestAdmissionTreatsTableAsFullUnderMemoryPressure(t *testing.T) {
+	active := func() { t.Error("evicted an active session") }
+	fakeHeap(t, 80) // below 85%: room as usual
+	s := sessionAdmission{limit: 100, minIdle: time.Minute}
+	var stopped int
+	s.acquire(idleClock(2*time.Minute), func() { stopped++ })
+	s.acquire(idleClock(0), active)
+
+	reads := fakeHeap(t, 90)
+	if s.acquire(idleClock(0), active) == nil || stopped != 1 || len(s.sessions) != 2 {
+		t.Fatalf("past 85%% of the memory limit the idle session was not replaced: stopped %d, %d sessions", stopped, len(s.sessions))
+	}
+	if s.acquire(idleClock(0), active) != nil || len(s.sessions) != 2 {
+		t.Fatal("past 85% of the memory limit a session was admitted while every session was active")
+	}
+	if reads.Load() != 1 {
+		t.Fatalf("read the heap %d times within a second, want once", reads.Load())
+	}
+	var empty sessionAdmission
+	empty.limit = 100
+	if empty.acquire(idleClock(0), nil) == nil {
+		t.Fatal("an empty table refused a session: it has nothing to make room from")
+	}
+	var unlimited sessionAdmission
+	for range 3 {
+		if unlimited.acquire(idleClock(0), nil) == nil {
+			t.Fatal("an embedder without session limits got memory-aware admission")
+		}
+	}
+}
+
 // lingerDispatcher echoes until the app closes its side, then holds the session open like an outbound
 // waiting out policy downlinkOnly, until the session is evicted or 2 s pass.
 type lingerDispatcher struct{ routing.Dispatcher }
@@ -289,7 +350,7 @@ func TestFullTCPTableReplacesConnectionTheAppClosed(t *testing.T) {
 func TestFullUDPTableReplacesAnsweredDNSFlow(t *testing.T) {
 	send := func(f *udpFlowFixture, client, server net.Port) {
 		f.udp.HandlePacket(net.UDPDestination(net.ParseAddress("198.18.0.2"), client),
-			net.UDPDestination(net.ParseAddress("198.18.0.3"), server), []byte("x"))
+			net.UDPDestination(net.ParseAddress("198.18.0.3"), server), buf.FromBytes([]byte("x")))
 	}
 	admitted := func(t *testing.T, h *Handler, n int) {
 		t.Helper()
@@ -368,22 +429,22 @@ func TestFullUDPTableReplacesAnsweredDNSFlow(t *testing.T) {
 // Admission retires an answered DNS flow while its session is still ending (Elarni): a query from the same
 // port in that window must start a new flow instead of being queued to the old one and lost.
 func TestRetiredDNSFlowPassesLaterQueriesToANewFlow(t *testing.T) {
-	c := &udpConn{egress: make(chan *packet, 1)}
-	if queued, _ := c.enqueue(&packet{}); !queued || c.retireAnswered() {
+	c := &udpConn{queue: newPacketQueue(1)}
+	if queued, _ := c.enqueue(buf.New()); !queued || c.retireAnswered() {
 		t.Fatal("retired a flow with an unanswered query")
 	}
 	c.answer(1)
 	if !c.retireAnswered() {
 		t.Fatal("answered flow not retired")
 	}
-	if queued, retired := c.enqueue(&packet{}); queued || !retired {
+	if queued, retired := c.enqueue(buf.New()); queued || !retired {
 		t.Fatal("retired flow took another datagram")
 	}
 
 	f := newUDPFlowFixture(t, &Handler{})
 	f.exchange(t, 40000, 53)
 	f.udp.RLock()
-	old := f.udp.udpConns[net.UDPDestination(net.ParseAddress("198.18.0.2"), 40000)]
+	old := f.udp.udpConns[flowKey(net.UDPDestination(net.ParseAddress("198.18.0.2"), 40000), net.UDPDestination(net.ParseAddress("198.18.0.3"), 53))]
 	f.udp.RUnlock()
 	if old == nil || !old.retireAnswered() {
 		t.Fatal("answered flow not retired")
@@ -477,4 +538,20 @@ func (d *streamDispatcher) DispatchLink(ctx context.Context, _ net.Destination, 
 func isTimeout(err error) bool {
 	var ne stdnet.Error
 	return errors.As(err, &ne) && ne.Timeout()
+}
+
+// The stack hands its TCP connections' data over in buffers; the admission wrapper must keep that path, or
+// every byte is copied through Read and Write (Elarni: the gVisor-era wrapper hid it).
+func TestTrackedConnectionKeepsBufferMethods(t *testing.T) {
+	wrapped, _ := trackConn(&tcpConn{})
+	if _, ok := wrapped.(buf.Reader); !ok {
+		t.Fatal("tracked stack connection lost ReadMultiBuffer")
+	}
+	if _, ok := wrapped.(buf.Writer); !ok {
+		t.Fatal("tracked stack connection lost WriteMultiBuffer")
+	}
+	plain, _ := trackConn(&stdnet.TCPConn{})
+	if _, ok := plain.(buf.Reader); ok {
+		t.Fatal("a plain connection must not claim buffer methods it lacks")
+	}
 }

@@ -60,7 +60,7 @@ func TestH2UploadsUseTheSpecMinimumFrameSize(t *testing.T) {
 	transport := h2Transport(func(ctx context.Context) (gonet.Conn, error) {
 		var dialer gonet.Dialer
 		return dialer.DialContext(ctx, "tcp", listener.Addr().String())
-	}, 0)
+	}, 0, nil)
 	conn, err := transport.DialTLSContext(ctx, "tcp", listener.Addr().String(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -146,5 +146,104 @@ func TestMaxFrameClampSurvivesSplitReads(t *testing.T) {
 	}
 	if frame, err := reader.ReadFrame(); err != nil || frame.(*http2.PingFrame).Data != [8]byte{1, 2, 3, 4, 5, 6, 7, 8} {
 		t.Fatalf("ping: %v %v", frame, err)
+	}
+}
+
+// loopConn reads the same frames forever and discards writes.
+type loopConn struct {
+	gonet.Conn
+	frames []byte
+	off    int
+}
+
+func (c *loopConn) Read(p []byte) (int, error) {
+	n := copy(p, c.frames[c.off:])
+	c.off = (c.off + n) % len(c.frames)
+	return n, nil
+}
+
+func (c *loopConn) Write(p []byte) (int, error) { return len(p), nil }
+
+// The wrapper sits on every HTTP/2 byte in both directions.
+func BenchmarkMaxFrameClamp(b *testing.B) {
+	var frames bytes.Buffer
+	framer := http2.NewFramer(&frames, nil)
+	for range 16 {
+		framer.WriteData(1, false, make([]byte, 16384))
+	}
+	data := frames.Bytes()
+	b.Run("read", func(b *testing.B) {
+		conn := &maxFrameClamp{Conn: &loopConn{frames: data}}
+		buf := make([]byte, 32<<10)
+		b.SetBytes(int64(len(buf)))
+		for b.Loop() {
+			conn.Read(buf)
+		}
+	})
+	b.Run("write", func(b *testing.B) {
+		conn := &maxFrameClamp{Conn: &loopConn{frames: data}}
+		conn.Write([]byte(http2.ClientPreface))
+		frame := data[:9+16384]
+		b.SetBytes(int64(len(frame)))
+		for b.Loop() {
+			conn.Write(frame)
+		}
+	})
+}
+
+type recordingConn struct {
+	gonet.Conn
+	written bytes.Buffer
+}
+
+func (c *recordingConn) Write(p []byte) (int, error) { return c.written.Write(p) }
+
+// The client writes frames in pieces, and a header block spans frames; a PING slipped in
+// anywhere else breaks the connection and every stream on it.
+func TestMaxFrameClampPingWaitsForFrameBoundaries(t *testing.T) {
+	var frames bytes.Buffer
+	framer := http2.NewFramer(&frames, nil)
+	framer.WriteSettings()
+	framer.WriteHeaders(http2.HeadersFrameParam{StreamID: 1, BlockFragment: []byte{0x82, 0x86}})
+	framer.WriteContinuation(1, true, []byte{0x84})
+	framer.WriteData(1, false, make([]byte, 100))
+	stream := append([]byte(http2.ClientPreface), frames.Bytes()...)
+	for cut := range len(stream) + 1 {
+		conn := &recordingConn{}
+		clamp := &maxFrameClamp{Conn: conn}
+		clamp.Write(stream[:cut])
+		clamp.writePing()
+		clamp.Write(stream[cut:])
+		written := conn.written.Bytes()
+		if !bytes.HasPrefix(written, []byte(http2.ClientPreface)) {
+			t.Fatalf("cut %d: the preface changed", cut)
+		}
+		reader := http2.NewFramer(io.Discard, bytes.NewReader(written[len(http2.ClientPreface):]))
+		var types []http2.FrameType
+		for {
+			frame, err := reader.ReadFrame()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("cut %d: %v", cut, err)
+			}
+			types = append(types, frame.Header().Type)
+			if ping, ok := frame.(*http2.PingFrame); ok && ping.IsAck() {
+				t.Fatalf("cut %d: the PING went out as an acknowledgment", cut)
+			}
+		}
+		pings := 0
+		for i, frameType := range types {
+			if frameType == http2.FramePing {
+				pings++
+				if i == 0 {
+					t.Fatalf("cut %d: the PING went before the SETTINGS that must follow the preface", cut)
+				}
+			}
+		}
+		if pings != 1 || len(types) != 5 {
+			t.Fatalf("cut %d: frames %v, want the four written and one PING", cut, types)
+		}
 	}
 }

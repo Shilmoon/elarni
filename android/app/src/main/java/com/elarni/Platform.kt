@@ -63,7 +63,7 @@ class ElarniApplication : Application() {
         val notifications = getSystemService(NotificationManager::class.java)
         notifications.createNotificationChannel(NotificationChannel(CONNECTION_CHANNEL, tr(R.string.vpn_connection), NotificationManager.IMPORTANCE_LOW))
         notifications.createNotificationChannel(NotificationChannel(REVIEW_CHANNEL, tr(R.string.subscription_updates), NotificationManager.IMPORTANCE_DEFAULT))
-        LibXray.setAndroidSocketController(socketController)
+        NativeBindings.startCore { LibXray.setAndroidSocketController(socketController) }  // the first Go call
         // A single callback delegates to the current owner. Shared-UID apps necessarily share a rule.
         LibXray.registerProcessFinder(ProcessFinder { network, source, sourcePort, destination, destinationPort ->
             if (vpnOwner == null || sourcePort !in 1..65535 || destinationPort !in 1..65535) -1L else try {
@@ -78,34 +78,51 @@ class ElarniApplication : Application() {
         fun changed() {
             repository.scope.launch { repository.networkChanged() }
         }
+        // The default network moved or went: new sockets already leave through the new one. The core's pooled
+        // connections move as well, and downloads still on the old path stop, rather than hold the repository
+        // lock until they time out; server checks keep running, as a cancelled one would count as a failure.
+        fun moved() {
+            repository.scope.launch { Native.cancelOperations("Fetch"); LibXray.socketPathChanged(); repository.networkChanged() }
+        }
+        // Membership needs only these two capabilities, which the request requires, and a new default network
+        // arrives as onAvailable, so capability updates such as signal strength need no pass.
         connectivity.registerNetworkCallback(NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(), object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) = changed()
             override fun onLost(network: Network) = changed()
-            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = changed()
         })
         connectivity.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) = changed()
-            override fun onLost(network: Network) = changed()
-            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = changed()
+            override fun onAvailable(network: Network) = moved()
+            override fun onLost(network: Network) = moved()
         })
         changed()
     }
     fun openApp(): PendingIntent = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-    fun scheduleRefresh() {
+    /** Refresh intervals are an hour or more, and while the VPN service runs its 30 s maintenance pass refreshes what is due. */
+    fun scheduleRefresh(needed: Boolean) {
         val scheduler = getSystemService(JobScheduler::class.java)
-        // Scheduling the same job again stops it while it runs.
-        if (scheduler.getPendingJob(REFRESH_JOB) != null) return
+        val pending = scheduler.getPendingJob(REFRESH_JOB)
+        // Without work the job would only start the app; scheduling the same job again stops it while it runs.
+        if (!needed) { if (pending != null) scheduler.cancel(REFRESH_JOB); return }
+        if (pending?.intervalMillis == REFRESH_INTERVAL) return
         scheduler.schedule(JobInfo.Builder(REFRESH_JOB, ComponentName(this, RefreshJobService::class.java))
-            .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).setPeriodic(15 * 60 * 1000L).setPersisted(true).build())
+            .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).setPeriodic(REFRESH_INTERVAL).setPersisted(true).build())
     }
     fun refreshTile() = TileService.requestListeningState(this, ComponentName(this, ElarniTileService::class.java))
     // Android does not bring back a VPN service whose process it killed. While the service exists, a
     // non-wakeup alarm starts a killed process at the next wake, and that start reconnects.
+    private val watchAlarm get() = PendingIntent.getBroadcast(this, 4, Intent(this, BootReceiver::class.java), PendingIntent.FLAG_IMMUTABLE)
+    // Its own request code: an alarm set with the same PendingIntent would replace the repeating one.
+    private val idleAlarm get() = PendingIntent.getBroadcast(this, 5, Intent(this, BootReceiver::class.java), PendingIntent.FLAG_IMMUTABLE)
     fun watchService(on: Boolean) {
-        val alarm = PendingIntent.getBroadcast(this, 4, Intent(this, BootReceiver::class.java), PendingIntent.FLAG_IMMUTABLE)
         val alarms = getSystemService(AlarmManager::class.java)
-        if (on) { runCatching { serviceMarker.createNewFile() }; alarms.setInexactRepeating(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + 60_000, 60_000, alarm) }
-        else { alarms.cancel(alarm); serviceMarker.delete() }
+        if (on) { runCatching { serviceMarker.createNewFile() }; alarms.setInexactRepeating(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + 60_000, 60_000, watchAlarm); watchIdle() }
+        else { alarms.cancel(watchAlarm); alarms.cancel(idleAlarm); serviceMarker.delete() }
+    }
+    /** Doze holds the repeating alarm for hours. While the VPN service runs and is not paused for sleep, an inexact
+     *  allow-while-idle alarm (no exact-alarm permission) wakes about every 15 minutes; each alarm sets the next. */
+    fun watchIdle() {
+        if (!serviceMarker.exists() || repository.state.value.connection == "paused") return
+        getSystemService(AlarmManager::class.java).setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + AlarmManager.INTERVAL_FIFTEEN_MINUTES, idleAlarm)
     }
     fun approvalNotification() {
         runCatching { getSystemService(NotificationManager::class.java).notify(3, Notification.Builder(this, REVIEW_CHANNEL).setSmallIcon(R.drawable.ic_elarni)
@@ -125,6 +142,7 @@ class ElarniApplication : Application() {
     }
     companion object {
         const val CONNECTION_CHANNEL = "connection"; const val REVIEW_CHANNEL = "updates"; const val REFRESH_JOB = 101
+        const val REFRESH_INTERVAL = 60 * 60 * 1000L
         /** Set first in [onCreate], before anything asks [tr] for a string. */
         lateinit var instance: ElarniApplication
             private set
@@ -195,25 +213,44 @@ class ElarniVpnService : VpnService() {
         else startForeground(1, notification)
         foregroundStarted = true
     }
+    /** Whether the tunnel keeps per-app listed apps out; lockdown turned on meanwhile blocks them until the next start. */
+    var splitsApps = false
+        private set
     fun establishTunnel(settings: JSONObject): Int {
         if (prepare(this) != null) throw AppFailure("vpn_consent_required")
-        val interfaces = java.net.NetworkInterface.getNetworkInterfaces().asSequence().map { it.name }.toSet()
-        val builder = Builder().setSession("Elarni").setMtu(MTU).setMetered(false)
-            .addAddress("198.51.100.253", 30).addAddress("fdfe:dcba:9876::1", 126)
-            // Not a public resolver: automatic Private DNS would upgrade it to DNS-over-TLS, which skips the port-53 DNS route.
-            .addDnsServer("198.51.100.254").addDnsServer("fdfe:dcba:9876::2")
-            .addDisallowedApplication(packageName).setConfigureIntent(app.openApp())
-        Cidr.routes(settings).forEach { builder.addRoute(it.inet(), it.bits) }
-        app.repository.engine.physical()?.let { builder.setUnderlyingNetworks(arrayOf(it)) }
-        val replacement = builder.establish() ?: throw AppFailure("vpn_consent_required")
+        fun interfaceNames() = java.net.NetworkInterface.getNetworkInterfaces().asSequence().map { it.name }.toSet()
+        var interfaces = interfaceNames()
+        var apps = Catalog.tunnelApps(settings, packageName) { runCatching { packageManager.getApplicationInfo(it, 0).uid }.getOrNull() }.takeUnless { isLockdownEnabled }
+        var replacement = tunnel(settings, apps)
+        // Lockdown reads false until this app's VPN exists, and it blocks every app the lists leave out.
+        if (apps != null && isLockdownEnabled) {
+            apps = null; interfaces = interfaceNames()
+            val split = replacement
+            replacement = try { tunnel(settings, null) } finally { runCatching { split.close() } }
+        }
         // A failed start can keep its interface; only the newest predecessor is still needed.
         previousDescriptor?.let { runCatching { it.close() } }
         previousDescriptor = descriptor
-        descriptor = replacement
+        descriptor = replacement; splitsApps = apps != null
         tunnelInterface = java.net.NetworkInterface.getNetworkInterfaces().asSequence().firstOrNull {
             it.name !in interfaces && it.inetAddresses.asSequence().any { address -> address.hostAddress == "198.51.100.253" }
         }?.name ?: throw AppFailure("vpn_network_unavailable")
         return descriptor!!.fd
+    }
+    private fun tunnel(settings: JSONObject, apps: Pair<Boolean, List<String>>?): ParcelFileDescriptor {
+        val builder = Builder().setSession("Elarni").setMtu(MTU).setMetered(false)
+            .addAddress("198.51.100.253", 30).addAddress("fdfe:dcba:9876::1", 126)
+            // Not a public resolver: automatic Private DNS would upgrade it to DNS-over-TLS, which skips the port-53 DNS route.
+            .addDnsServer("198.51.100.254").addDnsServer("fdfe:dcba:9876::2")
+            .setConfigureIntent(app.openApp())
+        val (allowed, names) = apps ?: (false to emptyList<String>())
+        // Android takes allowed or disallowed apps, never both; this app stays out either way, and an app removed meanwhile is skipped.
+        if (!allowed || names.count { runCatching { builder.addAllowedApplication(it) }.isSuccess } == 0) {
+            builder.addDisallowedApplication(packageName)
+            if (!allowed) names.forEach { runCatching { builder.addDisallowedApplication(it) } }
+        }
+        Cidr.routes(settings).forEach { builder.addRoute(it.inet(), it.bits) }
+        return builder.establish() ?: throw AppFailure("vpn_consent_required")
     }
     fun awaitTunnelReady(valid: () -> Unit) {
         val deadline = android.os.SystemClock.elapsedRealtime() + 5000
@@ -232,7 +269,7 @@ class ElarniVpnService : VpnService() {
     fun closeTunnel() {
         val previousInterface = tunnelInterface
         runCatching { previousDescriptor?.close() }; previousDescriptor = null
-        runCatching { descriptor?.close() }; descriptor = null; tunnelInterface = null
+        runCatching { descriptor?.close() }; descriptor = null; tunnelInterface = null; splitsApps = false
         if (previousInterface != null) {
             // Do not publish disconnected while Android is still removing this
             // network's UID routes. A following Connect can otherwise race it.
@@ -276,7 +313,8 @@ class ElarniVpnService : VpnService() {
 
 class ElarniTileService : TileService() {
     private val app get() = application as ElarniApplication
-    private val active = listOf("connected", "connecting", "paused")
+    // Paused for sleep, the tunnel is down: the tile shows off with a Paused subtitle, and a tap connects.
+    private val active = listOf("connected", "connecting")
     private var watch: Job? = null
     // A listening tile ignores requestListeningState, so follow the state until listening stops.
     override fun onStartListening() {
@@ -335,9 +373,10 @@ class RefreshJobService : JobService() {
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val result = goAsync(); val app = context.applicationContext as ElarniApplication
-        // The service watch alarm carries no action; starting the process is all it does.
+        // The service watch alarms carry no action: starting the process is what they do, and a live one sets the next idle alarm.
+        // The repository schedules the refresh job as the process starts.
         app.repository.scope.launch {
-            try { if (intent.action == Intent.ACTION_BOOT_COMPLETED) { app.scheduleRefresh(); app.repository.boot() } else app.repository.awaitReady() }
+            try { if (intent.action == Intent.ACTION_BOOT_COMPLETED) app.repository.boot() else { app.repository.awaitReady(); app.watchIdle() } }
             finally { result.finish() }
         }
     }

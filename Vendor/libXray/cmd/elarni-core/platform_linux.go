@@ -118,7 +118,7 @@ func platformRequest(method string, payload json.RawMessage) (any, error, bool) 
 			if json.Unmarshal(payload, &request) != nil {
 				return nil, errors.New("invalid_assets"), true
 			}
-			data, err := prepareAssets(root, request, downloadAsset)
+			data, err := prepareAssets(root, request, downloadAsset(request.Proxy))
 			return data, err, true
 		}
 		var request struct {

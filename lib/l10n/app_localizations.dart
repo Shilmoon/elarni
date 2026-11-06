@@ -1052,6 +1052,48 @@ abstract class AppLocalizations {
   /// **'System-wide VPN'**
   String get systemWideVpn;
 
+  /// No description provided for @connectionMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection mode'**
+  String get connectionMode;
+
+  /// No description provided for @connectionModeHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'System-wide VPN connects all apps; administrator approval is requested on the first VPN connection in this app session. System proxy points this computer\'s proxy setting at Elarni without administrator approval; only apps that follow it, such as browsers, use it. Local proxy only opens the ports below for apps you set up yourself.'**
+  String get connectionModeHelp;
+
+  /// No description provided for @connectionModeServiceHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'System-wide VPN connects all apps; administrator approval is requested on the first VPN connection in this app session, unless Connect without administrator approval is on. System proxy points this computer\'s proxy setting at Elarni without administrator approval; only apps that follow it, such as browsers, use it. Local proxy only opens the ports below for apps you set up yourself.'**
+  String get connectionModeServiceHelp;
+
+  /// No description provided for @systemProxy.
+  ///
+  /// In en, this message translates to:
+  /// **'System proxy'**
+  String get systemProxy;
+
+  /// No description provided for @localProxyOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Local proxy only'**
+  String get localProxyOnly;
+
+  /// No description provided for @systemProxyMode.
+  ///
+  /// In en, this message translates to:
+  /// **'System proxy mode'**
+  String get systemProxyMode;
+
+  /// No description provided for @systemProxyListeners.
+  ///
+  /// In en, this message translates to:
+  /// **'In System proxy mode, apps on this computer use the HTTP port without a login.'**
+  String get systemProxyListeners;
+
   /// No description provided for @updateDraft.
   ///
   /// In en, this message translates to:
@@ -1952,6 +1994,12 @@ abstract class AppLocalizations {
   /// **'Skipped: Direct TCP is not supported by this endpoint’s transport. Use Proxy testing.'**
   String get pingDirectTcpUnsupported;
 
+  /// No description provided for @pingNeedsDisconnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Skipped: while connected, this test can’t reach the server. Disconnect to test it.'**
+  String get pingNeedsDisconnect;
+
   /// No description provided for @routeTableUnreadable.
   ///
   /// In en, this message translates to:
@@ -2029,6 +2077,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Skipped {count}: incompatible with this test method.'**
   String pingSkippedIncompatible(int count);
+
+  /// No description provided for @pingSkippedWhileConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Skipped {count}: disconnect to test them.'**
+  String pingSkippedWhileConnected(int count);
 
   /// No description provided for @refreshFailedSentence.
   ///
@@ -2582,18 +2636,6 @@ abstract class AppLocalizations {
   /// **'Connect without administrator approval'**
   String get connectWithoutAdminApproval;
 
-  /// No description provided for @systemWideVpnHelp.
-  ///
-  /// In en, this message translates to:
-  /// **'Connects all apps. Administrator approval is requested on the first VPN connection in this app session. Turn off to use only the local proxy.'**
-  String get systemWideVpnHelp;
-
-  /// No description provided for @systemWideVpnServiceHelp.
-  ///
-  /// In en, this message translates to:
-  /// **'Connects all apps. Administrator approval is requested on the first VPN connection in this app session, unless Connect without administrator approval is on. Turn off to use only the local proxy.'**
-  String get systemWideVpnServiceHelp;
-
   /// No description provided for @accentColor.
   ///
   /// In en, this message translates to:
@@ -2797,12 +2839,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'On Demand controls automatic connection when network access resumes.'**
   String get onDemandMacHelp;
-
-  /// No description provided for @onDemandDesktopHelp.
-  ///
-  /// In en, this message translates to:
-  /// **'On Demand reconnects after wake or a network interruption until you press Stop.'**
-  String get onDemandDesktopHelp;
 
   /// No description provided for @onDemand.
   ///

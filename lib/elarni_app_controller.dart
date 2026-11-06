@@ -28,7 +28,16 @@ extension _HomeController on _ElarniHomeState {
       final value = await widget.tunnelControl.automationStatus();
       if (!mounted || revision != _stateRevision) return;
       final changed = value['status'] != _automation['status'];
-      if (!_sameJson(value, _automation)) _set(() => _automation = value);
+      // The age grows every poll; the page shows only whether it is under 90 s.
+      Map<String, Object?> shown(Map<String, Object?> status) => {
+        ...status,
+        'healthAgeSeconds': switch (status['healthAgeSeconds']) {
+          final num age => age < 90,
+          _ => null,
+        },
+      };
+      if (!_sameJson(shown(value), shown(_automation)))
+        _set(() => _automation = value);
       if (changed && value['status'] == 'selected')
         await _refreshSubscriptions();
     } on Object {
@@ -372,13 +381,14 @@ extension _HomeController on _ElarniHomeState {
     } on PlatformException catch (error) {
       if (mounted && run == _pingRun) {
         _set(() {
-          if (error.code == 'unsupported_ping_method') {
+          if (_skippedProbe(error)) {
             _pingSkipped.add(nodeId);
           } else {
             _pingUnavailable.add(nodeId);
           }
           _message = switch (error.code) {
             'unsupported_ping_method' => l10n.pingDirectTcpUnsupported,
+            'disconnect_to_test' => l10n.pingNeedsDisconnect,
             'unavailableProbePath' => l10n.pingIcmpUnavailable,
             'icmp_failed_restored' => l10n.pingIcmpNoReplyRestored,
             'icmp_restore_failed' => l10n.pingIcmpRestoreFailed,
@@ -405,6 +415,14 @@ extension _HomeController on _ElarniHomeState {
       }
     }
   }
+
+  // macOS refuses what its tunnel would answer itself while connected.
+  bool _skippedProbe(Object error) =>
+      error is PlatformException &&
+      const {
+        'unsupported_ping_method',
+        'disconnect_to_test',
+      }.contains(error.code);
 
   // The core accepts only a successful status, so a cleared or bad field
   // falls back to the default check instead of failing every server.
@@ -533,6 +551,7 @@ extension _HomeController on _ElarniHomeState {
       (queues[_findNode(id)?.probeKey ?? id] ??= []).add(id);
     }
     final busy = <String, int>{};
+    var needsDisconnect = false;
     Completer<void>? freed;
     Future<void> worker() async {
       while (mounted && run == _pingRun && queues.isNotEmpty) {
@@ -564,9 +583,10 @@ extension _HomeController on _ElarniHomeState {
         } on Object catch (error) {
           if (mounted && run == _pingRun) {
             _set(() {
-              if (error is PlatformException &&
-                  error.code == 'unsupported_ping_method') {
+              if (_skippedProbe(error)) {
                 _pingSkipped.add(nodeId);
+                needsDisconnect |=
+                    (error as PlatformException).code == 'disconnect_to_test';
               } else {
                 _pingUnavailable.add(nodeId);
               }
@@ -587,8 +607,16 @@ extension _HomeController on _ElarniHomeState {
     }
 
     try {
+      // While the Linux VPN runs, its root probe service starts 8 probe cores at
+      // a time; probes queued behind them would run out their 7 s bound.
+      final width =
+          widget.linux &&
+              _settings.xrayTunEnabled &&
+              !{TunnelState.disconnected, TunnelState.prepared}.contains(_state)
+          ? 8
+          : 32;
       await Future.wait(
-        List.generate(nodeIds.length.clamp(0, 32), (_) => worker()),
+        List.generate(nodeIds.length.clamp(0, width), (_) => worker()),
       );
       if (mounted && run == _pingRun) {
         _set(() {
@@ -603,7 +631,10 @@ extension _HomeController on _ElarniHomeState {
             final skipped = nodeIds.where(_pingSkipped.contains).length;
             _message = [
               l10n.pingTested(tested, nodeIds.length - skipped),
-              if (skipped != 0) l10n.pingSkippedIncompatible(skipped),
+              if (skipped != 0)
+                needsDisconnect
+                    ? l10n.pingSkippedWhileConnected(skipped)
+                    : l10n.pingSkippedIncompatible(skipped),
             ].join(' ');
           }
         });
@@ -765,12 +796,14 @@ extension _HomeController on _ElarniHomeState {
   Future<void> _refreshSubscriptions() async {
     try {
       final value = await widget.tunnelControl.subscriptions();
+      _subscriptionsLoaded = true;
       // An unchanged periodic snapshot must not rebuild every server row.
       if (mounted &&
           (value.signature == null ||
               value.signature != _subscriptions.signature))
         _set(() => _applySnapshot(value));
     } on Object {
+      _subscriptionsLoaded = false;
       if (mounted) {
         _set(() => _message = l10n.subscriptionsNotLoaded);
       }
@@ -1247,7 +1280,11 @@ extension _HomeController on _ElarniHomeState {
       final liveness = state == TunnelState.connected
           ? widget.tunnelControl.liveness
           : null;
-      if (_state != state || !_stateAvailable || _liveness != liveness)
+      final available = supportStates.contains(value) && value != 'unavailable';
+      // The poll runs every second; an unchanged unavailable state must not repaint.
+      if (_state != state ||
+          _stateAvailable != available ||
+          _liveness != liveness)
         _set(() {
           if (liveness == 'noTraffic' && _liveness != 'noTraffic')
             _noTrafficAt = DateTime.now();
@@ -1272,8 +1309,7 @@ extension _HomeController on _ElarniHomeState {
             _healthAt = null;
           }
           _state = state;
-          _stateAvailable =
-              supportStates.contains(value) && value != 'unavailable';
+          _stateAvailable = available;
           if (_stateAvailable) _lastKnownState = state;
         });
     } on Object {

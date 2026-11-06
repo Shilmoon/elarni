@@ -21,9 +21,6 @@ func heapInUse() uint64 {
 // Each direct UDP flow held a 64 KiB read buffer while it waited for a reply; a
 // datagram must still arrive whole, and one queued behind another must not wait.
 func TestWaitingUDPFlowsHoldNoReadBuffer(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows reads into a buffer per flow")
-	}
 	const flows = 200
 	before := heapInUse()
 	sockets := make([]*gonet.UDPConn, flows)

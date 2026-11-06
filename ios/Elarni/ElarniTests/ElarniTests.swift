@@ -787,6 +787,15 @@ final class ElarniTests: XCTestCase {
     try await kept.saveSettings(original)
   }
 
+  // iOS starts a killed extension again only through On Demand, so a new install has it on;
+  // settings saved with it off keep that choice.
+  func testOnDemandIsOnForNewInstallsAndKeepsASavedChoice() throws {
+    XCTAssertTrue(IOSTunnelSettings().onDemandEnabled, "a new install leaves a killed VPN down")
+    var off = IOSTunnelSettings(); off.onDemandEnabled = false
+    XCTAssertFalse(try JSONDecoder().decode(IOSTunnelSettings.self, from: JSONEncoder().encode(off)).onDemandEnabled,
+      "a saved choice to keep On Demand off was overridden")
+  }
+
   // The extension has about 50 MB and copies the route model several times, so a
   // model over the iOS cap stops before the extension with its own message.
   func testOversizedRoutingProfileFailsWithClearError() async throws {
@@ -910,7 +919,8 @@ final class ElarniTests: XCTestCase {
     model.vpn.manager = tunnel
     try await model.vpn.refreshProvider()
     await model.disconnect()
-    var next = original; next.connectOnUntrustedWiFi = true; next.trustedWiFiNetworks = ["Home"]
+    // The rule applies while On Demand itself is off, which a new install no longer is.
+    var next = original; next.onDemandEnabled = false; next.connectOnUntrustedWiFi = true; next.trustedWiFiNetworks = ["Home"]
     try await model.saveSettings(next)
     let rules = tunnel.onDemandRules ?? []
     XCTAssertTrue(tunnel.isOnDemandEnabled, "Turning the rule on did not arm it before Connect")

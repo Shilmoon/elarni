@@ -911,6 +911,59 @@ void main() {
     );
 
     testWidgets(
+      'tests the VPN cannot run while connected are skipped on ${platform.name}',
+      (tester) async {
+        final control = FakeTunnelControl()..phase = 'connected';
+        await tester.binding.setSurfaceSize(const Size(1200, 900));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await tester.pumpWidget(
+          ElarniApp(
+            tunnelControl: control,
+            windows: platform == TargetPlatform.windows,
+          ),
+        );
+        await tester.pumpAndSettle();
+        control.onPing = (id) async {
+          if (id == 'a') throw PlatformException(code: 'disconnect_to_test');
+          return PingResult(
+            nodeId: id,
+            status: 'success',
+            latencyMs: 20,
+            timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
+          );
+        };
+        final ping = find.byKey(const ValueKey('ping:a'));
+        await reveal(tester, ping);
+        await tester.tap(ping);
+        await tester.pumpAndSettle();
+        expect(
+          find.descendant(of: ping, matching: find.text('Skipped')),
+          findsOneWidget,
+        );
+        await tester.drag(find.byType(Scrollable).first, const Offset(0, 5000));
+        await tester.pumpAndSettle();
+        expect(
+          find.text(
+            'Skipped: while connected, this test can’t reach the server. Disconnect to test it.',
+          ),
+          findsOneWidget,
+        );
+
+        await reveal(tester, find.byKey(const Key('ping-all')));
+        await tester.tap(find.byKey(const Key('ping-all')));
+        await tester.pumpAndSettle();
+        await tester.drag(find.byType(Scrollable).first, const Offset(0, 5000));
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Tested 1 of 1 nodes. Skipped 1: disconnect to test them.'),
+          findsOneWidget,
+        );
+        await tester.pumpWidget(const SizedBox());
+      },
+      variant: TargetPlatformVariant.only(platform),
+    );
+
+    testWidgets(
       'ICMP requires confirmation and reports restoration failure on ${platform.name}',
       (tester) async {
         var probes = 0;
@@ -1314,9 +1367,28 @@ void main() {
       expect(find.text('Tunnel settings'), findsNothing);
       await openSettings(tester);
       await selectCategory(tester, SettingsCategory.connection);
-      expect(find.text('System-wide VPN'), findsOneWidget);
+      expect(find.text('Connection mode'), findsOneWidget);
+      await tester.tap(find.text('Local proxy only'));
+      await tester.pumpAndSettle();
+      expect(
+        find.widgetWithText(MenuItemButton, 'System-wide VPN'),
+        findsOneWidget,
+      );
+      await tester.tap(find.widgetWithText(MenuItemButton, 'System proxy'));
+      await tester.pumpAndSettle();
+      expect(
+        (control.settings.systemProxyEnabled, control.settings.xrayTunEnabled),
+        (true, false),
+      );
       await reveal(tester, find.text('SOCKS5 and HTTP ports'));
       expect(find.text('SOCKS5 and HTTP ports'), findsOneWidget);
+      // The listeners System proxy mode needs are fixed while it is on.
+      expect(
+        find.text(
+          'In System proxy mode, apps on this computer use the HTTP port without a login.',
+        ),
+        findsOneWidget,
+      );
       await selectCategory(tester, SettingsCategory.ping);
       expect(find.byKey(const Key('ping-url')), findsNothing);
       await tester.tap(find.text('Direct TCP'));
@@ -1793,6 +1865,59 @@ void main() {
     );
   });
 
+  // Windows and Linux reconnect until Stop by default, so the switch would do nothing.
+  testWidgets('Windows offers no On Demand switch', (tester) async {
+    final control = FakeTunnelControl();
+    await pumpApp(tester, control, windows: true);
+    await openSettings(tester);
+    await reveal(tester, find.text('Connect on untrusted Wi-Fi'));
+    expect(find.text('On Demand'), findsNothing);
+  });
+
+  // While minimized the window must stay idle between catalog changes.
+  testWidgets(
+    'the idle Windows window neither rebuilds for a growing health age nor polls servers',
+    (tester) async {
+      final control = FakeTunnelControl()
+        ..automation = {
+          'enabled': true,
+          'policySupported': true,
+          'status': 'healthy',
+          'healthNodeID': 'a',
+          'healthAgeSeconds': 1.0,
+        };
+      await pumpApp(tester, control, windows: true);
+      final reads = control.subscriptionReads;
+      var rebuilds = 0;
+      debugOnRebuildDirtyWidget = (element, _) {
+        if (element.widget is ElarniHome) rebuilds++;
+      };
+      try {
+        for (final age in [6.0, 11.0, 16.0]) {
+          control.automation = {...control.automation, 'healthAgeSeconds': age};
+          await tester.pump(const Duration(seconds: 5));
+        }
+        expect(rebuilds, 0);
+        expect(control.subscriptionReads, reads);
+        // Past 90 s the page says the check is stale.
+        control.automation = {...control.automation, 'healthAgeSeconds': 95.0};
+        await tester.pump(const Duration(seconds: 5));
+        await tester.pump();
+        expect(rebuilds, greaterThan(0));
+      } finally {
+        debugOnRebuildDirtyWidget = null;
+      }
+    },
+  );
+
+  testWidgets('macOS still polls servers', (tester) async {
+    final control = FakeTunnelControl();
+    await pumpApp(tester, control);
+    final reads = control.subscriptionReads;
+    await tester.pump(const Duration(seconds: 5));
+    expect(control.subscriptionReads, greaterThan(reads));
+  });
+
   testWidgets('Windows lets this account connect without the approval prompt', (
     tester,
   ) async {
@@ -1844,8 +1969,8 @@ void main() {
     await tester.pumpAndSettle();
     await openSettings(tester);
     await selectCategory(tester, SettingsCategory.connection);
-    await reveal(tester, find.text('System-wide VPN'));
-    expect(find.text('System-wide VPN'), findsOneWidget);
+    await reveal(tester, find.text('Connection mode'));
+    expect(find.text('Connection mode'), findsOneWidget);
     expect(find.text('Connect without administrator approval'), findsNothing);
   });
 

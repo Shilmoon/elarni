@@ -132,18 +132,19 @@ impl IpStackUdpStream {
 
     fn send_datagram(&self, payload: &[u8]) -> std::io::Result<()> {
         let packet = self.create_rev_packet(TTL, payload.to_vec())?;
-        let bytes = packet.to_bytes().map_err(std::io::Error::from)?;
-        if bytes.len() <= usize::from(self.mtu) {
-            return self.send_packet(packet);
-        }
-
-        // The UDP header/checksum describes the entire datagram. Only IP is fragmented.
-        static NEXT_IDENTIFICATION: AtomicU32 = AtomicU32::new(0);
-        let identification = NEXT_IDENTIFICATION.fetch_add(1, Ordering::Relaxed);
         let (header_len, fragment_header_len) = match &packet.ip {
             IpHeader::Ipv4(ip) => (ip.header_len(), 0),
             IpHeader::Ipv6(ip) => (ip.header_len(), Ipv6FragmentHeader::LEN),
         };
+        // Elarni: compute the size; serializing every datagram only to measure it copied it once more.
+        if header_len + UdpHeader::LEN + payload.len() <= usize::from(self.mtu) {
+            return self.send_packet(packet);
+        }
+
+        // The UDP header/checksum describes the entire datagram. Only IP is fragmented.
+        let bytes = packet.to_bytes().map_err(std::io::Error::from)?;
+        static NEXT_IDENTIFICATION: AtomicU32 = AtomicU32::new(0);
+        let identification = NEXT_IDENTIFICATION.fetch_add(1, Ordering::Relaxed);
         let capacity = usize::from(self.mtu)
             .checked_sub(header_len + fragment_header_len)
             .map(|size| size & !7)
@@ -276,6 +277,8 @@ impl AsyncWrite for IpStackUdpStream {
 
 impl Drop for IpStackUdpStream {
     fn drop(&mut self) {
+        // Elarni: closed before the removal is announced, which removes only a closed session.
+        self.stream_receiver.close();
         if let Some(messenger) = self.destroy_messenger.take() {
             let _ = messenger.send(());
         }
@@ -302,6 +305,26 @@ mod tests {
 
     // A datagram larger than the caller's buffer used to panic `put_slice`; it
     // must now truncate to the buffer instead. Covers both branches of poll_read.
+
+    // The size check computes the length now instead of serializing the packet: a datagram that fills the
+    // MTU exactly still goes out whole, one byte more is fragmented, and no packet exceeds the MTU.
+    #[tokio::test]
+    async fn a_datagram_is_fragmented_only_past_the_mtu() {
+        for (client, server, header) in [("10.0.0.2:1234", "1.1.1.1:443", 20), ("[fd00::2]:1234", "[2001:db8::1]:443", 40)] {
+            for (extra, packets) in [(0, 1), (1, 2)] {
+                let (up_tx, mut up_rx) = mpsc::unbounded_channel();
+                let (client, server) = (client.parse().unwrap(), server.parse().unwrap());
+                let stream = IpStackUdpStream::new(client, server, Vec::new(), up_tx, 1500, Duration::from_secs(30), None);
+                stream.send_datagram(&vec![1u8; 1500 - header - UdpHeader::LEN + extra]).unwrap();
+                let mut sizes = Vec::new();
+                while let Ok(packet) = up_rx.try_recv() {
+                    sizes.push(packet.to_bytes().unwrap().len());
+                }
+                assert_eq!(sizes.len(), packets, "{client}, {extra} bytes past the MTU: {sizes:?}");
+                assert!(sizes.iter().all(|&size| size <= 1500), "{sizes:?}");
+            }
+        }
+    }
 
     #[tokio::test]
     async fn poll_read_truncates_oversized_first_payload() {

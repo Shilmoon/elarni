@@ -55,7 +55,10 @@ extension _ProxyAutomation on DesktopProxy {
         }, automatic: true);
       } else if (route != null) {
         await _mutate((candidate) async {
-          await candidate.refreshManaged(route['id']! as String);
+          await candidate.refreshManaged(
+            route['id']! as String,
+            proxy: _tunnelFetchProxy(),
+          );
           return candidate.routingSnapshot();
         });
       } else {
@@ -89,13 +92,19 @@ extension _ProxyAutomation on DesktopProxy {
   // list connects, once per join. Other networks and a Stop stay as they are.
   Future<void> _wifiTick() async {
     if (_catalog?.settings.connectOnUntrustedWiFi != true) {
-      _wifi = _wifiStatus = null;
+      _wifi = _wifiStatus = _wifiPath = null;
       return;
     }
     if (_wifiBusy || _disposed || _storageLost) return;
     _wifiBusy = true;
     try {
+      // Linux reads the name with a process; a join changes the addresses, so
+      // read on a change and otherwise every 12th interval (a minute).
+      final path = await _physicalPath();
+      if (path == _wifiPath && ++_wifiSkips < 12) return;
       final reading = await _wifiNetwork();
+      _wifiPath = path;
+      _wifiSkips = 0;
       final settings = _catalog?.settings;
       if (settings == null || !settings.connectOnUntrustedWiFi) return;
       _wifiStatus = reading.denied ? 'locationDenied' : 'ok';
@@ -118,6 +127,41 @@ extension _ProxyAutomation on DesktopProxy {
     } finally {
       _wifiBusy = false;
     }
+  }
+
+  // The addresses of usable physical links, sorted; empty when offline.
+  Future<String> _physicalPath() async {
+    final interfaces = await NetworkInterface.list(
+      includeLoopback: false,
+      includeLinkLocal: false,
+    );
+    final paths = <String>[];
+    for (final interface in interfaces) {
+      if (!DesktopAutomation.physicalInterface(
+        interface.name,
+        linux: Platform.isLinux,
+      ))
+        continue;
+      if (Platform.isLinux) {
+        // Addresses survive an unplugged/admin-down link. Linux considers
+        // UP and UNKNOWN usable; the latter supports virtual/older drivers.
+        // Sync: sysfs answers from memory; an async read would hop through
+        // the IO thread pool for every interface, every second.
+        try {
+          final state = File(
+            '/sys/class/net/${interface.name}/operstate',
+          ).readAsStringSync().trim();
+          if (state != 'up' && state != 'unknown') continue;
+        } on FileSystemException {
+          continue; // The interface may disappear during enumeration.
+        }
+      }
+      paths.addAll(
+        interface.addresses.map((a) => '${interface.index}:${a.address}'),
+      );
+    }
+    paths.sort();
+    return paths.join('|');
   }
 
   CatalogMap _automationStatus() => {
@@ -148,6 +192,11 @@ extension _ProxyAutomation on DesktopProxy {
     'whitelistMode': _automation.whitelist,
   };
 
+  static String _serverRevision(DesktopCatalog catalog) {
+    final node = catalog.node(catalog.selected!);
+    return '${node['id']}:${node['configurationRevision']}';
+  }
+
   bool _russianEntry(String id) =>
       (_automationConfig['russianEntryNodeIDs'] as List? ?? []).contains(id);
 
@@ -169,19 +218,25 @@ extension _ProxyAutomation on DesktopProxy {
 
   Future<void> _persistAutomation() async {
     if (_disposed || _storageLost) return;
+    final data = _catalog!.data, episode = _automation.episode;
+    final saved = catalogMap(data['automationEpisode'] ?? {});
+    final writeEpisode =
+        data.containsKey('automationEpisode') || _automation.recovering;
+    final writeIntent =
+        data.containsKey('connectionIntent') || _automation.intent;
+    // An episode's start, exhaustion and end are saved, not each attempt.
+    if ((!writeEpisode ||
+            saved['exhausted'] == episode['exhausted'] &&
+                saved['interrupted'] == episode['interrupted']) &&
+        (!writeIntent || data['connectionIntent'] == _automation.intent))
+      return;
     if (_operation != null) throw desktopError('busy');
     final done = _operation = Completer<void>();
     final generation = _generation;
     final candidate = _catalog!.copy();
     try {
-      if (candidate.data.containsKey('automationEpisode') ||
-          _automation.attempts > 0 ||
-          _automation.exhausted ||
-          _automation.retryAt != null)
-        candidate.data['automationEpisode'] = _automation.episode;
-      if (candidate.data.containsKey('connectionIntent') || _automation.intent)
-        candidate.data['connectionIntent'] = _automation.intent;
-      if (jsonEncode(candidate.data) == jsonEncode(_catalog!.data)) return;
+      if (writeEpisode) candidate.data['automationEpisode'] = episode;
+      if (writeIntent) candidate.data['connectionIntent'] = _automation.intent;
       await _save({'version': 1, 'committed': candidate.data});
       // Mirror the saved intent even when a Stop cancelled this save, so the
       // Stop's own save sees the difference and overwrites it.
@@ -193,8 +248,10 @@ extension _ProxyAutomation on DesktopProxy {
     }
   }
 
-  void _checkAutomation(int epoch) {
-    if (!_disposed &&
+  // The 120 s budget and exhaustion end failover, not retrying the selected server.
+  void _checkAutomation(int epoch, {bool failover = true}) {
+    if (failover &&
+        !_disposed &&
         _automation.intent &&
         epoch == _automation.epoch &&
         _automation.episodeStarted != null &&
@@ -209,7 +266,7 @@ extension _ProxyAutomation on DesktopProxy {
         !_automation.online ||
         _automation.sleeping ||
         epoch != _automation.epoch ||
-        _automation.exhausted) {
+        failover && _automation.exhausted) {
       throw desktopError('cancelled');
     }
   }
@@ -218,6 +275,7 @@ extension _ProxyAutomation on DesktopProxy {
     var qualifying = 0;
     var invalidTarget = false;
     final targets = catalogList(_automationConfig['targets']);
+    final runtime = _connectedAt;
     for (final target in targets) {
       try {
         await _ping(
@@ -243,6 +301,14 @@ extension _ProxyAutomation on DesktopProxy {
           at: _now,
           epoch: _automation.epoch,
         );
+        // Traffic passed, so liveness need not launch its own probe core.
+        if (_connectedAt == runtime && _state == 'connected') {
+          _liveness = 'ok';
+          _livenessFailures = 0;
+          _trafficServer = _serverRevision(catalog);
+          _livenessAt = _now;
+          _livenessUplink = (_latestMetrics['uplinkBytes'] as num?)?.toInt();
+        }
         return;
       } on PlatformException catch (error) {
         final details = error.details is Map
@@ -284,9 +350,29 @@ extension _ProxyAutomation on DesktopProxy {
     throw desktopError(code);
   }
 
-  Future<void> _replaceAutomatic(String node, int epoch) async {
-    _checkAutomation(epoch);
+  Future<void> _recoverAllowed(int epoch) async {
+    final current = _catalog!.selected!;
+    final candidates = _automation.recoveryCandidates(
+      _automationConfig['policy']! as String,
+      _recoveryOrder(current),
+      current,
+      _now,
+    );
+    final deadline = _now + 60;
+    var index = 0;
+    String nextCandidate() {
+      _checkAutomation(epoch);
+      if (index == candidates.length) throw desktopError('exhaustedCandidates');
+      if (_now + 10 > deadline) throw desktopError('deadline');
+      return candidates[index++];
+    }
+
+    var node = nextCandidate();
     _automation.status = 'replacing';
+    // Validate traffic through the managed replacement itself. Never send a
+    // direct-path candidate probe merely because the current path failed.
+    // One checkpoint covers the round: a failed candidate is followed by the
+    // next, not by a rollback save and a restart of the server that failed.
     await _mutate(
       (candidate) async {
         _checkAutomation(epoch);
@@ -299,54 +385,36 @@ extension _ProxyAutomation on DesktopProxy {
         await _automaticHealth(candidate);
         _checkAutomation(epoch);
       },
-    );
-    _checkAutomation(epoch);
-  }
-
-  Future<void> _recoverAllowed(int epoch) async {
-    final current = _catalog!.selected!;
-    final candidates = _automation.recoveryCandidates(
-      _automationConfig['policy']! as String,
-      _recoveryOrder(current),
-      current,
-      _now,
-    );
-    final deadline = _now + 60;
-    for (final node in candidates) {
-      _checkAutomation(epoch);
-      if (_now + 10 > deadline) throw desktopError('deadline');
-      try {
-        // Validate traffic through the managed replacement itself. Never send
-        // a direct-path candidate probe merely because the current path failed.
-        await _replaceAutomatic(node, epoch);
-        _candidateFailures.remove(node);
-        _automation.lastSwitch = _now;
-        _automation.invalidate();
-        _automation.healthy(_now);
-        _verifiedHealth = (node: node, at: _now, epoch: _automation.epoch);
-        _automation.status = 'selected';
-        return;
-      } on PlatformException catch (error) {
+      next: (error) {
         _checkAutomation(epoch);
+        final code = error is PlatformException
+            ? error.code
+            : 'operation_failed';
         if (_storageLost ||
             {
-              'rollback_failed',
               'elevation_denied',
               'elevation_failed',
               'listener_unavailable',
               'storage_unavailable',
-            }.contains(error.code))
-          rethrow;
+            }.contains(code))
+          return null;
         _automation.cooldown[node] = _now + 60;
-        _candidateFailures[node] = error.code;
-      }
-    }
-    throw desktopError('exhaustedCandidates');
+        _candidateFailures[node] = code;
+        return node = nextCandidate();
+      },
+    );
+    _checkAutomation(epoch);
+    _candidateFailures.remove(node);
+    _automation.lastSwitch = _now;
+    _automation.invalidate();
+    _automation.healthy(_now);
+    _verifiedHealth = (node: node, at: _now, epoch: _automation.epoch);
+    _automation.status = 'selected';
   }
 
   // Checks the connection once after Connect, then each interval while traffic
-  // leaves or the last check failed. Recovery stays with failover; this only
-  // reports.
+  // leaves or the last check failed. Two failures in a row restart the core
+  // (see _automationTick).
   Future<void> _livenessTick() async {
     if (_livenessBusy ||
         _disposed ||
@@ -369,7 +437,7 @@ extension _ProxyAutomation on DesktopProxy {
       }
     }
     _livenessBusy = true;
-    final generation = _generation, catalog = _catalog!;
+    final generation = _generation, catalog = _catalog!, runtime = _connectedAt;
     var result = 'noTraffic';
     try {
       for (final target in _livenessTargets) {
@@ -396,8 +464,14 @@ extension _ProxyAutomation on DesktopProxy {
     } finally {
       _livenessBusy = false;
     }
-    if (generation != _generation || _state != 'connected') return;
+    // A restart during the check reset liveness for the new core.
+    if (generation != _generation ||
+        _state != 'connected' ||
+        _connectedAt != runtime)
+      return;
     _liveness = result;
+    _livenessFailures = result == 'ok' ? 0 : _livenessFailures + 1;
+    if (result == 'ok') _trafficServer = _serverRevision(catalog);
     _livenessAt = _now;
     _livenessUplink = counter('uplinkBytes');
   }
@@ -411,66 +485,58 @@ extension _ProxyAutomation on DesktopProxy {
         _storageLost)
       return;
     final enabled = _automationConfig['enabled'] == true;
-    // A daemon resumes saved intent after a restart even without failover.
-    if (!enabled && !_catalog!.settings.onDemandEnabled && !unattended) {
-      _automation.status = 'disabled';
-      return;
-    }
+    // Saved intent alone reconnects the selected server; only failover to
+    // other servers needs automation.
     // Without a server every connect fails, so retrying only rewrites storage.
     if (!_automation.intent || _catalog!.selected == null) {
       _automation.status = 'intentRequired';
       return;
     }
-    if (_automation.sleeping) {
+    if (_automation.stillSleeping(_now)) {
       _automation.status = 'sleeping';
       return;
     }
+    // The core runs, but a server that passed traffic failed two liveness
+    // checks in a row. One that never passed (its exit may refuse the check
+    // targets) is only reported, so it cannot restart forever.
+    final dead =
+        _state == 'connected' &&
+        _livenessFailures >= 2 &&
+        _trafficServer == _serverRevision(_catalog!);
+    // A plain session that is up needs no path reads or saves; one that
+    // passes traffic again ends its episode.
+    if (!enabled &&
+        _state == 'connected' &&
+        !dead &&
+        (_liveness != 'ok' || !_automation.recovering))
+      return;
     _automationBusy = true;
     try {
-      final interfaces = await NetworkInterface.list(
-        includeLoopback: false,
-        includeLinkLocal: false,
-      );
-      final paths = <String>[];
-      for (final interface in interfaces) {
-        if (!DesktopAutomation.physicalInterface(
-          interface.name,
-          linux: Platform.isLinux,
-        ))
-          continue;
-        if (Platform.isLinux) {
-          // Addresses survive an unplugged/admin-down link. Linux considers
-          // UP and UNKNOWN usable; the latter supports virtual/older drivers.
-          try {
-            final state = (await File(
-              '/sys/class/net/${interface.name}/operstate',
-            ).readAsString()).trim();
-            if (state != 'up' && state != 'unknown') continue;
-          } on FileSystemException {
-            continue; // The interface may disappear during enumeration.
-          }
-        }
-        paths.addAll(
-          interface.addresses.map((a) => '${interface.index}:${a.address}'),
-        );
+      if (!enabled && _state == 'connected' && !dead) {
+        _automation.healthy(_now);
+        await _persistAutomation();
+        return;
       }
-      paths.sort();
-      _automation.pathChanged(paths.join('|'), paths.isNotEmpty, _now);
+      // Each read costs about a millisecond; a running session needs fewer.
+      if (_state != 'connected' || _now - _pathReadAt >= 5) {
+        _pathReadAt = _now;
+        final path = await _physicalPath();
+        _automation.pathChanged(path, path.isNotEmpty, _now);
+      }
       if (!_automation.online) {
         _automation.status = 'offline';
         return;
       }
       if (_automation.exhausted) {
         _automation.status = 'exhausted';
-        if (!unattended) return;
-        if (!_automation.rearmUnattended(_now)) return;
-        await _persistAutomation();
+        // A daemon allows failover again after the SNI freeze has passed.
+        if (unattended && _automation.rearmUnattended(_now))
+          await _persistAutomation();
       }
       if (_operation != null) return;
       final epoch = _automation.epoch;
-      _checkAutomation(epoch);
-      if (enabled) DesktopAutomation.validate(_automationConfig, _catalog!);
-      if (_state != 'connected' && _automation.retryAt == null) {
+      _checkAutomation(epoch, failover: false);
+      if ((_state != 'connected' || dead) && _automation.retryAt == null) {
         _automation.scheduleRetry(_now);
         await _persistAutomation();
         return;
@@ -482,25 +548,26 @@ extension _ProxyAutomation on DesktopProxy {
               _now < _automation.healthAt!))
         return;
       if (retry) await _persistAutomation();
-      _checkAutomation(epoch);
+      _checkAutomation(epoch, failover: false);
+      if (enabled) DesktopAutomation.validate(_automationConfig, _catalog!);
+      final policy = _automationConfig['policy']! as String;
+      final failover = enabled && policy != 'fixed' && !_automation.exhausted;
       if (_state != 'connected') {
         try {
           await _invoke('connect', {}, automatic: true);
         } on PlatformException catch (error) {
-          _checkAutomation(epoch);
-          if (!enabled ||
-              _automationConfig['policy'] == 'fixed' ||
-              error.code != 'connection_failed')
-            rethrow;
+          _checkAutomation(epoch, failover: false);
+          if (!failover || error.code != 'connection_failed') rethrow;
           await _recoverAllowed(epoch);
           await _persistAutomation();
           return;
         }
-        _checkAutomation(epoch);
-      }
-      if (!enabled) {
-        _automation.healthy(_now);
-        await _persistAutomation();
+        _checkAutomation(epoch, failover: false);
+        // Liveness, or the health check, ends the episode once traffic passes.
+        if (!enabled) return;
+      } else if (dead) {
+        await _restart();
+        _automation.healthAt = _now;
         return;
       }
       var healthy = false;
@@ -511,26 +578,26 @@ extension _ProxyAutomation on DesktopProxy {
         _automation.healthy(_now);
       } on PlatformException catch (error) {
         if (error.code != 'endpointFailure') rethrow;
-        _automation.failures++;
-        if (_automation.failures < 3 && !retry) {
-          _automation.healthAt = _now + _automationRetrySeconds;
-          _automation.status = 'healthFailure';
+        if (!_automation.checkFailed(
+          _now,
+          retrying: retry,
+          recheck: _automationRetrySeconds,
+        ))
           return;
-        }
       } finally {
         _operation = null;
         done.complete();
       }
-      _checkAutomation(epoch);
-      final policy = _automationConfig['policy']! as String;
+      _checkAutomation(epoch, failover: false);
       final current = _catalog!.selected!;
-      if (!healthy && policy != 'fixed') {
+      if (!healthy && failover) {
         await _recoverAllowed(epoch);
         await _persistAutomation();
         return;
       }
       String? chosen = current;
-      if (policy != 'fixed' &&
+      if (healthy &&
+          policy != 'fixed' &&
           (_now - (_automation.lastOptimization ?? -1000) >= 300 &&
               _now - (_automation.lastSwitch ?? -1000) >= 60)) {
         _automation.lastOptimization = _now;
@@ -600,21 +667,23 @@ extension _ProxyAutomation on DesktopProxy {
           _now,
         );
       }
-      if ((!healthy || chosen != current) && chosen != null) {
+      // Restarting the selected server after failed checks is no failover.
+      final switching = chosen != current;
+      if ((!healthy || switching) && chosen != null) {
         _automation.status = 'replacing';
         await _mutate(
           (candidate) async {
-            _checkAutomation(epoch);
+            _checkAutomation(epoch, failover: switching);
             candidate.data['selectedNodeId'] = chosen;
             return {};
           },
           forceRestart: !healthy,
           verifyRuntime: (candidate) async {
             await _automaticHealth(candidate);
-            _checkAutomation(epoch);
+            _checkAutomation(epoch, failover: switching);
           },
         );
-        _checkAutomation(epoch);
+        _checkAutomation(epoch, failover: switching);
         _automation.lastSwitch = _now;
         _automation.invalidate();
         _automation.healthy(_now);
@@ -625,10 +694,11 @@ extension _ProxyAutomation on DesktopProxy {
       }
       await _persistAutomation();
     } on PlatformException catch (error) {
+      // Another operation held the controller; that is no failed attempt.
       if (_disposed ||
           !_automation.intent ||
           _automation.sleeping ||
-          error.code == 'cancelled')
+          {'cancelled', 'busy'}.contains(error.code))
         return;
       _automation.status = error.code;
       if ([

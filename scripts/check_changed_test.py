@@ -9,6 +9,8 @@ import unittest
 
 SCRIPT = Path(__file__).with_name('check-changed').resolve()
 DESKTOP = sys.platform != 'darwin'
+# CI's static checks run on Linux, so a Go or Rust change selects them there.
+LINT = ['lint'] if sys.platform.startswith('linux') else []
 
 
 class CheckChangedSelection(unittest.TestCase):
@@ -46,16 +48,16 @@ class CheckChangedSelection(unittest.TestCase):
     def test_untracked_and_deleted_files_select_their_checks(self):
         self.write('Vendor/Xray-core/proxy/new.go')
         (self.root / 'native/elarni-domain/src/lib.rs').unlink()
-        self.assertEqual(self.selection()[0], ['go', 'rust', 'windows'] if DESKTOP else ['go', 'rust', 'swift'])
+        self.assertEqual(self.selection()[0], sorted(['go', 'rust', 'windows'] + LINT) if DESKTOP else ['go', 'rust', 'swift'])
 
     def test_the_wireguard_go_fork_runs_the_go_checks(self):
         self.write('Vendor/wireguard-go/device/send.go')
-        self.assertEqual(self.selection()[0], ['go', 'windows'] if DESKTOP else ['go', 'swift'])
+        self.assertEqual(self.selection()[0], sorted(['go', 'windows'] + LINT) if DESKTOP else ['go', 'swift'])
 
     def test_the_quic_go_forks_run_the_go_checks(self):
         for fork in ('quic-go', 'sagernet-quic-go'):
             self.write(f'Vendor/{fork}/flow_controller_connection.go')
-            self.assertEqual(self.selection()[0], ['go', 'windows'] if DESKTOP else ['go', 'swift'])
+            self.assertEqual(self.selection()[0], sorted(['go', 'windows'] + LINT) if DESKTOP else ['go', 'swift'])
 
     def test_documentation_only_runs_nothing(self):
         self.write('README.md', 'changed\n')
@@ -76,7 +78,7 @@ class CheckChangedSelection(unittest.TestCase):
     def test_scripts_and_tun2proxy_map_to_their_own_checks(self):
         self.write('scripts/release_support.py')
         self.write('Vendor/tun2proxy/src/lib.rs')
-        self.assertEqual(self.selection()[0], ['rust', 'scripts'] if DESKTOP else ['rust', 'scripts', 'swift'])
+        self.assertEqual(self.selection()[0], sorted(['rust', 'scripts'] + LINT) if DESKTOP else ['rust', 'scripts', 'swift'])
 
     def test_failure_output_prints_on_a_legacy_console_code_page(self):
         # Flutter frames failures with box-drawing characters, which cp1251 cannot encode.
@@ -99,9 +101,27 @@ class CheckChangedSelection(unittest.TestCase):
 
     def test_unmapped_platform_code_is_reported_not_ignored(self):
         self.write('android/app/Main.kt')
+        self.write('.github/workflows/checks.yml')
         selected, notes = self.selection()
         self.assertEqual(selected, [])
         self.assertIn('android/app/Main.kt', notes)
+        self.assertIn('.github/workflows/checks.yml', notes)
+        # Nothing ran, so a real run must not report a pass.
+        result = subprocess.run([sys.executable, str(self.root / 'scripts/check-changed')], cwd=self.root,
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('UNCHECKED', result.stdout)
+
+    def test_a_check_that_passed_on_its_retry_prints_its_flaky_line(self):
+        (self.root / 'scripts/check-tests').write_text("#!/bin/sh\necho 'FLAKY splithttp: failed, then passed when rerun'\n")
+        (self.root / 'scripts/check-windows').write_text('raise SystemExit(0)\n')
+        self.git('add', '-A')
+        self.git('commit', '-qm', 'fake checks')
+        self.write('lib/app.dart', 'changed\n')
+        result = subprocess.run([sys.executable, str(self.root / 'scripts/check-changed')], cwd=self.root,
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('FLAKY splithttp', result.stdout)
 
 
 if __name__ == '__main__':

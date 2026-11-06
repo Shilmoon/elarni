@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"time"
 
 	"github.com/makiuchi-d/gozxing"
 	"github.com/makiuchi-d/gozxing/qrcode"
@@ -47,6 +49,21 @@ func dataRequest(method string, payload json.RawMessage) (any, error, bool) {
 		}
 		text, err := decodeQR(data)
 		return map[string]any{"text": text}, err, true
+	case "lookupHost":
+		var request struct {
+			Host string `json:"host"`
+		}
+		if json.Unmarshal(payload, &request) != nil || request.Host == "" || len(request.Host) > 253 {
+			return nil, errors.New("invalid_request"), true
+		}
+		// The bound the app's own lookup had.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		addresses, err := share.LookupHost(ctx, request.Host)
+		if err != nil || len(addresses) == 0 {
+			return nil, errors.New("dns_failed"), true
+		}
+		return map[string]any{"addresses": addresses}, nil, true
 	case "fetchSubscription":
 		var request fetchRequest
 		if json.Unmarshal(payload, &request) != nil {

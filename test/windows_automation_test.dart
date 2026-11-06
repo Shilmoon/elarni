@@ -254,6 +254,97 @@ void main() {
     },
   );
 
+  // A drop longer than the failover budget must not leave the VPN down while
+  // the user still wants it: the selected server is retried every minute.
+  test('plain retries back off to a minute and never give up', () {
+    final policy = DesktopAutomation({})..intent = true;
+    policy.pathChanged('ethernet', true, 0);
+    var now = 0.0;
+    final delays = <double>[];
+    for (var attempt = 0; attempt < 10; attempt++) {
+      policy.scheduleRetry(now);
+      delays.add(policy.retryAt! - now);
+      now = policy.retryAt!;
+      expect(policy.beginRetry(now), true);
+    }
+    expect(delays, [1, 2, 4, 8, 16, 30, 60, 60, 60, 60]);
+    // Exhausted ends only failover to other servers.
+    expect(policy.exhausted, true);
+    expect(policy.attempts, 10);
+    policy.manualStop();
+    policy.scheduleRetry(now);
+    expect(policy.retryAt, null);
+  });
+
+  test(
+    'a network that returns starts a new episode; an address change keeps it',
+    () {
+      final policy = DesktopAutomation({})..intent = true;
+      policy.pathChanged('1:10.0.0.2', true, 0);
+      policy.scheduleRetry(0);
+      expect(policy.beginRetry(1), true);
+      policy.pathChanged('1:10.0.0.3', true, 2);
+      expect(policy.attempts, 1, reason: 'a flapping link keeps the budget');
+      var now = 3.0;
+      while (!policy.exhausted) {
+        policy.scheduleRetry(now);
+        now = policy.retryAt!;
+        policy.beginRetry(now);
+      }
+      policy.pathChanged('', false, 200);
+      expect(policy.online, false);
+      policy.pathChanged('1:10.0.0.3', true, 900);
+      expect(policy.exhausted, false);
+      expect(policy.attempts, 0);
+      expect(policy.retryAt, null);
+      expect(policy.healthAt, 900);
+    },
+  );
+
+  // Three failed checks in a row fail over. They were 30 s apart, so failover
+  // began up to 120 s after the server died.
+  test(
+    'a dead server is left within 80 s; one failed check never switches',
+    () {
+      final policy = DesktopAutomation({})..intent = true;
+      policy.pathChanged('ethernet', true, 0);
+      policy.healthy(0);
+      expect(policy.healthAt, 30, reason: 'passing checks stay 30 s apart');
+      // The server dies just after that pass; a failed check runs out two 5 s
+      // probe timeouts.
+      var now = 0.0, checks = 0;
+      do {
+        now = policy.healthAt! + 10;
+        checks++;
+      } while (!policy.checkFailed(now, retrying: false));
+      expect(checks, 3);
+      expect(now, lessThanOrEqualTo(80));
+      // A pass between failures starts the count over.
+      policy.healthy(now);
+      for (var i = 0; i < 4; i++) {
+        now = policy.healthAt! + 10;
+        expect(policy.checkFailed(now, retrying: false), false);
+        expect(policy.status, 'healthFailure');
+        policy.healthy(now);
+      }
+      // A scheduled retry after a failed connect switches on its first failure.
+      expect(policy.checkFailed(now, retrying: true), true);
+    },
+  );
+
+  test('a sleep whose wake event never came ends after a minute of ticks', () {
+    final policy = DesktopAutomation({})..intent = true;
+    policy.pathChanged('ethernet', true, 0);
+    policy.sleepChanged(true, 0);
+    for (var tick = 1; tick < 60; tick++) {
+      expect(policy.stillSleeping(tick.toDouble()), true);
+    }
+    expect(policy.stillSleeping(60), false);
+    expect(policy.sleeping, false);
+    policy.scheduleRetry(60);
+    expect(policy.retryAt, 61);
+  });
+
   test(
     'selection uses valid measurements, bounded rounds and latency hysteresis',
     () {

@@ -15,6 +15,8 @@ import (
 // other configs' clients alone. A dial that fetched a client before the release
 // must not reopen QUIC outside the pool (XTLS/Xray-core#7107).
 func TestReleaseForgetsOnlyThatConfigsClients(t *testing.T) {
+	defer func(d time.Duration) { dialTimeout = d }(dialTimeout)
+	dialTimeout = 200 * time.Millisecond // dials outlive their callers, up to this bound
 	server, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
