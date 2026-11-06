@@ -17,6 +17,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   CPU renderer instead of Mesa's software OpenGL: 80 MB less memory and a quarter of the CPU
   while it repaints. Set `FLUTTER_LINUX_RENDERER=opengl` to keep OpenGL.
 - The window no longer redraws every second while the connection status is unavailable.
+- Android: the 2-second status refresh no longer reloads every settings title, and the screen's clock stops while
+  the app is in the background. Idle CPU in the minute after heavy traffic drops by about a fifth (1020 vs 1260 ms
+  per minute on the test phone); settled idle is unchanged.
 
 ### Changed
 

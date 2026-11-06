@@ -64,7 +64,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.json.JSONArray
 import org.json.JSONObject
@@ -1147,7 +1150,11 @@ private fun quota(metadata: JSONObject): Triple<String, String, Float?> {
 }
 
 @Composable fun EmptyDetail() { Text(tr(R.string.item_no_longer_in_catalog), Modifier.padding(24.dp)) }
-@Composable fun rememberClock(): State<Double> = produceState(now()) { while (true) { delay(30_000); value = now() } }
+// Ticks only while the screen is visible: a background recomposition costs more than the label it refreshes.
+@Composable fun rememberClock(): State<Double> {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    return produceState(now(), lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { value = now(); delay(30_000) } } }
+}
 fun pingFresh(node: JSONObject, result: JSONObject, time: Double) = result.string("configurationRevision") == node.string("configurationRevision", node.string("id")) && time - result.optDouble("timestamp", 0.0) in 0.0..300.0
 fun pingScope(result: JSONObject) = when (result.string("protocol")) { "tcp" -> tr(R.string.direct_tcp); "icmp" -> tr(R.string.direct_icmp); "activeProxy" -> tr(R.string.active_proxy); else -> "proxy" }
 
