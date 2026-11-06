@@ -7,8 +7,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 ### Performance
 
 - Android: a connection closes as soon as the app closes it, instead of up to a second later (Xray's default
-  `downlinkOnly`). A burst of short connections no longer holds hundreds of TLS sessions: in a lab churn of 2000
-  connections the core peaked at 39 instead of 185 MB and opened 30% more connections per second. An app that
+  `downlinkOnly`). A burst of short connections no longer holds hundreds of TLS sessions: on the test phone the app
+  peaked at 88 instead of 231 MB during 2000 short connections and opened 739 instead of 633 per second. An app that
   half-closes a connection and then waits for the reply loses the reply, as with the mihomo-based clients; a profile's
   own `policy` value still wins.
 - Android: the core now uses the CPU's AES and carry-less multiply instructions. Go, loaded as a library, could not
@@ -29,6 +29,7 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   per minute across the app and its core processes). The core passes its traffic counters on only when they change,
   or every 10 s, instead of every second through each process; it reads its heap size without pausing the program;
   and the Linux network check reads link state without a thread handoff.
+- Android: the 2-second status refresh no longer asks the system for home screen widgets each time.
 - Android: the 2-second status refresh no longer reloads every settings title, and the screen's clock stops while
   the app is in the background. Idle CPU in the minute after heavy traffic drops by about a fifth (1020 vs 1260 ms
   per minute on the test phone); settled idle is unchanged.
