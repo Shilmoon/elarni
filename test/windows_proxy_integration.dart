@@ -6062,6 +6062,71 @@ sys.exit(child.wait())
     );
   });
 
+  // The VPN's FakeDNS answers system lookups from 198.18.0.0/15, which the
+  // download refuses as private; through the listener it resolves in the tunnel.
+  test('geofiles download through the running VPN listener', () async {
+    final log = File.fromUri(temporary.uri.resolve('geofile-proxy'));
+    await useStub('''
+import json, socket, subprocess, sys, uuid
+listeners = []
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request['method']
+    if method == 'runVPN':
+        for inbound in json.loads(request['payload']['configJSON'])['inbounds']:
+            if inbound['protocol'] in ('socks', 'http'):
+                listener = socket.socket()
+                listener.bind(('127.0.0.1', inbound['port']))
+                listener.listen(32)
+                listeners.append(listener)
+            if inbound['protocol'] == 'socks':
+                account = inbound['settings']['accounts'][0]
+                with open(${jsonEncode(log.path)}, 'a') as out: print('socks5://%s:%s@127.0.0.1:%d' % (account['user'], account['pass'], inbound['port']), file=out)
+        print(json.dumps({'success': True, 'data': {}}), flush=True)
+    elif method == 'stopVPN':
+        for listener in listeners: listener.close()
+        listeners.clear()
+        print(json.dumps({'event': 'metrics', 'data': {}}), flush=True)
+        print(json.dumps({'success': True, 'data': {}}), flush=True)
+    elif method == 'prepareRoutingAssets':
+        with open(${jsonEncode(log.path)}, 'a') as out: print(request['payload'].get('proxy', 'none'), file=out)
+        data = {'assetRevision': uuid.uuid4().hex + uuid.uuid4().hex, 'geofileStatus': 'ready', 'reductionStatus': 'ready', 'geofiles': []}
+        print(json.dumps({'success': True, 'data': data}), flush=True)
+        break
+    else:
+        child = subprocess.Popen([${jsonEncode(corePath)}], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        child.stdin.write(line)
+        child.stdin.flush()
+        print(child.stdout.readline(), end='', flush=True)
+        child.stdin.close()
+        child.wait(timeout=10)
+        break
+''');
+    await prepare();
+    final settings = await backend.control.tunnelSettings();
+    await backend.control.updateTunnelSettings(
+      settings.copyWith(xrayTunEnabled: true),
+    );
+    expect(await backend.control.connect(), 'connected');
+    final routeId = (await backend.control.importRouting(
+      jsonEncode({
+        'Name': 'Geofiles over the VPN',
+        'RemoteDNSType': 'DoU',
+        'RemoteDNSIP': '1.1.1.1',
+        'DomesticDNSType': 'DoU',
+        'DomesticDNSIP': '8.8.8.8',
+        'FakeDNS': 'true',
+        'Geositeurl': 'https://fixture.invalid/geosite.dat',
+      }),
+    )).profiles.single.id;
+    final [listener, download] = await log.readAsLines();
+    expect(download, listener);
+    expect(listener, endsWith('@127.0.0.1:${settings.socksPort}'));
+    await backend.control.disconnect();
+    await backend.control.refreshRoutingGeofiles(routeId);
+    expect((await log.readAsLines()).last, 'none');
+  });
+
   test(
     'only Direct, Block and domestic DNS rules skip codes missing from the geofiles',
     () async {

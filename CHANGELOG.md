@@ -97,6 +97,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   while connected (Direct TCP and other servers' proxy tests with Include all networks
   on, and other servers' "Current rules / active tunnel" tests) are marked Skipped with a
   hint to disconnect, instead of failing and marking the server Unavailable.
+- Windows and Linux: importing a subscription or routing profile while the VPN is
+  connected with FakeDNS no longer fails with "This source needs approval before it
+  can be contacted." Geofile and managed-list downloads now resolve and connect
+  through the VPN's SOCKS listener, as on Android.
 
 ### Performance
 

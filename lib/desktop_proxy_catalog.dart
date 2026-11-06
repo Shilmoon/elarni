@@ -109,6 +109,32 @@ extension _ProxyCatalog on DesktopProxy {
         as String;
   }
 
+  // The SOCKS listener of the running core.
+  String _listenerProxy(DesktopCatalog catalog) {
+    final credentials = catalog.settings.listeners.inboundAuthEnabled
+        ? catalogMap(catalog.data['inboundCredentials'] ?? {})
+        : catalog.settings.xrayTunEnabled
+        ? _vpnLogin
+        : null;
+    final userInfo = credentials != null
+        ? '${Uri.encodeComponent(credentials['username']! as String)}:${Uri.encodeComponent(credentials['password']! as String)}'
+        : '';
+    return Uri(
+      scheme: 'socks5',
+      host: '127.0.0.1',
+      port: catalog.settings.socksPort,
+      userInfo: userInfo,
+    ).toString();
+  }
+
+  // While the VPN runs, the system resolver can be its FakeDNS, whose
+  // 198.18.0.0/15 answers a download rejects as private; through the listener
+  // it resolves inside the tunnel, as on Android.
+  String? _tunnelFetchProxy() =>
+      _state == 'connected' && _catalog!.settings.xrayTunEnabled
+      ? _listenerProxy(_catalog!)
+      : null;
+
   Future<void> _refreshGeofiles(
     DesktopCatalog candidate,
     String id, {
@@ -137,6 +163,7 @@ extension _ProxyCatalog on DesktopProxy {
       });
       return;
     }
+    final proxy = _tunnelFetchProxy();
     final assets = await _native('prepareRoutingAssets', {
       'files': files,
       'previous': route['assetRevision'] ?? '',
@@ -144,6 +171,7 @@ extension _ProxyCatalog on DesktopProxy {
       'reduce': profile['UseChunkFiles'] == 'true',
       'refresh': refresh,
       'file': file ?? '',
+      if (proxy != null) 'proxy': proxy,
     });
     candidate.putRoute({
       ...route,

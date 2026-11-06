@@ -55,7 +55,10 @@ extension _ProxyAutomation on DesktopProxy {
         }, automatic: true);
       } else if (route != null) {
         await _mutate((candidate) async {
-          await candidate.refreshManaged(route['id']! as String);
+          await candidate.refreshManaged(
+            route['id']! as String,
+            proxy: _tunnelFetchProxy(),
+          );
           return candidate.routingSnapshot();
         });
       } else {
