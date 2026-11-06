@@ -13,6 +13,7 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   the VPN's own DNS where DNS over TLS is blocked.
 - Windows, Linux: with a Fake DNS routing profile, testing servers other than the
   connected one failed while connected, so failover found no backup.
+- Android: the update notice never appeared; the daily check failed before it fetched.
 
 ## 0.4.1 - 2026-11-04
 
