@@ -6,6 +6,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ### Performance
 
+- Android: the core now uses the CPU's AES and carry-less multiply instructions. Go, loaded as a library, could not
+  read the CPU features in a release build, so TLS ran on software AES. On a Snapdragon 8 Gen 3 test phone one
+  download now runs at 136 instead of 37 MB/s and eight at 907 instead of 201, at a third to a seventh of the CPU
+  per MB; uploads and new connections per second gain too.
 - The VPN (TUN) mode on Windows, Linux and Android runs on Xray's own TCP/IP stack instead
   of gVisor. One connection downloads up to 2.5x faster (VLESS: 2.75 vs 1.08 GB/s on the
   test host) at less than half the CPU per MB, now level with upstream Xray on every protocol.

@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <stdint.h>
+#include <sys/prctl.h>
 #include "elarni_ffi.h"
 
 static void fail(JNIEnv *env, const char *message) {
@@ -33,4 +34,13 @@ Java_com_elarni_NativeBindings_domain(JNIEnv *env, jobject self, jbyteArray inpu
     elarni_buffer_free(output);
     elarni_handle_free(handle);
     return result;
+}
+
+/* Returns the previous PR_SET_DUMPABLE value, or -1 when it could not be changed. */
+JNIEXPORT jint JNICALL
+Java_com_elarni_NativeBindings_setDumpable(JNIEnv *env, jobject self, jint value) {
+    (void)env; (void)self;
+    int old = prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
+    if (old < 0 || prctl(PR_SET_DUMPABLE, value, 0, 0, 0) != 0) return -1;
+    return old;
 }
