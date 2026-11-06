@@ -1,7 +1,8 @@
 # Testing
 
 While iterating, `python scripts/check-changed` runs the checks your changes
-affect. Each run writes `.build/check-results/<run>/summary.json` and `output.log`.
+affect, and exits non-zero when a change has no local check (only CI covers it). Each
+run writes `.build/check-results/<UTC time>-<id>/summary.json` and `output.log`.
 `git config core.hooksPath scripts/git-hooks` adds a fast pre-push format and
 analyze check.
 
@@ -16,7 +17,7 @@ These use loopback fixtures and never change routes, DNS or adapters.
 | Dart under `lib/`, `bin/`, `test/` | `sh scripts/check-tests flutter` |
 | Swift (macOS only) | `sh scripts/check-tests swift` |
 | Kotlin logic under `android/` (needs the Android SDK and native build) | `android/gradlew -p android :app:testDebugUnitTest` |
-| Release tooling in `scripts/` | `python -m unittest discover -s scripts -p package_release_test.py` |
+| Tooling in `scripts/` | `python -m unittest discover -s scripts -p '*_test.py'` |
 | Windows local proxy | `python scripts/check-windows` |
 | Everything CI runs on this OS | `python scripts/check-changed --all` |
 | Any check on a Mac, over SSH | `python scripts/check-mac --host user@mac [-- <command>]` |
@@ -75,7 +76,7 @@ another VPN, against a release build.
 - Linux: `scripts/check-headless`, `check-linux-vpn`, `check-linux-elevation`
   (as root), `check-linux-storage` and `check-linux-desktop` (as a normal user).
 - Windows: `python scripts/check-windows-vpn` from an elevated terminal.
-- macOS: `python3 scripts/check-extension --fixture <file>` on a disposable Mac
+- macOS: `python3 scripts/check-extension --disposable-machine --fixture <file>` on a disposable Mac
   account, with `macos/Checks/AcceptanceResponder.py` serving the network
   fixture (`--list` shows the cases, `--build-only` only compiles).
 - Android: `scripts/check-android`, see [android/README.md](../android/README.md).

@@ -66,8 +66,11 @@ def select(paths):
         hits.discard('windows' if sys.platform == 'darwin' else 'swift')
         if hits:
             selected |= hits
-        elif not (path.endswith(QUIET) or path.startswith(('docs/', '.'))):
+        elif not (path.endswith(QUIET) or path.startswith('docs/') or path.startswith('.') and not path.startswith('.github/')):
             unmapped.append(path)
+    # CI's static checks (rustfmt, clippy, gofmt) run only on Linux.
+    if sys.platform.startswith('linux') and selected & {'go', 'rust'}:
+        selected.add('lint')
     return sorted(selected), unmapped
 
 
@@ -98,8 +101,8 @@ def main():
         print(*selected)
         return 0
     if not selected:
-        print('Nothing to check.')
-        return 0
+        print('UNCHECKED: only CI covers these changes' if unmapped else 'Nothing to check.')
+        return 1 if unmapped else 0
     environment = dict(os.environ, ELARNI_FLUTTER_REPORTER='failures-only', CARGO_TERM_QUIET='true')
     environment.pop('ELARNI_CHECK_REPORT', None)
     started = time.monotonic()
@@ -120,12 +123,18 @@ def main():
             output = log.read().decode(errors='replace')
             report = next((line.split(': ', 1)[1] for line in output.splitlines() if line.startswith('Check report: ')), '')
             print(f"{'PASS' if code == 0 else 'FAIL'} {name} {time.monotonic() - began:.0f}s {report}".rstrip(), flush=True)
+            # A check that passed only on its retry says so on a FLAKY line.
+            for line in output.splitlines():
+                if line.startswith('FLAKY '):
+                    print(line, flush=True)
             if code:
                 failed.append(name)
                 print(tail(output), flush=True)
         time.sleep(.2)
     print(f"{'FAILED: ' + ' '.join(failed) if failed else 'All passed'} in {time.monotonic() - started:.0f}s")
-    return 1 if failed else 0
+    if unmapped:
+        print('UNCHECKED: only CI covers ' + ', '.join(unmapped))
+    return 1 if failed or unmapped else 0
 
 
 if __name__ == '__main__':

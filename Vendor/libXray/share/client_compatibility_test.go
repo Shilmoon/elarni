@@ -834,6 +834,9 @@ func TestImportedProfilesCannotReadEnvironmentVariables(t *testing.T) {
 		"port list":  profile(`{"servers":[{"address":"127.0.0.1","port":443,"password":"fixture"}]}`, `"routing":{"rules":[{"port":"80, env:PORT","outboundTag":"direct"}]},`),
 		"dns server": profile(safe, `"dns":{"servers":["env:SECRET"]},`),
 		"dns host":   profile(safe, `"dns":{"hosts":{"example.com":["192.0.2.1","env:SECRET"]}},`),
+		// Unicode case folding: ſ (U+017F) folds to s, K (U+212A) to k.
+		"folded address":  profile(`{"addreſs":"env:HOME","port":443,"password":"fixture"}`, ""),
+		"folded dns host": profile(safe, `"dns":{"hoſts":{"example.com":["env:SECRET"]}},`),
 	} {
 		if !json.Valid([]byte(value)) {
 			t.Fatalf("%s: invalid fixture", name)

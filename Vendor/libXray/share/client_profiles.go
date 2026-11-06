@@ -236,6 +236,17 @@ var envFields = map[string]bool{"address": true, "port": true, "listen": true, "
 	"clientip": true, "ip": true, "sourceport": true, "localport": true, "vlessroute": true,
 	"remoteports": true, "qtype": true, "servers": true, "hosts": true}
 
+// envField returns the envFields name key decodes into, or "". Xray's JSON decoder
+// matches names by Unicode case folding, so "addreſs" fills Address too.
+func envField(key string) string {
+	for name := range envFields {
+		if strings.EqualFold(key, name) {
+			return name
+		}
+	}
+	return ""
+}
+
 // field is the JSON field value sits under; array elements and "hosts" entries keep their parent's.
 func validateProfileFiles(value any, field string) error {
 	switch value := value.(type) {
@@ -244,7 +255,7 @@ func validateProfileFiles(value any, field string) error {
 			if key == "remarks" { // display text, never an address
 				continue
 			}
-			childField := strings.ToLower(key)
+			childField := envField(key)
 			if field == "hosts" {
 				childField = field
 			}

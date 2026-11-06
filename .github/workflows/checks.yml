@@ -16,8 +16,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: checks-${{ github.workflow }}-${{ github.ref }}
-  # A new push replaces a pull request's run; main finishes each run, so its emulator acceptance completes.
+  # A new push replaces a pull request's run. Each main commit gets its own group: a shared one would let a newer
+  # pending run cancel an older pending one, leaving that commit unchecked.
+  group: checks-${{ github.workflow }}-${{ github.ref }}${{ github.event_name != 'pull_request' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

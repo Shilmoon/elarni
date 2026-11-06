@@ -1,8 +1,10 @@
 # Releasing
 
-Desktop releases are direct downloads: a notarized macOS ZIP (optionally a DMG),
-a signed Windows ZIP and MSI, and a Linux `.deb`, AppImage and portable archive.
-CI builds **unsigned** candidates only; signing happens on a release machine.
+Releases are direct downloads: an unsigned Windows ZIP and MSI, a Linux `.deb`,
+AppImage and portable archive, a signed Android APK and the source archives. Their
+integrity comes from build provenance and a signed `SHA256SUMS`, not from platform
+code signing. No macOS or iOS build is published; the macOS and Windows signing
+commands below are for builds signed by hand.
 
 ## Release flow
 
@@ -10,12 +12,12 @@ Release files are built by `.github/workflows/release.yml` on GitHub-hosted runn
 any cache from earlier builds. The self-hosted CI runners also run pull request and Dependabot code, so
 nothing they build is published.
 
-1. Run the workflow with stage `build` on the commit to release (green on Development checks). It builds
-   the Linux packages, the Windows ZIP and MSI, the source archives and the unsigned APK, and records
-   build provenance for each file.
-2. On the release machine, sign the APK and collect the files: `assemble.sh <run id> <dir>` (token and
-   keystore password on stdin), then `gh_release.py draft <tag> <notes.md> <run id> <dir>/*` creates a
-   draft release at the run's commit.
+1. Run the workflow with stage `build` on the commit to release. It refuses a commit without a
+   successful "checks passed" from Development checks, then builds the Linux packages, the Windows ZIP
+   and MSI, the source archives and the unsigned APK, and records build provenance for each file.
+2. On the release machine, which holds the Android signing key, sign the APK and upload a draft
+   release at the run's commit with every file of the run plus `SHA256SUMS`. The maintainer's scripts
+   for this step (`assemble.sh`, `gh_release.py`) live on that machine, not in this repository.
 3. Run the workflow with stage `publish` and the tag. It checks every file against `SHA256SUMS` and,
    except for the signed APK, against the build provenance; then it signs `SHA256SUMS` (Sigstore,
    keyless) and publishes the release.
@@ -114,5 +116,5 @@ See [linux/README.md](../linux/README.md) for installation.
   are left behind.
 - Check that uninstall keeps user data.
 - Record idle cost with `python scripts/measure-idle --seconds 300`.
-- Publish signed packages, `SHA256SUMS`, source archives, notices and release
-  notes together.
+- Publish the packages, `SHA256SUMS`, source archives, notices and release notes
+  together.

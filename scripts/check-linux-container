@@ -119,9 +119,15 @@ def main():
     # non-loopback interface (here link-local only), or the emulator has no mobile data. Docker Engine 25 or later.
     limits.append('--network=name=bridge,driver-opt=com.docker.network.endpoint.sysctls=net.ipv6.conf.IFNAME.disable_ipv6=0')
     # A fixed name refuses a second run that would share the checkout volume.
-    if os.environ.get('GITHUB_ACTIONS') and not host:
-        # A CI runner takes one job at a time, so a container under that name is a cancelled run's leftover.
-        docker('rm', '--force', 'elarni-linux-container', capture_output=True)
+    ci = bool(os.environ.get('GITHUB_ACTIONS')) and not host
+    if ci:
+        # A CI runner takes one job at a time, so a CI-labelled container under that name is a cancelled run's
+        # leftover. A manual run on the same host has no label and is left running: this run is then refused.
+        leftover = docker('ps', '-aq', '--filter', 'name=^elarni-linux-container$', '--filter', 'label=elarni.ci',
+                          capture_output=True, text=True).stdout.split()
+        if leftover:
+            docker('rm', '--force', *leftover, capture_output=True)
+    limits += ['--label', 'elarni.ci'] if ci else []
     code = docker('run', '--rm', '--init', '--name', 'elarni-linux-container', *mounts, *limits,
                   '--env', f'ELARNI_COMMIT={commit}', '--env', 'MISE_YES=1', '--env', 'GOFLAGS=-count=1', '--env', 'ANDROID_HOME=/opt/android-sdk',
                   image, 'bash', '-c', PREPARE, 'bash', *command).returncode

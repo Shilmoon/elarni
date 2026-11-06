@@ -4,6 +4,16 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Security
+
+- Imported profiles can no longer read the core's environment through a field name
+  that only matches under Unicode case folding, such as `addreſs`.
+
+### Changed
+
+- A release is built only from a commit whose checks passed, and every main commit
+  is checked (a newer push no longer cancels a pending run).
+
 ## 0.4.1 - 2026-11-04
 
 ### Changed
