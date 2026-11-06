@@ -195,8 +195,10 @@ func (h *Handler) Dispatch(ctx context.Context, link *transport.Link) {
 	// Elarni: a server routes by name, and its own path may not reach the IP the app picked
 	// (YouTube over IPv6 behind an IPv4-only exit), so it gets the sniffed name. Direct and other
 	// local outbounds keep the IP; UDP keeps it so replies still match the address the app sent to.
+	// A name the profile's DNS hosts pin keeps its IP too: the server would not know the pin.
 	if h.remote && ob.Target.Network == net.Network_TCP && ob.Target.Address != nil && ob.Target.Address.Family().IsIP() &&
-		ob.RouteTarget.Address != nil && ob.RouteTarget.Address.Family().IsDomain() {
+		ob.RouteTarget.Address != nil && ob.RouteTarget.Address.Family().IsDomain() &&
+		len(internet.LookupHostsContext(ctx, ob.RouteTarget.Address.Domain())) == 0 {
 		ob.Target.Address = ob.RouteTarget.Address
 	}
 	if h.senderSettings != nil && h.senderSettings.TargetStrategy.HasStrategy() && ob.Target.Address.Family().IsDomain() && (content == nil || !content.SkipDNSResolve) {

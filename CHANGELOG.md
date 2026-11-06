@@ -9,7 +9,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - A server now gets the site name it routes by, not the app's IP, when the app
   connected to a real address (for example over IPv6). Servers that send YouTube
   through an IPv4-only exit no longer stall YouTube on IPv6 phones. Direct
-  connections and UDP still use the app's address.
+  connections, UDP and names the profile pins in its DNS hosts still use the
+  app's address.
 
 ## 0.4.1 - 2026-11-04
 
