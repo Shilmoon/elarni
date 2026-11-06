@@ -79,6 +79,24 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   through an IPv4-only exit no longer stall YouTube on IPv6 phones. Direct
   connections, UDP and names the profile pins in its DNS hosts still use the
   app's address.
+- With a Fake DNS routing profile, refreshing a subscription, geofile or managed list
+  while connected asked to approve a "private network address", or failed, and paused
+  automatic refresh, on every platform. Downloads now look such names up over DNS over
+  TLS through the VPN, which does not answer with Fake DNS addresses, and fall back to
+  the VPN's own DNS where DNS over TLS is blocked.
+- Windows, Linux: with a Fake DNS routing profile, testing servers other than the
+  connected one failed while connected, so failover found no backup.
+- Android: the update notice never appeared; the daily check failed before it fetched.
+- Windows, Linux: SRV, TXT and other lookups that aren't for addresses went to a
+  resolver the routing profile lists for its own domains only.
+- SRV, TXT and other lookups that aren't for addresses, asked over TCP through the VPN,
+  came back truncated whenever the answer passed 512 bytes, so they failed; they now
+  stay on TCP.
+- macOS: while connected, Direct TCP showed 1-5 ms for every server, dead ones too, because
+  the tunnel itself answered; it now tests outside the tunnel. Tests the tunnel cannot run
+  while connected (Direct TCP and other servers' proxy tests with Include all networks
+  on, and other servers' "Current rules / active tunnel" tests) are marked Skipped with a
+  hint to disconnect, instead of failing and marking the server Unavailable.
 
 ### Performance
 

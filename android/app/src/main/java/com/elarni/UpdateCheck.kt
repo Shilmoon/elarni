@@ -11,7 +11,7 @@ import org.json.JSONObject
 object UpdateCheck {
     /** Instrumentation replaces the network. The app's own sockets bypass its VPN, so a connected fetch goes through the core. */
     @Volatile var fetch: (String) -> String = { url ->
-        Native.call("fetchSubscription", obj("url" to url, "proxy" to (Engine.fetchProxy ?: JSONObject.NULL))).getString("body")
+        Native.cancellable("fetchSubscription", obj("url" to url, "proxy" to (Engine.fetchProxy ?: JSONObject.NULL))).getString("body")
     }
     /** Release builds read Elarni's releases until the user changes or clears the feed; debug builds start with it off. */
     const val ELARNI_RELEASES = "https://api.github.com/repos/Shilmoon/elarni/releases/latest"

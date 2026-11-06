@@ -911,6 +911,59 @@ void main() {
     );
 
     testWidgets(
+      'tests the VPN cannot run while connected are skipped on ${platform.name}',
+      (tester) async {
+        final control = FakeTunnelControl()..phase = 'connected';
+        await tester.binding.setSurfaceSize(const Size(1200, 900));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await tester.pumpWidget(
+          ElarniApp(
+            tunnelControl: control,
+            windows: platform == TargetPlatform.windows,
+          ),
+        );
+        await tester.pumpAndSettle();
+        control.onPing = (id) async {
+          if (id == 'a') throw PlatformException(code: 'disconnect_to_test');
+          return PingResult(
+            nodeId: id,
+            status: 'success',
+            latencyMs: 20,
+            timestamp: DateTime.now().millisecondsSinceEpoch / 1000,
+          );
+        };
+        final ping = find.byKey(const ValueKey('ping:a'));
+        await reveal(tester, ping);
+        await tester.tap(ping);
+        await tester.pumpAndSettle();
+        expect(
+          find.descendant(of: ping, matching: find.text('Skipped')),
+          findsOneWidget,
+        );
+        await tester.drag(find.byType(Scrollable).first, const Offset(0, 5000));
+        await tester.pumpAndSettle();
+        expect(
+          find.text(
+            'Skipped: while connected, this test can’t reach the server. Disconnect to test it.',
+          ),
+          findsOneWidget,
+        );
+
+        await reveal(tester, find.byKey(const Key('ping-all')));
+        await tester.tap(find.byKey(const Key('ping-all')));
+        await tester.pumpAndSettle();
+        await tester.drag(find.byType(Scrollable).first, const Offset(0, 5000));
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Tested 1 of 1 nodes. Skipped 1: disconnect to test them.'),
+          findsOneWidget,
+        );
+        await tester.pumpWidget(const SizedBox());
+      },
+      variant: TargetPlatformVariant.only(platform),
+    );
+
+    testWidgets(
       'ICMP requires confirmation and reports restoration failure on ${platform.name}',
       (tester) async {
         var probes = 0;

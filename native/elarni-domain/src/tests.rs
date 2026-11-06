@@ -1305,7 +1305,8 @@ fn server_ip_preference_leaves_proxied_destinations_unresolved() {
 }
 
 // Xray answers only A and AAAA itself. Other lookups go to the first resolver with an
-// address, along the route of Xray's own queries; HTTPS records stay empty.
+// address, along the route of Xray's own queries; HTTPS records stay empty. A query keeps
+// its own network ("" in Xray), so a TCP retry of a truncated answer is not truncated again.
 #[test]
 fn dns_outbound_forwards_other_query_types_along_the_dns_route() {
     for (servers, address) in [
@@ -1326,7 +1327,7 @@ fn dns_outbound_forwards_other_query_types_along_the_dns_route() {
         let dns = tagged(&config, "outbounds", "elarni-dns");
         assert_eq!(dns["settings"]["address"], address, "{servers}");
         assert_eq!(dns["settings"]["port"], 53);
-        assert_eq!(dns["settings"]["network"], "udp");
+        assert_eq!(dns["settings"]["network"], "", "{servers}");
         assert_eq!(
             dns["settings"]["rules"],
             json!([

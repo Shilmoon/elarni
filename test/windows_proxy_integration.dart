@@ -1445,6 +1445,74 @@ for line in sys.stdin:
     },
   );
 
+  // While connected the VPN answers this app's own lookups, with Fake DNS
+  // addresses that lead nowhere outside it, so a test of another server asks the core.
+  test(
+    'testing a server while connected resolves it through the core',
+    () async {
+      await prepare();
+      final settings = await backend.control.tunnelSettings();
+      await backend.control.updateTunnelSettings(
+        settings.copyWith(xrayTunEnabled: true),
+      );
+      final lookups = File.fromUri(temporary.uri.resolve('vpn-lookups'));
+      await useStub('''
+import json, socket, subprocess, sys
+listeners = []
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request['method']
+    if method == 'runVPN':
+        config = json.loads(request['payload']['configJSON'])
+        for inbound in config['inbounds']:
+            if inbound['protocol'] in ('socks', 'http'):
+                listener = socket.socket()
+                listener.bind(('127.0.0.1', inbound['port']))
+                listener.listen(32)
+                listeners.append(listener)
+        print(json.dumps({'success': True, 'data': {}}), flush=True)
+    elif method == 'stopVPN':
+        for listener in listeners: listener.close()
+        listeners.clear()
+        print(json.dumps({'success': True, 'data': {}}), flush=True)
+    elif method == 'lookupHost':
+        with open(${jsonEncode(lookups.path)}, 'a') as log: print(request['payload']['host'], file=log)
+        print(json.dumps({'success': True, 'data': {'addresses': ['127.0.0.1']}}), flush=True)
+        break
+    else:
+        child = subprocess.Popen([${jsonEncode(corePath)}], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        child.stdin.write(line)
+        child.stdin.flush()
+        print(child.stdout.readline(), end='', flush=True)
+        child.stdin.close()
+        child.wait(timeout=10)
+        break
+''');
+      await backend.control.connect();
+      final imported = await backend.control.importClientProfiles(
+        content: profile
+            .replaceFirst('127.0.0.1', 'server.invalid')
+            .replaceFirst('#Fixture', '#Named'),
+      );
+      final named = imported.snapshot.subscriptions
+          .expand((source) => source.nodes)
+          .singleWhere((node) => node.name == 'Named')
+          .id;
+      final result = await backend.control.pingNode(
+        named,
+        protocol: 'tcp',
+        method: 'GET',
+        mode: 'default',
+        timeout: 5,
+        url: '',
+      );
+      expect(result.status, 'success');
+      expect(await lookups.readAsLines(), ['server.invalid']);
+      expect(await backend.control.state(), 'connected');
+      await backend.control.disconnect();
+    },
+  );
+
   // The VPN also captures this app's own lookups, so a server reached through
   // the old tunnel, dead or alive, must not resolve its replacement.
   test(

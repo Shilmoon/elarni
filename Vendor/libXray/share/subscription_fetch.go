@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -14,6 +16,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -159,11 +162,47 @@ func FetchResourceToFile(ctx context.Context, request SubscriptionFetchRequest, 
 }
 
 func fetchResource(ctx context.Context, request SubscriptionFetchRequest, limit int64, timeout time.Duration, binaryBody bool, destination string) (any, error) {
-	resolve := net.DefaultResolver.LookupNetIP
+	resolve := systemLookup
 	if request.Proxy != "" {
-		resolve = tunnelResolver(request.Proxy).LookupNetIP
+		resolve = tunnelLookup(request.Proxy)
 	}
 	return fetchResourceUsing(ctx, request, resolve, func() *http.Transport { return &http.Transport{} }, limit, timeout, binaryBody, destination)
+}
+
+// LookupHost resolves host the way a fetch without a proxy does (Elarni).
+func LookupHost(ctx context.Context, host string) ([]netip.Addr, error) {
+	addresses, err := systemLookup(ctx, "ip", host)
+	// Go answers IPv4 as IPv4-mapped IPv6 here, which callers would take for IPv6.
+	for i := range addresses {
+		addresses[i] = addresses[i].Unmap()
+	}
+	return addresses, err
+}
+
+// fakeDNSPools are Xray's default FakeDNS ranges, which Elarni's profiles use.
+var fakeDNSPools = []netip.Prefix{netip.MustParsePrefix("198.18.0.0/15"), netip.MustParsePrefix("fc00::/18")}
+
+// systemLookup asks the system resolver. While a VPN with FakeDNS carries the app's own
+// traffic (Apple, the desktop TUN), that answers with FakeDNS placeholders, which a fetch
+// refuses as private; the name is then looked up over TLS, through that VPN. Without an
+// answer there the placeholder stays: approved, it still connects through the VPN.
+func systemLookup(ctx context.Context, network, host string) ([]netip.Addr, error) {
+	addresses, err := net.DefaultResolver.LookupNetIP(ctx, network, host)
+	fake := func(address netip.Addr) bool {
+		return slices.ContainsFunc(fakeDNSPools, func(pool netip.Prefix) bool { return pool.Contains(address.Unmap()) })
+	}
+	if err != nil || !slices.ContainsFunc(addresses, fake) {
+		return addresses, err
+	}
+	lookup, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	direct := func(ctx context.Context) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", tunnelDNS)
+	}
+	if answers, err := dotResolver(direct).LookupNetIP(lookup, network, host); err == nil && len(answers) > 0 {
+		return answers, nil
+	}
+	return addresses, nil
 }
 
 // fallbackAttemptLimit caps each attempt but the last when a feed has mirrors.
@@ -177,23 +216,68 @@ var errUnreachable = errors.New("provider_unreachable")
 var mirrorFailures = map[string]bool{"fetch_failed": true, "dns_failed": true, "provider_unreachable": true,
 	"provider_error": true, "rate_limited": true, "subscription_denied": true}
 
-// tunnelDNS answers lookups for fetches that go through the core.
-var tunnelDNS = "1.1.1.1:53"
+// tunnelDNS answers lookups for fetches that go through the core, over TLS: the core
+// hands every port-53 query from its listeners to Elarni's DNS, whose FakeDNS answers
+// are placeholders that a fetch refuses as private.
+var tunnelDNS = "1.1.1.1:853"
+
+// tunnelDNSRoots verifies tunnelDNS; nil uses the system roots.
+var tunnelDNSRoots *x509.CertPool
+
+// tunnelPlainDNS is asked through the proxy when tunnelDNS can't be reached, as a network
+// or a profile rule may block DNS over TLS: the core's own DNS answers it, which is right
+// unless FakeDNS is on.
+var tunnelPlainDNS = "1.1.1.1:53"
+
+func tunnelLookup(proxy string) func(context.Context, string, string) ([]netip.Addr, error) {
+	return func(ctx context.Context, network, host string) ([]netip.Addr, error) {
+		secure, cancel := context.WithTimeout(ctx, 5*time.Second)
+		addresses, err := tunnelResolver(proxy).LookupNetIP(secure, network, host)
+		cancel()
+		var missing *net.DNSError
+		if err == nil || errors.As(err, &missing) && missing.IsNotFound {
+			return addresses, err
+		}
+		plain := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return socksDial(ctx, proxy, tunnelPlainDNS)
+		}}
+		return plain.LookupNetIP(ctx, network, host)
+	}
+}
 
 // tunnelResolver keeps a proxied fetch's lookups in the tunnel: Android excludes
 // the app's own sockets from its VPN, so the system resolver would leak the host.
 func tunnelResolver(proxy string) *net.Resolver {
+	return dotResolver(func(ctx context.Context) (net.Conn, error) { return socksDial(ctx, proxy, tunnelDNS) })
+}
+
+func socksDial(ctx context.Context, proxy, address string) (net.Conn, error) {
+	proxyURL, err := url.Parse(proxy)
+	if err != nil {
+		return nil, err
+	}
+	socks, err := socksproxy.FromURL(proxyURL, &net.Dialer{Timeout: 5 * time.Second})
+	if err != nil {
+		return nil, err
+	}
+	return socks.(socksproxy.ContextDialer).DialContext(ctx, "tcp", address)
+}
+
+// dotResolver looks names up at tunnelDNS over TLS, on connections from dial.
+func dotResolver(dial func(context.Context) (net.Conn, error)) *net.Resolver {
 	return &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		proxyURL, err := url.Parse(proxy)
+		conn, err := dial(ctx)
 		if err != nil {
 			return nil, err
 		}
-		socks, err := socksproxy.FromURL(proxyURL, &net.Dialer{Timeout: 5 * time.Second})
-		if err != nil {
+		host, _, _ := net.SplitHostPort(tunnelDNS)
+		client := tls.Client(conn, &tls.Config{ServerName: host, RootCAs: tunnelDNSRoots, MinVersion: tls.VersionTLS12})
+		if err := client.HandshakeContext(ctx); err != nil {
+			_ = conn.Close()
 			return nil, err
 		}
-		// A stream connection makes Go's resolver speak DNS over TCP, which SOCKS carries.
-		return socks.(socksproxy.ContextDialer).DialContext(ctx, "tcp", tunnelDNS)
+		// A stream connection makes Go's resolver speak DNS over TCP, the framing DNS over TLS uses.
+		return client, nil
 	}}
 }
 

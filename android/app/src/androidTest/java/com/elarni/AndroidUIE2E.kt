@@ -271,6 +271,9 @@ class AndroidUIE2E {
         assertTrue(UpdateCheck.compare("0.3.10", "0.3.9")!! > 0)
         val fetched = java.util.concurrent.CopyOnWriteArrayList<String>()
         val network = UpdateCheck.fetch
+        // The real fetch reaches the fetcher, which asks about a loopback feed instead of reading it; an unprepared call failed before that.
+        val reply = runCatching { network("https://127.0.0.1:9/feed.json") }.exceptionOrNull()
+        assertTrue("$reply", reply is org.json.JSONException)
         UpdateCheck.fetch = { url -> fetched.add(url); """{"version":"999.0.0","url":"https://mirror.example/elarni/"}""" }
         val prefs = ui.activity.getSharedPreferences("ui", android.content.Context.MODE_PRIVATE)
         prefs.edit().remove("dismissedUpdate").commit()

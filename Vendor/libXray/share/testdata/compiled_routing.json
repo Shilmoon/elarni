@@ -84,7 +84,7 @@
         "protocol": "dns",
         "settings": {
           "address": "192.0.2.53",
-          "network": "udp",
+          "network": "",
           "port": 53,
           "rules": [
             {
@@ -243,7 +243,7 @@
         "protocol": "dns",
         "settings": {
           "address": "192.0.2.53",
-          "network": "udp",
+          "network": "",
           "port": 53,
           "rules": [
             {
@@ -408,7 +408,7 @@
         "protocol": "dns",
         "settings": {
           "address": "192.0.2.53",
-          "network": "udp",
+          "network": "",
           "port": 53,
           "rules": [
             {

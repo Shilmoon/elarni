@@ -545,6 +545,28 @@ struct NativeControlChecks {
     do { _ = try await ping("proxy"); throw Failure(message: "proxy ping accepted an empty test URL") }
     catch let failure as Failure where failure.message == "pingNode: operation_failed" {}
     print("PASS TCP ping needs no test URL; proxy ping still requires one")
+
+    // Include all networks sends the Runner's own probes into the tunnel, whose stack completes
+    // any handshake itself: a test of the unselected server would report a made-up latency or fail.
+    let settings = defaults.data(forKey: "ElarniTunnelSettingsV1")
+    defer { defaults.set(settings, forKey: "ElarniTunnelSettingsV1") }
+    defaults.set(try JSONSerialization.data(withJSONObject: ["xrayTunEnabled": false, "includeAllNetworks": true]),
+      forKey: "ElarniTunnelSettingsV1")
+    try TunnelCommandCoordinator(defaults: defaults).persist(.connected)
+    let connected = ControlMessenger()
+    let connectedController = TunnelMethodChannel(messenger: connected, defaults: defaults, observesSystem: false,
+      makeSubscriptions: { store }, loadPreferences: { [SwitchManager(plan: Data())] })
+    defer { withExtendedLifetime(connectedController) {} }
+    guard store.selectedNodeID() != node else { throw Failure(message: "ping fixture is the selected server") }
+    for pingProtocol in ["tcp", "proxy"] {
+      do {
+        _ = try await connected.call("pingNode", arguments: ["nodeId": node, "protocol": pingProtocol,
+          "method": "GET", "mode": "default", "timeout": 5, "url": pingProtocol == "tcp" ? "" : "https://example.invalid/"])
+        throw Failure(message: "a connected \(pingProtocol) test under Include all networks ran")
+      } catch let failure as Failure where failure.message == "pingNode: disconnect_to_test" {}
+    }
+    try TunnelCommandCoordinator(defaults: defaults).persist(.disconnected)
+    print("PASS while connected with Include all networks, Direct TCP and other servers' proxy tests ask for a disconnect")
   }
 
   // Two servers in separate subscriptions, kept in an in-memory keychain; the first is selected.
