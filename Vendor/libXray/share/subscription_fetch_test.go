@@ -88,13 +88,47 @@ func socksFixture(t *testing.T, targets chan<- string) string {
 	return listener.Addr().String()
 }
 
-// Android keeps the app's own sockets out of its VPN, so a proxied fetch must not
-// ask the system resolver: the feed's hostname would leave the tunnel.
-func TestProxiedFetchResolvesThroughTheProxy(t *testing.T) {
+// dotFixture is a DNS-over-TLS server that answers feed.test with answer. Its
+// certificate names 127.0.0.1 and 1.1.1.1, so it can stand in for tunnelDNS.
+func dotFixture(t *testing.T, answer netip.Addr) (string, *x509.CertPool) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1), net.IPv4(1, 1, 1, 1)},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(certificate)
+	dnsServer, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveDNSFixture(t, dnsServer, answer)
+	return dnsServer.Addr().String(), roots
+}
+
+// plainDNSFixture is dotFixture without TLS.
+func plainDNSFixture(t *testing.T, answer netip.Addr) string {
+	t.Helper()
 	dnsServer, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
+	serveDNSFixture(t, dnsServer, answer)
+	return dnsServer.Addr().String()
+}
+
+// serveDNSFixture answers feed.test with answer over DNS-over-TCP framing.
+func serveDNSFixture(t *testing.T, dnsServer net.Listener, answer netip.Addr) {
 	t.Cleanup(func() { _ = dnsServer.Close() })
 	go func() {
 		for {
@@ -121,20 +155,107 @@ func TestProxiedFetchResolvesThroughTheProxy(t *testing.T) {
 					message.Header.Response = true
 					if question.Name.String() == "feed.test." && question.Type == dnsmessage.TypeA {
 						message.Answers = []dnsmessage.Resource{{Header: dnsmessage.ResourceHeader{Name: question.Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 60},
-							Body: &dnsmessage.AResource{A: [4]byte{192, 0, 2, 7}}}}
+							Body: &dnsmessage.AResource{A: answer.As4()}}}
 					}
-					answer, err := message.Pack()
+					reply, err := message.Pack()
 					if err != nil {
 						return
 					}
-					_, _ = conn.Write(append(binary.BigEndian.AppendUint16(nil, uint16(len(answer))), answer...))
+					_, _ = conn.Write(append(binary.BigEndian.AppendUint16(nil, uint16(len(reply))), reply...))
 				}
 			}()
 		}
 	}()
-	previous := tunnelDNS
-	tunnelDNS = dnsServer.Addr().String()
-	t.Cleanup(func() { tunnelDNS = previous })
+}
+
+// With FakeDNS on, the core answers every port-53 query from its listeners from the
+// 198.18.0.0/15 pool, which a fetch refuses as private, so a proxied lookup must not
+// be one: geofiles and subscriptions then failed while connected.
+func TestProxiedLookupIsNotAnsweredByFakeDNS(t *testing.T) {
+	dot, roots := dotFixture(t, netip.MustParseAddr("192.0.2.7"))
+	previous := tunnelDNSRoots
+	tunnelDNSRoots = roots
+	t.Cleanup(func() { tunnelDNSRoots = previous })
+	port := trafficPort(t)
+	startTrafficCore(t, map[string]any{
+		"inbounds": []any{map[string]any{"tag": "elarni-socks", "listen": "127.0.0.1", "port": port, "protocol": "socks",
+			"settings": map[string]any{"auth": "password", "accounts": []any{map[string]any{"user": "user", "pass": "pass"}}}}},
+		// The proxy outbound stands in for the server: it takes every connection to the fixture.
+		"outbounds": []any{
+			map[string]any{"tag": "proxy", "protocol": "freedom", "settings": map[string]any{"redirect": dot}},
+			map[string]any{"tag": "elarni-dns", "protocol": "dns"},
+		},
+		"dns":     map[string]any{"servers": []any{"fakedns"}},
+		"fakedns": []any{map[string]any{"ipPool": "198.18.0.0/15", "poolSize": 65535}},
+		// The first rule as compile_owned_config writes it.
+		"routing": map[string]any{"rules": []any{
+			map[string]any{"type": "field", "network": "tcp,udp", "port": 53, "inboundTag": []any{"elarni-socks"}, "outboundTag": "elarni-dns"},
+			map[string]any{"type": "field", "network": "tcp,udp", "outboundTag": "proxy"},
+		}},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	addresses, err := tunnelResolver("socks5://user:pass@127.0.0.1:"+strconv.Itoa(port)).LookupNetIP(ctx, "ip4", "feed.test")
+	if err != nil || len(addresses) != 1 || addresses[0] != netip.MustParseAddr("192.0.2.7") {
+		t.Fatalf("lookup through the core: %v %v", addresses, err)
+	}
+}
+
+// Where DNS over TLS can't get through (a network or a profile rule that blocks it), the
+// plain query still reaches the core's own DNS, which answers it unless FakeDNS is on.
+func TestProxiedLookupFallsBackToPlainDNS(t *testing.T) {
+	plain := plainDNSFixture(t, netip.MustParseAddr("192.0.2.7"))
+	previous, previousPlain := tunnelDNS, tunnelPlainDNS
+	tunnelDNS, tunnelPlainDNS = "127.0.0.1:1", plain
+	t.Cleanup(func() { tunnelDNS, tunnelPlainDNS = previous, previousPlain })
+	targets := make(chan string, 32)
+	proxy := "socks5://user:pass@" + socksFixture(t, targets)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	addresses, err := tunnelLookup(proxy)(ctx, "ip4", "feed.test")
+	if err != nil || len(addresses) != 1 || addresses[0] != netip.MustParseAddr("192.0.2.7") {
+		t.Fatalf("lookup through the proxy: %v %v", addresses, err)
+	}
+}
+
+// While a VPN with FakeDNS carries the app's own traffic (Apple, the desktop TUN), the
+// system resolver answers from its pool: a fetch asked to approve a private address.
+func TestFakeDNSAnswersAreLookedUpAgain(t *testing.T) {
+	fake, fakeRoots := dotFixture(t, netip.MustParseAddr("198.18.0.5"))
+	real, roots := dotFixture(t, netip.MustParseAddr("192.0.2.7"))
+	system := func(address string, roots *x509.CertPool) *net.Resolver {
+		return &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&tls.Dialer{Config: &tls.Config{RootCAs: roots, ServerName: "127.0.0.1"}}).DialContext(ctx, "tcp", address)
+		}}
+	}
+	previous, previousDNS, previousRoots := net.DefaultResolver, tunnelDNS, tunnelDNSRoots
+	t.Cleanup(func() { net.DefaultResolver, tunnelDNS, tunnelDNSRoots = previous, previousDNS, previousRoots })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	lookup := func(want string) {
+		t.Helper()
+		addresses, err := systemLookup(ctx, "ip4", "feed.test")
+		if err != nil || len(addresses) != 1 || addresses[0] != netip.MustParseAddr(want) {
+			t.Fatalf("lookup: %v %v, want %s", addresses, err, want)
+		}
+	}
+	net.DefaultResolver, tunnelDNS, tunnelDNSRoots = system(fake, fakeRoots), real, roots
+	lookup("192.0.2.7")
+	// Without a reachable resolver the placeholder stays, so approving it still works through the VPN.
+	tunnelDNS = "127.0.0.1:1"
+	lookup("198.18.0.5")
+	// A real answer is used as it is.
+	net.DefaultResolver = system(real, roots)
+	lookup("192.0.2.7")
+}
+
+// Android keeps the app's own sockets out of its VPN, so a proxied fetch must not
+// ask the system resolver: the feed's hostname would leave the tunnel.
+func TestProxiedFetchResolvesThroughTheProxy(t *testing.T) {
+	dnsServer, roots := dotFixture(t, netip.MustParseAddr("192.0.2.7"))
+	previous, previousRoots := tunnelDNS, tunnelDNSRoots
+	tunnelDNS, tunnelDNSRoots = dnsServer, roots
+	t.Cleanup(func() { tunnelDNS, tunnelDNSRoots = previous, previousRoots })
 	targets := make(chan string, 32)
 	proxy := "socks5://user:pass@" + socksFixture(t, targets)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -143,7 +264,7 @@ func TestProxiedFetchResolvesThroughTheProxy(t *testing.T) {
 	if err != nil || len(addresses) != 1 || addresses[0] != netip.MustParseAddr("192.0.2.7") {
 		t.Fatalf("lookup through the proxy failed: %v %v", addresses, err)
 	}
-	if target := <-targets; target != dnsServer.Addr().String() {
+	if target := <-targets; target != dnsServer {
 		t.Fatalf("the lookup did not go through the proxy: %s", target)
 	}
 }

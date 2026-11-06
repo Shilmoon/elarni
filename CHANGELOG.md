@@ -4,6 +4,14 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Fixed
+
+- With a Fake DNS routing profile, refreshing a subscription, geofile or managed list
+  while connected asked to approve a "private network address", or failed, and paused
+  automatic refresh, on every platform. Downloads now look such names up over DNS over
+  TLS through the VPN, which does not answer with Fake DNS addresses, and fall back to
+  the VPN's own DNS where DNS over TLS is blocked.
+
 ## 0.4.1 - 2026-11-04
 
 ### Changed
