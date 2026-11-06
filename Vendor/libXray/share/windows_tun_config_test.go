@@ -426,3 +426,16 @@ func TestWindowsTunnelDNSKeepsTCPQueriesOnTCP(t *testing.T) {
 		t.Errorf("TCP query answered with TC=%v and %d records, want the full answer", answer.Truncated, len(answer.Answers))
 	}
 }
+
+// A resolver that skips fallback serves only its own domains (often a domestic one, outside
+// the proxy), so other names' SRV, TXT and the rest must not go to it; the Rust compiler's
+// forward target agrees.
+func TestWindowsTunnelDNSForwardSkipsDomainOnlyResolvers(t *testing.T) {
+	address, port, _ := dnsForwardTarget([]any{
+		map[string]any{"address": "77.88.8.8", "domains": []any{"domain:ru"}, "skipFallback": true},
+		"https://1.1.1.1/dns-query",
+	})
+	if address != "1.1.1.1" || port != 53 {
+		t.Fatalf("forward target %s:%d, want 1.1.1.1:53", address, port)
+	}
+}

@@ -14,6 +14,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - Windows, Linux: with a Fake DNS routing profile, testing servers other than the
   connected one failed while connected, so failover found no backup.
 - Android: the update notice never appeared; the daily check failed before it fetched.
+- Windows, Linux: SRV, TXT and other lookups that aren't for addresses went to a
+  resolver the routing profile lists for its own domains only.
 
 ## 0.4.1 - 2026-11-04
 
