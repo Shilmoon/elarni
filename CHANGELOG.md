@@ -6,11 +6,11 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ### Performance
 
-- A connection closes as soon as the app closes it, instead of up to a second later (Xray's default
-  `downlinkOnly`). A burst of short connections no longer holds hundreds of TLS sessions: on the test phone the app
-  peaked at 88 instead of 231 MB during 2000 short connections and opened 739 instead of 633 per second. An app that
-  half-closes a connection and then waits for the reply loses the reply, as with the mihomo-based clients; a profile's
-  own `policy` value still wins.
+- A connection closes as soon as the app closes it, instead of up to a second later (Xray's default `downlinkOnly`). A
+  burst of short connections no longer holds hundreds of TLS sessions: on the test phone the app peaked at 88 instead
+  of 231 MB during 2000 short connections and opened 739 instead of 633 per second; the desktop daemon peaked at 82
+  instead of 225 MB on Linux and 102 instead of 265 MB on Windows. An app that half-closes a connection and then waits
+  for the reply loses the reply, as with the mihomo-based clients; a profile's own `policy` value still wins.
 - Android: the core now uses the CPU's AES and carry-less multiply instructions. Go, loaded as a library, could not
   read the CPU features in a release build, so TLS ran on software AES. On a Snapdragon 8 Gen 3 test phone one
   download now runs at 136 instead of 37 MB/s and eight at 907 instead of 201, at a third to a seventh of the CPU
