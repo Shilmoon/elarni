@@ -74,6 +74,11 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   retried.
 - Testing many servers at once no longer fails a server now and then: two probes could be
   given the same local port and fail each other's login (Windows, Linux, macOS, Android).
+- A server now gets the site name it routes by, not the app's IP, when the app
+  connected to a real address (for example over IPv6). Servers that send YouTube
+  through an IPv4-only exit no longer stall YouTube on IPv6 phones. Direct
+  connections, UDP and names the profile pins in its DNS hosts still use the
+  app's address.
 
 ### Performance
 
