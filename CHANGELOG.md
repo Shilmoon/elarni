@@ -4,12 +4,15 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+## 0.5.0 - 2026-11-07
+
 ### Security
 
 - Imported profiles can no longer read the core's environment through a field name
   that only matches under Unicode case folding, such as `addreſs`.
 - The core's brotli and zstd decoders are updated (brotli 1.2.7, klauspost/compress 1.20.2): a crafted brotli stream
   could allocate excessive memory (GO-2026-6888) and a crafted zstd frame could crash the core (GO-2026-6865).
+  The vendored quic-go forks' own module files now ask for the same versions.
 
 ### Added
 
