@@ -16,6 +16,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - Android: the update notice never appeared; the daily check failed before it fetched.
 - Windows, Linux: SRV, TXT and other lookups that aren't for addresses went to a
   resolver the routing profile lists for its own domains only.
+- SRV, TXT and other lookups that aren't for addresses, asked over TCP through the VPN,
+  came back truncated whenever the answer passed 512 bytes, so they failed; they now
+  stay on TCP.
 
 ## 0.4.1 - 2026-11-04
 

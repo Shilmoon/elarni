@@ -588,14 +588,15 @@ pub(crate) fn apply_outbound_runtime(
 
 /// Xray answers only A and AAAA itself. Other lookups go to the first resolver with an
 /// address, along the route of Xray's own queries: the forward loopback re-enters as its
-/// DNS tag. HTTPS records stay empty because their address hints bypass FakeDNS.
+/// DNS tag. HTTPS records stay empty because their address hints bypass FakeDNS. An empty
+/// network keeps each query's own, so a TCP retry of a truncated answer is not truncated again.
 pub(crate) fn dns_forward_settings(servers: &Value) -> Value {
     let (address, port, network) = servers
         .as_array()
         .into_iter()
         .flatten()
         .find_map(dns_forward_target)
-        .unwrap_or_else(|| ("1.1.1.1".to_owned(), 53, "udp"));
+        .unwrap_or_else(|| ("1.1.1.1".to_owned(), 53, ""));
     json!({"address": address, "port": port, "network": network, "rules": [
         {"action": "hijack", "qType": "1,28"},
         {"action": "return", "qType": "64,65"},
@@ -616,7 +617,7 @@ fn dns_forward_target(server: &Value) -> Option<(String, u16, &'static str)> {
             .and_then(|port| u16::try_from(port).ok())
             .filter(|port| *port != 0)
             .unwrap_or(53);
-        return Some((ip.to_string(), port, "udp"));
+        return Some((ip.to_string(), port, ""));
     }
     let url = url::Url::parse(address).ok()?;
     // Hosts of schemes such as tcp:// stay opaque text in the URL parser.
@@ -629,7 +630,7 @@ fn dns_forward_target(server: &Value) -> Option<(String, u16, &'static str)> {
     if url.scheme().starts_with("tcp") {
         return Some((ip.to_string(), url.port().unwrap_or(53), "tcp"));
     }
-    Some((ip.to_string(), 53, "udp"))
+    Some((ip.to_string(), 53, ""))
 }
 
 pub(crate) fn compile_owned_config(
