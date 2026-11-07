@@ -9,6 +9,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - DNS lookups get through when the VPN's UDP session table is full (every platform). A burst of new
   UDP flows, such as the discovery packets Windows sends at each network change, refused every
   lookup for about 10 s; lookups now have up to 128 sessions of their own.
+- Windows: a recording build recorded no VPN traffic when the ElarniVPN service started the
+  helper (Connect without administrator approval), or when another administrator approved
+  it: the helper wrote into that account's profile, which Save recording as ZIP cannot read.
+  It now records under the helper's admin-only folder, readable only by the connecting account.
 
 ## 0.5.0 - 2026-11-07
 
