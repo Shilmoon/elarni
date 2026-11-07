@@ -421,9 +421,11 @@ try:
             for address in ('224.0.0.251', '239.255.255.250', '255.255.255.255', 'ff02::fb'):
                 assert blocked == any(ipaddress.ip_address(address) in p for p in prefixes if str(p) not in own), \
                     'Capture route for ' + address + ' in ' + str(routes)
+                # A route without an interface metric has no IP interface for its family: unusable.
                 matches = [(ipaddress.ip_network(row['DestinationPrefix']).prefixlen,
                             -(row['RouteMetric'] + row['InterfaceMetric']), row['InterfaceAlias']) for row in table
-                           if ipaddress.ip_address(address) in ipaddress.ip_network(row['DestinationPrefix'])]
+                           if row['RouteMetric'] is not None and row['InterfaceMetric'] is not None
+                           and ipaddress.ip_address(address) in ipaddress.ip_network(row['DestinationPrefix'])]
                 assert matches, 'No route to ' + address
                 best = max(matches)[:2]
                 interfaces = sorted({alias for length, metric, alias in matches if (length, metric) == best})
