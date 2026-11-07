@@ -445,8 +445,12 @@ class AndroidUIE2E {
         ui.onNodeWithText("Stay in touch").assertExists()
         list.performScrollToNode(hasText("Search servers"))
         ui.onNodeWithText("Search servers").performTextInput("Netherlands")
-        list.performScrollToNode(hasText("Amsterdam"))
-        ui.onNodeWithText("Amsterdam").assertExists()
+        // The keyboard opens after the input and its inset animation, which the test cannot wait for, shrinks the list
+        // under a row scrolled to the bottom edge: scroll again until the row stays shown.
+        ui.waitUntil(5000) {
+            list.performScrollToNode(hasText("Amsterdam"))
+            ui.onAllNodesWithText("Amsterdam").fetchSemanticsNodes().isNotEmpty()
+        }
         list.performScrollToNode(hasText("Search servers"))
         ui.onNodeWithText("Search servers").performTextClearance()
         click("Favorites")
