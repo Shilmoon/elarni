@@ -4,6 +4,15 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Fixed
+
+- LAN discovery (mDNS, SSDP, LLMNR, WS-Discovery, DHCP-style broadcast) stays on the local
+  network instead of entering the VPN, where it reached no device: apps that send it without
+  choosing an interface now send it on the local network. The tunnel's routes leave out
+  multicast and the limited broadcast on Windows, Linux, Android, macOS and iOS; on Windows
+  the VPN adapter's own discovery routes also lose to every other interface. Block traffic
+  without VPN (and Android's lockdown) keeps them in the tunnel as before.
+
 ## 0.5.0 - 2026-11-07
 
 ### Security

@@ -2,16 +2,21 @@ import Foundation
 import NetworkExtension
 
 enum TunnelSettingsFactory {
-  static func make(plan: TunnelPlan, excludedEndpointAddresses: [String]) throws -> NEPacketTunnelNetworkSettings {
+  /// LAN discovery (multicast, the limited broadcast) reaches no device through the tunnel, so it
+  /// stays on the physical network unless Block traffic without VPN keeps everything inside.
+  static let discoveryRoutes = ["224.0.0.0/4", "255.255.255.255/32", "ff00::/8"]
+
+  static func make(plan: TunnelPlan, excludedEndpointAddresses: [String], keepDiscovery: Bool = false) throws -> NEPacketTunnelNetworkSettings {
     guard !excludedEndpointAddresses.isEmpty || plan.outboundFormat == .xrayProfile else { throw SettingsError.missingEndpointExclusion }
     let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "192.0.2.1")
     settings.mtu = NSNumber(value: plan.mtu)
     let runtime = plan.runtimeSettings
+    let discovery = keepDiscovery ? [] : discoveryRoutes
 
     let ipv4 = NEIPv4Settings(addresses: ["192.0.2.2"], subnetMasks: ["255.255.255.252"])
     ipv4.includedRoutes = runtime.includedRoutes.compactMap(ipv4Route)
     let ipv4Exclusions = excludedEndpointAddresses + runtime.excludedRoutes +
-      (runtime.hideVPNIcon ? ["0.0.0.0/8"] : [])
+      (runtime.hideVPNIcon ? ["0.0.0.0/8"] : []) + discovery
     ipv4.excludedRoutes = ipv4Exclusions.compactMap { address in
       if address.contains("/") { return ipv4Route(address) }
       guard address.contains(".") else { return nil }
@@ -24,7 +29,7 @@ enum TunnelSettingsFactory {
     let ipv6 = NEIPv6Settings(addresses: ["2001:db8::2"], networkPrefixLengths: [126])
     ipv6.includedRoutes = runtime.includedRoutes.compactMap(ipv6Route)
     let ipv6Exclusions = excludedEndpointAddresses + runtime.excludedRoutes +
-      (runtime.hideVPNIcon ? ["::/128"] : [])
+      (runtime.hideVPNIcon ? ["::/128"] : []) + discovery
     ipv6.excludedRoutes = ipv6Exclusions.compactMap { address in
       if address.contains("/") { return ipv6Route(address) }
       guard address.contains(":") else { return nil }
