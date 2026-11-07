@@ -429,7 +429,10 @@ try:
                 assert matches, 'No route to ' + address
                 best = max(matches)[:2]
                 interfaces = sorted({alias for length, metric, alias in matches if (length, metric) == best})
-                assert (adapter in interfaces) == blocked, 'Discovery to ' + address + ' picks ' + str(interfaces)
+                assert (adapter in interfaces) == blocked, 'Discovery to ' + address + ' picks ' + str(interfaces) + ' from ' + \
+                    str([row for row in table if ipaddress.ip_address(address) in ipaddress.ip_network(row['DestinationPrefix'])]) + \
+                    ' ' + powershell('Get-NetIPInterface -InterfaceAlias \'' + adapter + '\' -ErrorAction SilentlyContinue | '
+                        'Select-Object AddressFamily,InterfaceMetric,ConnectionState | ConvertTo-Json -Compress')
         http_target('2001:db8::1' if mode == 'session-limits' else '198.18.0.1', http_server.server_port)
         if mode == 'session-limits':
             wait_sessions('Tcp')
