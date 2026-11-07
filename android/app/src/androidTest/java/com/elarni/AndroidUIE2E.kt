@@ -445,8 +445,12 @@ class AndroidUIE2E {
         ui.onNodeWithText("Stay in touch").assertExists()
         list.performScrollToNode(hasText("Search servers"))
         ui.onNodeWithText("Search servers").performTextInput("Netherlands")
-        list.performScrollToNode(hasText("Amsterdam"))
-        ui.onNodeWithText("Amsterdam").assertExists()
+        // The keyboard opens after the input and its inset animation, which the test cannot wait for, shrinks the list
+        // under a row scrolled to the bottom edge: scroll again until the row stays shown.
+        ui.waitUntil(5000) {
+            list.performScrollToNode(hasText("Amsterdam"))
+            ui.onAllNodesWithText("Amsterdam").fetchSemanticsNodes().isNotEmpty()
+        }
         list.performScrollToNode(hasText("Search servers"))
         ui.onNodeWithText("Search servers").performTextClearance()
         click("Favorites")
@@ -967,6 +971,35 @@ class AndroidUIE2E {
             ui.onNode(hasScrollToIndexAction()).performTouchInput { swipeDown() }
             ui.waitUntil(10_000) { snapshot().nodes.any { it.string("name") == "Germany Pulled" } }
             assertTrue(feed.requests.get() > before)
+        }
+    }
+    // Nothing else on Home says that a pull updates subscriptions, and TalkBack cannot pull: a line above the servers
+    // says how old they are, offers the gesture until it is used once, and refreshes when tapped.
+    @Test fun homeFreshnessLineTeachesThePullAndRefreshesOnTap() {
+        val prefs = ui.activity.getSharedPreferences("ui", android.content.Context.MODE_PRIVATE)
+        prefs.edit().remove("pulledToRefresh").commit()
+        HTTPFixture().use { feed ->
+            feed.body = "socks://127.0.0.1:18100#Germany%20Demo"
+            call("approveSource", obj("token" to call("import", obj("text" to feed.url)).getJSONObject("warning").getString("token")))
+            // Home reads the flag when it is composed: leave and come back.
+            ui.onNode(hasText("Subscriptions") and hasClickAction()).performClick()
+            ui.onNode(hasText("Home") and hasClickAction()).performClick()
+            val list = ui.onNode(hasScrollToIndexAction())
+            val line = hasTestTag("subscription-freshness")
+            list.performScrollToNode(line)
+            ui.onNode(line).assert(hasText("Updated just now", substring = true)).assert(hasText("Pull down to update", substring = true)).assertHasClickAction()
+            feed.body = "socks://127.0.0.1:18100#Germany%20Demo\nsocks://127.0.0.1:18101#Germany%20Tapped"
+            ui.onNode(line).performClick()
+            ui.waitUntil(10_000) { snapshot().nodes.any { it.string("name") == "Germany Tapped" } }
+            // A tap is not the gesture: once the refresh ends, the line still teaches it.
+            ui.waitUntil(10_000) { ui.onAllNodes(line and hasText("Pull down to update", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+            list.performScrollToIndex(0)
+            list.performTouchInput { swipeDown() }
+            ui.waitUntil(10_000) { prefs.getBoolean("pulledToRefresh", false) }
+            ui.waitUntil(10_000) { !repo.state.value.busy }
+            list.performScrollToNode(line)
+            ui.waitUntil(10_000) { ui.onAllNodes(line and hasText("Updated just now", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+            ui.onNode(line).assert(hasText("Pull down to update", substring = true).not())
         }
     }
     @Test fun subscriptionsAndRoutingUseIPhoneSections() {

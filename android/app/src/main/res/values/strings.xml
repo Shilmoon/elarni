@@ -689,4 +689,20 @@
     <string name="problem_marked_at">Problem marked at %1$s. Export the recording when you are done.</string>
     <string name="record_connection_diagnostics">Record connection diagnostics</string>
     <string name="records_connection_timing_byte_counts_and">Records connection timing, byte counts and errors while connected, so a problem can be traced. No sites, addresses, credentials or content. Uses little battery; changing it reconnects. Mark and export it in Troubleshooting.</string>
+    <string name="updated_just_now">Updated just now</string>
+    <string name="updating_subscriptions">Updating subscriptions…</string>
+    <string name="pull_down_to_update">Pull down to update</string>
+    <string name="update_subscriptions">Update subscriptions</string>
+    <plurals name="updated_minutes_ago">
+        <item quantity="one">Updated %d min ago</item>
+        <item quantity="other">Updated %d min ago</item>
+    </plurals>
+    <plurals name="updated_hours_ago">
+        <item quantity="one">Updated %d h ago</item>
+        <item quantity="other">Updated %d h ago</item>
+    </plurals>
+    <plurals name="updated_days_ago">
+        <item quantity="one">Updated %d day ago</item>
+        <item quantity="other">Updated %d days ago</item>
+    </plurals>
 </resources>

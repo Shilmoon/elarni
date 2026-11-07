@@ -709,4 +709,26 @@
     <string name="problem_marked_at">Проблема отмечена в %1$s. Когда закончите, экспортируйте запись.</string>
     <string name="record_connection_diagnostics">Записывать диагностику подключения</string>
     <string name="records_connection_timing_byte_counts_and">Пока есть подключение, записывает время соединений, объёмы трафика и ошибки, чтобы проблему можно было отследить. Без сайтов, адресов, учётных данных и содержимого. Почти не расходует батарею; изменение переподключает. Отметить и экспортировать запись можно в разделе «Диагностика».</string>
+    <string name="updated_just_now">Обновлено только что</string>
+    <string name="updating_subscriptions">Обновляем подписки…</string>
+    <string name="pull_down_to_update">Потяните вниз, чтобы обновить</string>
+    <string name="update_subscriptions">Обновить подписки</string>
+    <plurals name="updated_minutes_ago">
+        <item quantity="one">Обновлено %d мин назад</item>
+        <item quantity="few">Обновлено %d мин назад</item>
+        <item quantity="many">Обновлено %d мин назад</item>
+        <item quantity="other">Обновлено %d мин назад</item>
+    </plurals>
+    <plurals name="updated_hours_ago">
+        <item quantity="one">Обновлено %d ч назад</item>
+        <item quantity="few">Обновлено %d ч назад</item>
+        <item quantity="many">Обновлено %d ч назад</item>
+        <item quantity="other">Обновлено %d ч назад</item>
+    </plurals>
+    <plurals name="updated_days_ago">
+        <item quantity="one">Обновлено %d день назад</item>
+        <item quantity="few">Обновлено %d дня назад</item>
+        <item quantity="many">Обновлено %d дней назад</item>
+        <item quantity="other">Обновлено %d дня назад</item>
+    </plurals>
 </resources>

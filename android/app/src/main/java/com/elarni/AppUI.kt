@@ -62,6 +62,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -78,8 +79,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-@Composable fun RouteIcon(kind: String, description: String? = null, color: Color = MaterialTheme.colorScheme.onSurface) {
-    Canvas(Modifier.size(24.dp).then(if (description == null) Modifier else Modifier.semantics { contentDescription = description })) {
+@Composable fun RouteIcon(kind: String, description: String? = null, color: Color = MaterialTheme.colorScheme.onSurface, iconSize: Dp = 24.dp) {
+    Canvas(Modifier.size(iconSize).then(if (description == null) Modifier else Modifier.semantics { contentDescription = description })) {
         val stroke = Stroke(1.8f, cap = StrokeCap.Round)
         scale(size.width / 24, size.height / 24, Offset.Zero) {
             fun line(x: Float, y: Float, a: Float, b: Float) = drawLine(color, Offset(x, y), Offset(a, b), 1.8f, StrokeCap.Round)
@@ -98,6 +99,7 @@ import kotlinx.coroutines.withContext
                 "star" -> { val path = Path(); for (i in 0..9) { val a = Math.PI * (i / 5.0 - 0.5); val radius = if (i % 2 == 0) 10.0 else 4.5; val x = 12 + kotlin.math.cos(a) * radius; val y = 12 + kotlin.math.sin(a) * radius; if (i == 0) path.moveTo(x.toFloat(), y.toFloat()) else path.lineTo(x.toFloat(), y.toFloat()) }; path.close(); drawPath(path, color, style = stroke) }
                 "check" -> { line(4f, 12f, 9f, 17f); line(9f, 17f, 20f, 6f) }
                 "refresh" -> { drawArc(color, 35f, 290f, false, Offset(4f, 4f), Size(16f, 16f), style = stroke); line(20f, 3f, 20f, 9f); line(20f, 9f, 14f, 9f) }
+                "pull" -> { line(12f, 4f, 12f, 19f); line(6f, 13f, 12f, 19f); line(18f, 13f, 12f, 19f) }
                 "search" -> { drawCircle(color, 6.5f, Offset(10f, 10f), style = stroke); line(15f, 15f, 21f, 21f) }
                 "import" -> { line(12f, 2f, 12f, 14f); line(7f, 9f, 12f, 14f); line(12f, 14f, 17f, 9f); line(4f, 13f, 4f, 21f); line(4f, 21f, 20f, 21f); line(20f, 21f, 20f, 13f) }
                 "ping" -> { line(2f, 12f, 7f, 12f); line(7f, 12f, 10f, 4f); line(10f, 4f, 14f, 20f); line(14f, 20f, 17f, 12f); line(17f, 12f, 22f, 12f) }
@@ -479,6 +481,33 @@ private val LocalReselect = compositionLocalOf { 0 }
     }
 }
 
+/** How long ago the servers were updated: [seconds] since the fetch. */
+fun updatedAgo(seconds: Double): String = when {
+    seconds < 60 -> tr(R.string.updated_just_now)
+    seconds < 3600 -> trPlural(R.plurals.updated_minutes_ago, (seconds / 60).toInt())
+    seconds < 86400 -> trPlural(R.plurals.updated_hours_ago, (seconds / 3600).toInt())
+    else -> trPlural(R.plurals.updated_days_ago, (seconds / 86400).toInt())
+}
+
+// How old the subscriptions' servers are, above the list a pull refreshes. Pulling is not shown anywhere else, and
+// TalkBack cannot pull, so the line also refreshes when tapped.
+@Composable private fun FreshnessLine(fetched: Double?, clock: Double, refreshing: Boolean, hint: Boolean, enabled: Boolean, refresh: () -> Unit) {
+    val age = when {
+        refreshing -> tr(R.string.updating_subscriptions)
+        fetched == null -> tr(R.string.not_updated_yet)
+        else -> updatedAgo(clock - fetched)
+    }
+    val primary = MaterialTheme.colorScheme.primary
+    Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth().heightIn(min = 48.dp).clip(MaterialTheme.shapes.small)
+        .clickable(enabled = enabled, onClickLabel = tr(R.string.update_subscriptions), role = Role.Button, onClick = refresh)
+        .padding(horizontal = 8.dp).testTag("subscription-freshness"),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        RouteIcon(if (hint) "pull" else "refresh", color = primary, iconSize = 16.dp)
+        Text(if (hint && !refreshing) age + " · " else age, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (hint && !refreshing) Text(tr(R.string.pull_down_to_update), style = MaterialTheme.typography.bodySmall, color = primary, fontWeight = FontWeight.Medium)
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun HomeScreen(catalog: Catalog, state: AppState, expanded: Boolean, activity: MainActivity, navigate: (String, String) -> Unit, sourceId: String = "") {
     val tick by rememberClock()
@@ -524,11 +553,19 @@ private val LocalReselect = compositionLocalOf { 0 }
     val listState = tabListState()
     val scope = rememberCoroutineScope()
     val scrollServers: () -> Unit = { scope.launch { listState.animateScrollToItem(if (!expanded && sourceId.isEmpty()) 1 else 0) } }
-    // Only a pull shows the indicator; connecting or testing keeps their own progress bar.
+    // Only a refresh started here shows the indicator; connecting or testing keeps their own progress bar.
     var refreshing by remember { mutableStateOf(false) }
-    val refreshable = sources.filter { it.has("url") }.map { it.string("id") }
+    val remote = sources.filter { it.has("url") }
+    val refreshable = remote.map { it.string("id") }
+    val refresh: () -> Unit = {
+        if (!state.busy && !refreshing && refreshable.isNotEmpty()) scope.launch { refreshing = true; try { activity.refreshAll(refreshable).join() } finally { refreshing = false } }
+    }
+    // The freshness line says "pull down" until the user has pulled once.
+    val prefs = remember { activity.getSharedPreferences("ui", android.content.Context.MODE_PRIVATE) }
+    var pulled by remember { mutableStateOf(prefs.getBoolean("pulledToRefresh", false)) }
     PullToRefreshBox(isRefreshing = refreshing, onRefresh = {
-        if (!state.busy && refreshable.isNotEmpty()) scope.launch { refreshing = true; try { activity.refreshAll(refreshable).join() } finally { refreshing = false } }
+        if (!pulled) { pulled = true; prefs.edit().putBoolean("pulledToRefresh", true).apply() }
+        refresh()
     }) {
     Row(Modifier.fillMaxSize()) {
         if (expanded) Box(Modifier.widthIn(max = 360.dp).weight(0.38f).verticalScroll(rememberScrollState())) { ConnectionPanel(catalog, state, activity, scrollServers) }
@@ -589,6 +626,11 @@ private val LocalReselect = compositionLocalOf { 0 }
                         TextButton({ country = "" }) { Text(tr(R.string.all_locations)) }
                     }
                 } }
+                if (remote.isNotEmpty()) item(key = "freshness") {
+                    // The oldest list decides: one stale subscription is reason enough to update.
+                    val fetched = if (remote.all { it.has("lastSuccessfulFetch") }) remote.minOf { it.optDouble("lastSuccessfulFetch") } else null
+                    FreshnessLine(fetched, clock, refreshing, hint = !pulled, enabled = !state.busy && !refreshing, refresh = refresh)
+                }
                 groups.forEach { (location, entries) ->
                     val code = location?.code ?: "other"
                     val open = search.isNotBlank() || filter != "all" || (expandedGroups[code] ?: (location == null || entries.any { it.second.string("id") == catalog.selected }))
