@@ -59,8 +59,12 @@ func TestServiceRecordingFolderIsTheAccountsAlone(t *testing.T) {
 		}
 	}
 	// The account reads its recording but cannot plant files or links in it for SYSTEM to write through.
-	if err := os.WriteFile(filepath.Join(directory, "rvdiag-helper-1-1-000001.jsonl"), []byte("{}\n"), 0o600); err == nil {
-		t.Fatal("the account could write into its service recording folder")
+	// An elevated process (the CI runner) writes through the Administrators entry by design; the exact
+	// DACL above already shows the account's own entry is read-only, and the app runs unelevated.
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		if err := os.WriteFile(filepath.Join(directory, "rvdiag-helper-1-1-000001.jsonl"), []byte("{}\n"), 0o600); err == nil {
+			t.Fatal("the account could write into its service recording folder")
+		}
 	}
 	if _, err := os.ReadDir(directory); err != nil {
 		t.Fatalf("the account cannot list its recording: %v", err)
