@@ -21,6 +21,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   helper (Connect without administrator approval), or when another administrator approved
   it: the helper wrote into that account's profile, which Save recording as ZIP cannot read.
   It now records under the helper's admin-only folder, readable only by the connecting account.
+- Windows, Linux and macOS: in the routing editor, opening a collapsed section (Direct DNS,
+  Choose DNS by domain, Proxy rules, Block rules) or reopening one showed grey boxes instead of
+  its text fields.
 
 ## 0.5.0 - 2026-11-07
 
