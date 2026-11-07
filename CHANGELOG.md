@@ -4,6 +4,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+## 0.5.1 - 2026-11-08
+
 ### Changed
 
 - Reduce routing-data size is on for new routing profiles and for imported ones that do not
