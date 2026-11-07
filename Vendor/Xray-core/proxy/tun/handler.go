@@ -40,6 +40,7 @@ type Handler struct {
 	tcpSessions                stats.Counter
 	udpSessions                stats.Counter
 	tcpAdmission, udpAdmission sessionAdmission
+	dnsAdmission               sessionAdmission // UDP port 53: lookups get through a full UDP table
 	dnsIdle, udpIdle           time.Duration
 }
 
@@ -119,6 +120,10 @@ func (t *Handler) Init(ctx context.Context, pm policy.Manager, dispatcher routin
 	t.tcpAdmission.limit, t.udpAdmission.limit = tcpLimit.Load(), udpLimit.Load()
 	t.tcpAdmission.minIdle, t.udpAdmission.minIdle, t.dnsIdle, t.udpIdle = sessionEvictIdle, sessionEvictIdle, dnsSessionIdle, udpSessionIdle
 	t.tcpAdmission.finishedIdle, t.udpAdmission.finishedIdle = tcpFinishedIdle, dnsFinishedIdle
+	if t.udpAdmission.limit != 0 {
+		t.dnsAdmission.limit = min(dnsSessionLimit, t.udpAdmission.limit)
+	}
+	t.dnsAdmission.minIdle, t.dnsAdmission.finishedIdle = sessionEvictIdle, dnsFinishedIdle
 
 	if len(t.tag) > 0 && pm.ForSystem().Stats.InboundUplink {
 		statsManager := core.MustFromContext(ctx).GetFeature(stats.ManagerType()).(stats.Manager)
@@ -239,6 +244,9 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 	admission := &t.tcpAdmission
 	if destination.Network == net.Network_UDP {
 		admission = &t.udpAdmission
+		if destination.Port == 53 {
+			admission = &t.dnsAdmission
+		}
 	}
 	var clock *activity
 	var admitted *admittedSession

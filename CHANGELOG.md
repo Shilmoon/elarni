@@ -4,6 +4,12 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Fixed
+
+- DNS lookups get through when the VPN's UDP session table is full (every platform). A burst of new
+  UDP flows, such as the discovery packets Windows sends at each network change, refused every
+  lookup for about 10 s; lookups now have up to 128 sessions of their own.
+
 ## 0.5.0 - 2026-11-07
 
 ### Security

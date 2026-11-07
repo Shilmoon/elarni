@@ -644,6 +644,69 @@ fn sessions_refused_at_the_limit_are_counted() {
     );
 }
 
+// A burst of fresh UDP flows filled the cap and every DNS lookup was refused with it (Elarni): DNS takes
+// slots of its own past the cap, while other flows are still refused.
+#[test]
+fn dns_gets_through_a_full_udp_cap() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (connected, connections) = std::sync::mpsc::channel();
+    let (release, wait) = std::sync::mpsc::channel::<()>();
+    // Hold every SOCKS connection without answering, so each session stays active.
+    let server = thread::spawn(move || {
+        let mut held = Vec::new();
+        listener.set_nonblocking(true).unwrap();
+        while wait.try_recv().is_err() {
+            match listener.accept() {
+                Ok(connection) => {
+                    held.push(connection);
+                    connected.send(()).unwrap();
+                }
+                Err(_) => thread::sleep(Duration::from_millis(5)),
+            }
+        }
+    });
+    let bridge = elarni_packet_bridge_new(port, 1500, 1, 1, 8, 1500);
+    assert!(!bridge.is_null());
+    let mut counters = ElarniPacketCounters::default();
+    let (dns_connected, other_refused);
+    unsafe {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while elarni_packet_bridge_state(bridge) == ElarniPacketState::Starting
+            && Instant::now() < deadline
+        {
+            thread::sleep(Duration::from_millis(1));
+        }
+        let submit = |datagram: Vec<u8>| {
+            assert_eq!(
+                elarni_packet_bridge_submit(bridge, datagram.as_ptr(), datagram.len()),
+                ElarniPacketStatus::Ok
+            );
+        };
+        submit(udp_datagram([10, 0, 0, 2], [192, 0, 2, 10], 40_000, 443));
+        connections.recv_timeout(Duration::from_secs(5)).unwrap();
+        submit(udp_datagram_with(
+            [10, 0, 0, 2],
+            [198, 18, 0, 1],
+            40_001,
+            53,
+            &dns_message(1, 0x0100),
+        ));
+        dns_connected = connections.recv_timeout(Duration::from_secs(5)).is_ok();
+        submit(udp_datagram([10, 0, 0, 2], [192, 0, 2, 10], 40_002, 443));
+        while counters.dropped_udp_sessions == 0 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+            elarni_packet_bridge_counters(bridge, &mut counters);
+        }
+        other_refused = counters.dropped_udp_sessions == 1 && connections.try_recv().is_err();
+        elarni_packet_bridge_free(bridge);
+    }
+    release.send(()).unwrap();
+    server.join().unwrap();
+    assert!(dns_connected, "a DNS lookup was refused at the UDP cap");
+    assert!(other_refused, "a flow other than DNS passed the UDP cap");
+}
+
 // Collects the stack's IPv4 output until one UDP datagram is complete and returns its payload.
 fn receive_udp_payload(bridge: *mut ElarniPacketBridge, timeout: Duration) -> Option<Vec<u8>> {
     let deadline = Instant::now() + timeout;
