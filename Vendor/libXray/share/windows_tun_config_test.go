@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,7 +41,19 @@ func TestWindowsElevationOwnsLocalResources(t *testing.T) {
 		t.Fatal("bad config")
 	}
 	tun := result["inbounds"].([]any)[0].(map[string]any)["settings"].(map[string]any)
-	if tun["name"] != "elarni-fixture" || len(tun["autoSystemRoutingTable"].([]any)) != 4 ||
+	owned, err := WindowsRoutes(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := []string{}
+	for _, route := range tun["autoSystemRoutingTable"].([]any) {
+		routes = append(routes, route.(string))
+	}
+	want := []string{}
+	for _, route := range owned {
+		want = append(want, route.String())
+	}
+	if tun["name"] != "elarni-fixture" || !slices.Equal(routes, want) ||
 		result["log"].(map[string]any)["access"] != nil {
 		t.Fatal("caller controlled elevated resources")
 	}

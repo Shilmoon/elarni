@@ -404,7 +404,38 @@ try:
         elif mode == 'session-limits':
             assert {'198.18.0.0/16', '2001:db8::/32'}.issubset(set(routes))
         else:
-            assert {'0.0.0.0/1', '128.0.0.0/1', '::/1', '8000::/1'}.issubset(set(routes)), 'Missing IPv4/IPv6 capture routes'
+            prefixes = [ipaddress.ip_network(value) for value in routes]
+            def captured(address):
+                return any(ipaddress.ip_address(address) in p for p in prefixes)
+            for address in ('8.8.8.8', '198.18.0.1', '203.0.113.9', '255.255.255.254', '2001:db8::1', '2a00::1'):
+                assert captured(address), 'Missing capture route for ' + address + ': ' + str(routes)
+            # LAN discovery stays on the physical network unless Block traffic without VPN keeps
+            # everything in the tunnel; Windows then picks another interface's discovery routes.
+            blocked = mode == 'block-broker-death'
+            # The adapter keeps Windows' own routes to these, demoted below every other interface's.
+            own = {'224.0.0.0/4', '255.255.255.255/32', 'ff00::/8'}
+            # Find-NetRoute cannot resolve multicast destinations, so pick the route the way Windows
+            # does: the longest matching prefix, then the lowest route plus interface metric.
+            table = json.loads(powershell('@(Get-NetRoute -ErrorAction SilentlyContinue | Select-Object '
+                'DestinationPrefix,InterfaceAlias,RouteMetric,InterfaceMetric) | ConvertTo-Json -Compress'))
+            for address in ('224.0.0.251', '239.255.255.250', '255.255.255.255', 'ff02::fb'):
+                assert blocked == any(ipaddress.ip_address(address) in p for p in prefixes if str(p) not in own), \
+                    'Capture route for ' + address + ' in ' + str(routes)
+                # Windows reports no interface metric for the adapter, which the core sets to 0; any
+                # other route without one has no IP interface for its family and is never chosen.
+                def metric(row):
+                    interface = 0 if row['InterfaceAlias'] == adapter and row['InterfaceMetric'] is None else row['InterfaceMetric']
+                    return None if row['RouteMetric'] is None or interface is None else row['RouteMetric'] + interface
+                matches = [(ipaddress.ip_network(row['DestinationPrefix']).prefixlen, -metric(row), row['InterfaceAlias'])
+                           for row in table if metric(row) is not None
+                           and ipaddress.ip_address(address) in ipaddress.ip_network(row['DestinationPrefix'])]
+                assert matches, 'No route to ' + address
+                best = max(matches)[:2]
+                interfaces = sorted({alias for length, metric, alias in matches if (length, metric) == best})
+                assert (adapter in interfaces) == blocked, 'Discovery to ' + address + ' picks ' + str(interfaces) + ' from ' + \
+                    str([row for row in table if ipaddress.ip_address(address) in ipaddress.ip_network(row['DestinationPrefix'])]) + \
+                    ' ' + powershell('Get-NetIPInterface -InterfaceAlias \'' + adapter + '\' -ErrorAction SilentlyContinue | '
+                        'Select-Object AddressFamily,InterfaceMetric,ConnectionState | ConvertTo-Json -Compress')
         http_target('2001:db8::1' if mode == 'session-limits' else '198.18.0.1', http_server.server_port)
         if mode == 'session-limits':
             wait_sessions('Tcp')

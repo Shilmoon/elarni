@@ -46,6 +46,7 @@ type WindowsTun struct {
 	luid     winipcfg.LUID
 	cbr      winipcfg.ChangeCallback
 	cbi      winipcfg.ChangeCallback
+	cbd      winipcfg.ChangeCallback // demotes discovery routes Windows sets on the adapter again (Elarni)
 	guard    outboundGuard
 	wfp      windows.Handle
 	resolver *savedResolver
@@ -177,6 +178,37 @@ func (t *WindowsTun) flushRoutes(family winipcfg.AddressFamily) error {
 	return nil
 }
 
+// discoveryMetric is the route metric the TUN's own discovery routes get: other interfaces'
+// routes to them have 256 plus an interface metric well below this (Elarni).
+const discoveryMetric = 9000
+
+// demoteRoutesTo gives the adapter's routes to exactly these prefixes discoveryMetric (Elarni).
+func (t *WindowsTun) demoteRoutesTo(prefixes []netip.Prefix) error {
+	rows, err := winipcfg.GetIPForwardTable2(windows.AF_UNSPEC)
+	if err != nil {
+		return err
+	}
+	for i := range rows {
+		if rows[i].InterfaceLUID == t.luid && slices.Contains(prefixes, rows[i].DestinationPrefix.Prefix()) {
+			if err := demoteRoute(&rows[i]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func demoteRoute(row *winipcfg.MibIPforwardRow2) error {
+	if row.Metric >= discoveryMetric {
+		return nil
+	}
+	row.Metric = discoveryMetric
+	if err := row.Set(); err != nil && !go_errors.Is(err, windows.ERROR_NOT_FOUND) {
+		return err
+	}
+	return nil
+}
+
 // setRoutes is winipcfg's SetRoutesForFamily over flushRoutes.
 func (t *WindowsTun) setRoutes(family winipcfg.AddressFamily, routes []*winipcfg.RouteData) error {
 	if err := t.flushRoutes(family); err != nil {
@@ -184,7 +216,17 @@ func (t *WindowsTun) setRoutes(family winipcfg.AddressFamily, routes []*winipcfg
 	}
 	for _, route := range routes {
 		if route.Destination.Addr().Is4() == (family == windows.AF_INET) {
-			if err := t.luid.AddRoute(route.Destination, route.NextHop, route.Metric); err != nil {
+			err := t.luid.AddRoute(route.Destination, route.NextHop, route.Metric)
+			if go_errors.Is(err, windows.ERROR_OBJECT_ALREADY_EXISTS) {
+				// Windows may set its own discovery routes on the TUN again between the flush
+				// and this (Elarni): take it over with this route's metric.
+				var row *winipcfg.MibIPforwardRow2
+				if row, err = t.luid.Route(route.Destination, route.NextHop); err == nil {
+					row.Metric = route.Metric
+					err = row.Set()
+				}
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -246,6 +288,20 @@ func (t *WindowsTun) Start() (err error) {
 			route.NextHop = netip.IPv6Unspecified()
 		}
 		routesMap[route] = struct{}{}
+	}
+	// Elarni: discovery the routes take gets the TUN's own routes, and the TUN's routes to discovery
+	// they leave out are demoted below; see splitDiscovery.
+	captured := make([]netip.Prefix, 0, len(routesMap))
+	for route := range routesMap {
+		captured = append(captured, route.Destination)
+	}
+	discoveryLeft, discoveryTaken := splitDiscovery(captured)
+	for _, prefix := range discoveryTaken {
+		next := netip.IPv4Unspecified()
+		if prefix.Addr().Is6() {
+			next = netip.IPv6Unspecified()
+		}
+		routesMap[winipcfg.RouteData{Destination: prefix, NextHop: next}] = struct{}{}
 	}
 	routesData := make([]*winipcfg.RouteData, 0, len(routesMap))
 	for route := range routesMap {
@@ -326,6 +382,32 @@ startOver:
 				goto startOver
 			}
 			return firstErr
+		}
+	}
+
+	// Elarni: every interface has its own routes to multicast and the limited broadcast, and the
+	// TUN's metric 0 makes its own win, so LAN discovery that an app sends without choosing an
+	// interface went into the TUN, where it reaches no device. When the routes leave discovery out,
+	// those of the TUN get a metric that any other interface beats, now and whenever Windows sets
+	// them again, so it stays on the physical network. They are not deleted, as the TUN's own
+	// multicast (IPv6 neighbor discovery) names the interface and still needs one. Routes that
+	// take everything (Block traffic without VPN) add their own to it instead, above.
+	if len(routesData) > 0 {
+		if discovery := discoveryLeft; len(discovery) > 0 {
+			cbd, err := winipcfg.RegisterRouteChangeCallback(func(notificationType winipcfg.MibNotificationType, route *winipcfg.MibIPforwardRow2) {
+				if notificationType != winipcfg.MibDeleteInstance && route != nil && route.InterfaceLUID == t.luid &&
+					route.Metric < discoveryMetric && slices.Contains(discovery, route.DestinationPrefix.Prefix()) {
+					// Not from within the notification itself, which Windows delivers on its own thread.
+					go func(row winipcfg.MibIPforwardRow2) { _ = demoteRoute(&row) }(*route)
+				}
+			})
+			if err != nil {
+				return err
+			}
+			t.cbd = cbd
+			if err := t.demoteRoutesTo(discovery); err != nil {
+				return errors.New("unable to leave LAN discovery to the physical network").Base(err)
+			}
 		}
 	}
 
@@ -463,6 +545,9 @@ func (t *WindowsTun) Close() error {
 	}
 	if t.cbi != nil {
 		t.cbi.Unregister()
+	}
+	if t.cbd != nil {
+		t.cbd.Unregister()
 	}
 	t.guard.restore()
 	// Ending the session first takes the adapter media-down, so Windows stops

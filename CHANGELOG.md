@@ -17,6 +17,14 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - VLESS with XTLS Vision refuses QUIC (UDP/443) before connecting to the server, rather than
   after a full connection and TLS/REALITY handshake. Browsers retry QUIC often: one recorded
   10-minute session made 2,611 such handshakes for nothing.
+- LAN discovery (mDNS, SSDP, LLMNR, WS-Discovery, DHCP-style broadcast) stays on the local
+  network instead of entering the VPN, where it reached no device: apps that send it without
+  choosing an interface now send it on the local network. The tunnel's routes leave out
+  multicast and the limited broadcast on Windows, Linux, Android, macOS and iOS; on Windows
+  the VPN adapter's own discovery routes also lose to every other interface. Block traffic
+  without VPN (and Android's lockdown) keeps them in the tunnel; on Windows the adapter now
+  gets its own routes to them, which Windows did not always create, so mDNS no longer left
+  through the physical network there.
 
 ## 0.5.0 - 2026-11-07
 

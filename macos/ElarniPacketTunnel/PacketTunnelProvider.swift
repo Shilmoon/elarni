@@ -560,7 +560,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       do {
         let settings = try TunnelSettingsFactory.make(
           plan: plan,
-          excludedEndpointAddresses: prepared.addresses
+          excludedEndpointAddresses: prepared.addresses,
+          keepDiscovery: protocolConfiguration.includeAllNetworks
         )
         try await apply(settings)
         ProviderBoundaryEvidence.success(.tunnelSettings, attempt: attempt)
@@ -763,7 +764,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       // Keep installed routes when only the core changes. If settings differ,
       // replace them completely and restore even after a partially failed apply.
       if settingsChanged {
-        let settings = try TunnelSettingsFactory.make(plan: plan, excludedEndpointAddresses: candidate.addresses)
+        let settings = try TunnelSettingsFactory.make(plan: plan, excludedEndpointAddresses: candidate.addresses, keepDiscovery: protocolConfiguration.includeAllNetworks)
         settingsAttempted = true
         try await apply(settings)
       }
@@ -793,7 +794,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
           stopConfirmed = true
           try requireActive(generation)
           if settingsAttempted {
-            try await apply(TunnelSettingsFactory.make(plan: oldPlan, excludedEndpointAddresses: oldCore.addresses))
+            try await apply(TunnelSettingsFactory.make(plan: oldPlan, excludedEndpointAddresses: oldCore.addresses, keepDiscovery: protocolConfiguration.includeAllNetworks))
           }
           try requireActive(generation)
 #if DEBUG

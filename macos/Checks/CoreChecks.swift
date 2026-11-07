@@ -346,10 +346,16 @@ struct CoreChecks {
       let v4 = settings.ipv4Settings!
       let v6 = settings.ipv6Settings!
       try expect(v4.includedRoutes?.first?.destinationSubnetMask == "0.0.0.0", "IPv4 default mask")
-      try expect(v4.excludedRoutes?.map(\.destinationAddress) == ["203.0.113.1", "192.0.2.0"], "IPv4 exclusions")
-      try expect(v4.excludedRoutes?.map(\.destinationSubnetMask) == ["255.255.255.255", "255.255.255.0"], "IPv4 exclusion masks")
+      // LAN discovery stays on the physical network: multicast and the limited broadcast are excluded.
+      try expect(v4.excludedRoutes?.map(\.destinationAddress) == ["203.0.113.1", "192.0.2.0", "224.0.0.0", "255.255.255.255"], "IPv4 exclusions")
+      try expect(v4.excludedRoutes?.map(\.destinationSubnetMask) == ["255.255.255.255", "255.255.255.0", "240.0.0.0", "255.255.255.255"], "IPv4 exclusion masks")
       try expect(v6.includedRoutes?.first?.destinationNetworkPrefixLength == 32, "IPv6 included prefix")
-      try expect(v6.excludedRoutes?.map(\.destinationNetworkPrefixLength) == [128, 48], "IPv6 exclusions")
+      try expect(v6.excludedRoutes?.map(\.destinationNetworkPrefixLength) == [128, 48, 8], "IPv6 exclusions")
+      try expect(v6.excludedRoutes?.last?.destinationAddress == "ff00::", "IPv6 multicast exclusion")
+      // Block traffic without VPN (includeAllNetworks) keeps discovery in the tunnel.
+      let blocked = try TunnelSettingsFactory.make(plan: value, excludedEndpointAddresses: ["203.0.113.1", "2001:db8::1"], keepDiscovery: true)
+      try expect(blocked.ipv4Settings?.excludedRoutes?.map(\.destinationAddress) == ["203.0.113.1", "192.0.2.0"], "blocked IPv4 exclusions")
+      try expect(blocked.ipv6Settings?.excludedRoutes?.map(\.destinationNetworkPrefixLength) == [128, 48], "blocked IPv6 exclusions")
       try rejects { _ = try TunnelSettingsFactory.make(plan: value, excludedEndpointAddresses: []) }
       for family in ["ipv4", "ipv6"] {
         let one = try TunnelSettingsFactory.make(plan: plan(settings: ["preferredIP": family]), excludedEndpointAddresses: ["203.0.113.1", "2001:db8::1"])
