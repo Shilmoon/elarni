@@ -347,6 +347,29 @@ fn routing_profile() -> Value {
         "DomesticDNSType":"DoU", "DomesticDNSIP":"8.8.8.8"})
 }
 
+// Full geofiles cost about 90 MB of core memory with Russian routing and are refused over 64 MiB on
+// Apple, so a profile that does not say otherwise is reduced, as Happ's routing builder does.
+#[test]
+fn routing_profiles_reduce_geofiles_unless_they_opt_out() {
+    for (value, expected) in [
+        (None, true),
+        (Some(json!("true")), true),
+        (Some(json!("false")), false),
+        (Some(json!(false)), false),
+    ] {
+        let mut input = routing_profile();
+        if let Some(value) = value {
+            input["UseChunkFiles"] = value;
+        }
+        let RoutingImport::Add { profile, .. } = decode_routing(&input.to_string()).unwrap() else {
+            panic!("expected routing profile")
+        };
+        assert_eq!(profile.use_chunk_files, expected, "{input}");
+        let stored = serde_json::to_value(&profile).unwrap();
+        assert_eq!(stored["UseChunkFiles"], json!(expected.to_string()));
+    }
+}
+
 fn compile_request() -> CompileRequest {
     let parsed = parse("hy2://fixture-auth@proxy.example.com:443?sni=tls.example.com&alpn=h3%2Ch2&fp=chrome&ports=443-445&hop-interval=30&up=10%20Mbps&down=100%20Mbps&obfs=salamander&obfs-password=fixture-obfs").unwrap();
     CompileRequest {

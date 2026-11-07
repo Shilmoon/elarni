@@ -12,7 +12,9 @@ payloads.
 - **Save recording as ZIP** (`exportRecording`) exports what is kept: up to 256 MiB
   on desktop and 64 MiB on phones, for at most 72 hours.
 
-Recordings are stored in `%LOCALAPPDATA%\Elarni\Diagnostics` (Windows),
+Recordings are stored in `%LOCALAPPDATA%\Elarni\Diagnostics` and, for the VPN,
+`%ProgramFiles%\Elarni VPN Helper\.diagnostics\<account SID>` (Windows; uninstalling
+the helper deletes it),
 `~/.cache/Elarni/Diagnostics` and `/var/log/elarni/<uid>` (Linux), the app group's
 `Diagnostics` folder (macOS, iOS) or the app's no-backup files (Android).
 

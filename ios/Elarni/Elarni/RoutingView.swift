@@ -150,7 +150,7 @@ struct RoutingEditor: View {
   }
   static func draft(_ profile: RoutingProfile?) -> [String: Any] {
     var object = profile.flatMap { try? JSONSerialization.jsonObject(with: Data($0.json.utf8)) as? [String: Any] } ??
-      ["Name": "My routing", "GlobalProxy": true, "RemoteDNSType": "DoU", "RemoteDNSIP": "1.1.1.1", "DomesticDNSType": "DoU", "DomesticDNSIP": "1.1.1.1", "RouteOrder": "block-direct-proxy", "DomainStrategy": "AsIs"]
+      ["Name": "My routing", "GlobalProxy": true, "RemoteDNSType": "DoU", "RemoteDNSIP": "1.1.1.1", "DomesticDNSType": "DoU", "DomesticDNSIP": "1.1.1.1", "RouteOrder": "block-direct-proxy", "DomainStrategy": "AsIs", "UseChunkFiles": "true"]
     object["FakeDNS"] = object["FakeDNS"] ?? object["FakeDns"] ?? "false"
     // A stored profile carries an empty current key beside the legacy one it was imported with.
     for keys in [["RemoteDNSIP", "RemoteDNSIp", "RemoteDns"], ["DomesticDNSIP", "DomesticDNSIp", "DomesticDns"]] {

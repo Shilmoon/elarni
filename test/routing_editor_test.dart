@@ -272,4 +272,44 @@ void main() {
       expect(find.textContaining('Remote DNS needs'), findsOneWidget);
     });
   }
+
+  // An expanded section stored its open state under its PageStorageKey, which the text fields inside
+  // also resolved to: their scroll position read the bool as an offset and each field became a grey
+  // error box (Direct DNS on Windows, 2026-11-08). Collapsed sections must open with working fields.
+  testWidgets('sections opened or reopened keep their text fields', (
+    tester,
+  ) async {
+    await openEditor(
+      tester,
+      profile()..addAll({
+        'RemoteDNSType': 'DoH',
+        'RemoteDNSDomain': 'https://8.8.8.8/dns-query',
+        'DomesticDNSType': 'DoH',
+        'DomesticDNSDomain': 'https://77.88.8.8/dns-query',
+        'ProxySites': ['geosite:youtube'],
+        'BlockSites': ['geosite:category-ads'],
+      }),
+      (_) {},
+    );
+    Future<void> toggle(String title) async {
+      await tester.ensureVisible(find.text(title));
+      await tester.tap(find.text(title));
+      await tester.pumpAndSettle();
+    }
+
+    for (final title in ['Proxy rules', 'Block rules']) {
+      await toggle(title);
+    }
+    expect(find.text('geosite:youtube'), findsOneWidget);
+    expect(find.text('geosite:category-ads'), findsOneWidget);
+    await tester.tap(find.text('DNS'));
+    await tester.pumpAndSettle();
+    await toggle('Direct DNS');
+    await toggle('Choose DNS by domain');
+    await toggle('Remote DNS'); // collapse and reopen one that started open
+    await toggle('Remote DNS');
+    expect(find.text('https://77.88.8.8/dns-query'), findsOneWidget);
+    expect(find.text('https://8.8.8.8/dns-query'), findsOneWidget);
+    expect(find.byType(ErrorWidget), findsNothing);
+  });
 }

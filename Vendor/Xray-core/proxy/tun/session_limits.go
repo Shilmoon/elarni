@@ -28,6 +28,11 @@ const (
 	// a session's lifetime in a full table under churn (256 slots at 1,600 conn/s: 160 ms). DNS needs none:
 	// retire hands a later query from the same port to a new flow.
 	tcpFinishedIdle, dnsFinishedIdle = 50 * time.Millisecond, time.Duration(0)
+	// DNS flows have a table of their own (Elarni): a burst of fresh UDP flows, such as the ~1,000
+	// discovery packets Windows sends at each network change, filled the UDP table with sessions too
+	// young to replace and so refused every lookup for 10 s. Answered lookups are replaced at once, so
+	// this bounds lookups in flight, not lookups.
+	dnsSessionLimit = 128
 )
 
 // SetSessionLimits sets admission limits for subsequently created TUN handlers.

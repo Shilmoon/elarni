@@ -4,6 +4,14 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Changed
+
+- Reduce routing-data size is on for new routing profiles and for imported ones that do not
+  set `UseChunkFiles`, as in Happ's routing builder: the core loads only the geofile records the
+  rules use. With the full Russian geofiles this cut the Windows helper's peak memory from 478 to
+  112 MB, and on macOS and iOS it lets geofiles over 64 MB load at all.
+  A profile that sets `"UseChunkFiles": "false"` keeps full files.
+
 ### Fixed
 
 - The VPN no longer relays LAN discovery (mDNS, SSDP, LLMNR, WS-Discovery) or other multicast
@@ -27,6 +35,16 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   through the physical network there.
 - Windows: after the Elarni adapter was disabled, which ends the connection, the next connect failed with
   "vpn_core_failed_2": the helper reused the disabled adapter it keeps between connects. It now replaces it.
+- DNS lookups get through when the VPN's UDP session table is full (every platform). A burst of new
+  UDP flows, such as the discovery packets Windows sends at each network change, refused every
+  lookup for about 10 s; lookups now have up to 128 sessions of their own.
+- Windows: a recording build recorded no VPN traffic when the ElarniVPN service started the
+  helper (Connect without administrator approval), or when another administrator approved
+  it: the helper wrote into that account's profile, which Save recording as ZIP cannot read.
+  It now records under the helper's admin-only folder, readable only by the connecting account.
+- Windows, Linux and macOS: in the routing editor, opening a collapsed section (Direct DNS,
+  Choose DNS by domain, Proxy rules, Block rules) or reopening one showed grey boxes instead of
+  its text fields.
 
 ## 0.5.0 - 2026-11-07
 
