@@ -13,9 +13,9 @@ func TestWindowsTunUnparkReusesTheParkedAdapter(t *testing.T) {
 	kept := &wintun.Adapter{}
 	parked.name, parked.adapter = "elarni-test", kept
 	t.Cleanup(func() { parked.name, parked.adapter = "", nil })
-	adapter, err := unpark("elarni-test", "Elarni")
-	if err != nil || adapter != kept {
-		t.Fatalf("unpark = %p, %v; want the parked adapter %p", adapter, err, kept)
+	adapter, reused, err := unpark("elarni-test", "Elarni")
+	if err != nil || adapter != kept || !reused {
+		t.Fatalf("unpark = %p, %v, %v; want the parked adapter %p", adapter, reused, err, kept)
 	}
 	if parked.adapter != nil {
 		t.Fatal("the adapter stayed parked while in use")

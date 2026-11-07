@@ -4,6 +4,11 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Fixed
+
+- Windows: after the Elarni adapter was disabled, which ends the connection, the next connect failed with
+  "vpn_core_failed_2": the helper reused the disabled adapter it keeps between connects. It now replaces it.
+
 ## 0.5.0 - 2026-11-07
 
 ### Security
