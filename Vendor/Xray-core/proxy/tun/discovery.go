@@ -10,11 +10,11 @@ var discoveryPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("ff00::/8"),
 }
 
-// discoveryLeftOut lists the discovery prefixes that no route of the tunnel covers. Windows gives
-// every interface its own routes to them, so the tunnel's, which its metric 0 would make win, have
-// to lose for discovery to stay on the physical network the routes leave it to (Elarni).
-func discoveryLeftOut(routes []netip.Prefix) []netip.Prefix {
-	var left []netip.Prefix
+// splitDiscovery sorts the discovery prefixes into those no route of the tunnel covers and those
+// its routes take. Windows gives every interface its own routes to them, longer than a tunnel's
+// split routes: the tunnel's own, which its metric 0 makes win, have to lose for discovery left
+// to the physical network, and have to exist for discovery the tunnel takes (Elarni).
+func splitDiscovery(routes []netip.Prefix) (left, taken []netip.Prefix) {
 	for _, discovery := range discoveryPrefixes {
 		covered := false
 		for _, route := range routes {
@@ -23,9 +23,11 @@ func discoveryLeftOut(routes []netip.Prefix) []netip.Prefix {
 				break
 			}
 		}
-		if !covered {
+		if covered {
+			taken = append(taken, discovery)
+		} else {
 			left = append(left, discovery)
 		}
 	}
-	return left
+	return left, taken
 }

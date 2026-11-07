@@ -216,7 +216,17 @@ func (t *WindowsTun) setRoutes(family winipcfg.AddressFamily, routes []*winipcfg
 	}
 	for _, route := range routes {
 		if route.Destination.Addr().Is4() == (family == windows.AF_INET) {
-			if err := t.luid.AddRoute(route.Destination, route.NextHop, route.Metric); err != nil {
+			err := t.luid.AddRoute(route.Destination, route.NextHop, route.Metric)
+			if go_errors.Is(err, windows.ERROR_OBJECT_ALREADY_EXISTS) {
+				// Windows may set its own discovery routes on the TUN again between the flush
+				// and this (Elarni): take it over with this route's metric.
+				var row *winipcfg.MibIPforwardRow2
+				if row, err = t.luid.Route(route.Destination, route.NextHop); err == nil {
+					row.Metric = route.Metric
+					err = row.Set()
+				}
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -278,6 +288,20 @@ func (t *WindowsTun) Start() (err error) {
 			route.NextHop = netip.IPv6Unspecified()
 		}
 		routesMap[route] = struct{}{}
+	}
+	// Elarni: discovery the routes take gets the TUN's own routes, and the TUN's routes to discovery
+	// they leave out are demoted below; see splitDiscovery.
+	captured := make([]netip.Prefix, 0, len(routesMap))
+	for route := range routesMap {
+		captured = append(captured, route.Destination)
+	}
+	discoveryLeft, discoveryTaken := splitDiscovery(captured)
+	for _, prefix := range discoveryTaken {
+		next := netip.IPv4Unspecified()
+		if prefix.Addr().Is6() {
+			next = netip.IPv6Unspecified()
+		}
+		routesMap[winipcfg.RouteData{Destination: prefix, NextHop: next}] = struct{}{}
 	}
 	routesData := make([]*winipcfg.RouteData, 0, len(routesMap))
 	for route := range routesMap {
@@ -367,13 +391,9 @@ startOver:
 	// those of the TUN get a metric that any other interface beats, now and whenever Windows sets
 	// them again, so it stays on the physical network. They are not deleted, as the TUN's own
 	// multicast (IPv6 neighbor discovery) names the interface and still needs one. Routes that
-	// take everything (Block traffic without VPN) keep them as they are.
+	// take everything (Block traffic without VPN) add their own to it instead, above.
 	if len(routesData) > 0 {
-		routes := make([]netip.Prefix, 0, len(routesData))
-		for _, route := range routesData {
-			routes = append(routes, route.Destination)
-		}
-		if discovery := discoveryLeftOut(routes); len(discovery) > 0 {
+		if discovery := discoveryLeft; len(discovery) > 0 {
 			cbd, err := winipcfg.RegisterRouteChangeCallback(func(notificationType winipcfg.MibNotificationType, route *winipcfg.MibIPforwardRow2) {
 				if notificationType != winipcfg.MibDeleteInstance && route != nil && route.InterfaceLUID == t.luid &&
 					route.Metric < discoveryMetric && slices.Contains(discovery, route.DestinationPrefix.Prefix()) {

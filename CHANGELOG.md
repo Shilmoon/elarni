@@ -11,7 +11,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   choosing an interface now send it on the local network. The tunnel's routes leave out
   multicast and the limited broadcast on Windows, Linux, Android, macOS and iOS; on Windows
   the VPN adapter's own discovery routes also lose to every other interface. Block traffic
-  without VPN (and Android's lockdown) keeps them in the tunnel as before.
+  without VPN (and Android's lockdown) keeps them in the tunnel; on Windows the adapter now
+  gets its own routes to them, which Windows did not always create, so mDNS no longer left
+  through the physical network there.
 
 ## 0.5.0 - 2026-11-07
 

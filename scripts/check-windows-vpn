@@ -421,10 +421,13 @@ try:
             for address in ('224.0.0.251', '239.255.255.250', '255.255.255.255', 'ff02::fb'):
                 assert blocked == any(ipaddress.ip_address(address) in p for p in prefixes if str(p) not in own), \
                     'Capture route for ' + address + ' in ' + str(routes)
-                # A route without an interface metric has no IP interface for its family: unusable.
-                matches = [(ipaddress.ip_network(row['DestinationPrefix']).prefixlen,
-                            -(row['RouteMetric'] + row['InterfaceMetric']), row['InterfaceAlias']) for row in table
-                           if row['RouteMetric'] is not None and row['InterfaceMetric'] is not None
+                # Windows reports no interface metric for the adapter, which the core sets to 0; any
+                # other route without one has no IP interface for its family and is never chosen.
+                def metric(row):
+                    interface = 0 if row['InterfaceAlias'] == adapter and row['InterfaceMetric'] is None else row['InterfaceMetric']
+                    return None if row['RouteMetric'] is None or interface is None else row['RouteMetric'] + interface
+                matches = [(ipaddress.ip_network(row['DestinationPrefix']).prefixlen, -metric(row), row['InterfaceAlias'])
+                           for row in table if metric(row) is not None
                            and ipaddress.ip_address(address) in ipaddress.ip_network(row['DestinationPrefix'])]
                 assert matches, 'No route to ' + address
                 best = max(matches)[:2]
