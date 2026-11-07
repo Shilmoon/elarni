@@ -70,8 +70,15 @@ public final class TrafficActivity extends Activity {
                     byte[] payload = "elarni-udp-fixture".getBytes(StandardCharsets.US_ASCII);
                     if ("dns".equals(mode)) payload = new byte[]{0x12,0x34,1,0,0,1,0,0,0,0,0,0,7,'f','i','x','t','u','r','e',4,'t','e','s','t',0,0,1,0,1};
                     try (DatagramSocket socket = new DatagramSocket()) {
-                        socket.setSoTimeout(4000); socket.send(new DatagramPacket(payload, payload.length, target, port));
-                        byte[] bytes = new byte[8192]; DatagramPacket packet = new DatagramPacket(bytes, bytes.length); socket.receive(packet);
+                        // Like a stub resolver, send again each second within the 4 s budget: one lost datagram
+                        // on a loaded emulator must not fail the check.
+                        byte[] bytes = new byte[8192]; DatagramPacket packet = new DatagramPacket(bytes, bytes.length);
+                        socket.setSoTimeout(1000);
+                        for (int attempt = 1; ; attempt++) {
+                            socket.send(new DatagramPacket(payload, payload.length, target, port));
+                            try { socket.receive(packet); break; }
+                            catch (SocketTimeoutException timeout) { if (attempt == 4) throw timeout; }
+                        }
                         if ("dns".equals(mode)) {
                             int offset = packet.getLength() - 4;
                             if (offset < 12 || bytes[0] != 0x12 || bytes[1] != 0x34) throw new IOException("Invalid DNS reply");
