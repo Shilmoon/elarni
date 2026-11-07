@@ -209,8 +209,14 @@ data class Cidr(val address: BigInteger, val bits: Int, val width: Int) {
         bytes.copyInto(output, output.size - count, bytes.size - count)
         return InetAddress.getByAddress(output)
     }
+    operator fun contains(other: InetAddress): Boolean {
+        val value = BigInteger(1, other.address)
+        return other.address.size * 8 == width && value >= address && value <= end
+    }
     override fun toString() = "${inet().hostAddress}/$bits"
     companion object {
+        /** LAN discovery (multicast, the limited broadcast) reaches no device through the tunnel, so it stays on the physical network. */
+        val discovery = listOf("224.0.0.0/4", "255.255.255.255/32", "ff00::/8")
         fun parse(text: String): Cidr {
             val pair = text.trim().split('/')
             if (pair.size != 2) throw AppFailure("invalid_settings")
@@ -221,9 +227,10 @@ data class Cidr(val address: BigInteger, val bits: Int, val width: Int) {
             val value = BigInteger(1, address).shiftRight(width-bits).shiftLeft(width-bits)
             return Cidr(value, bits, width)
         }
-        fun routes(settings: JSONObject): List<Cidr> {
+        // keepDiscovery: Android's Block connections without VPN (lockdown) keeps everything inside the tunnel.
+        fun routes(settings: JSONObject, keepDiscovery: Boolean = false): List<Cidr> {
             var routes = (if (settings.optBoolean("includeAllNetworks")) listOf("0.0.0.0/0", "::/0") else settings.strings("includedRoutes")).map(::parse)
-            settings.strings("excludedRoutes").map(::parse).forEach { exclude ->
+            (settings.strings("excludedRoutes") + if (keepDiscovery) emptyList() else discovery).map(::parse).forEach { exclude ->
                 routes = routes.flatMap { it.subtract(exclude) }
                 if (routes.size > 4096) throw AppFailure("invalid_settings")
             }

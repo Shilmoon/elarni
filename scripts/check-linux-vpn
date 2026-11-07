@@ -406,6 +406,13 @@ def isolated_main(core, selected, protocol='vless'):
                 after = counts()
                 assert after['profileDNS'] > before['profileDNS'], 'DNS did not use the configured profile server'
                 assert after['physicalDNS'] == before['physicalDNS'], 'Application DNS bypassed capture'
+            if case == 'include-all' or case.startswith('block-'):
+                # LAN discovery stays on the physical network unless Block traffic without VPN
+                # keeps everything in the tunnel.
+                for address in ('224.0.0.251', '239.255.255.250', '255.255.255.255', 'ff02::fb'):
+                    route = json.loads(subprocess.run(['ip', '-j', 'route', 'get', address], capture_output=True, text=True).stdout or '[{}]')[0]
+                    assert (route.get('dev') == ready['adapter']) == case.startswith('block-'), \
+                        case + ': discovery to ' + address + ' takes ' + str(route)
             if case == 'enforcement':
                 check_http(TARGET4, interface='rvclient', allowed=False)
                 check_http(TARGET6, interface='rvclient', allowed=False)

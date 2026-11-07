@@ -204,6 +204,13 @@ class AndroidE2E {
         val routes = snapshot().settings.put("includedRoutes", JSONArray(listOf("0.0.0.0/0", "::/0"))).put("excludedRoutes", JSONArray(listOf("10.0.0.0/8", "fc00::/7")))
         call("settings", obj("settings" to routes))
         assertFalse(Cidr.routes(snapshot().settings).any { it.toString() == "0.0.0.0/0" })
+        // LAN discovery stays on the physical network, unless lockdown keeps everything in the tunnel.
+        val discovery = listOf("224.0.0.251", "239.255.255.250", "255.255.255.255", "ff02::fb").map(java.net.InetAddress::getByName)
+        val unicast = listOf("8.8.8.8", "203.0.113.9", "255.255.255.254", "2001:db8::1").map(java.net.InetAddress::getByName)
+        val open = Cidr.routes(snapshot().settings)
+        assertTrue(discovery.none { address -> open.any { address in it } } && unicast.all { address -> open.any { address in it } })
+        val locked = Cidr.routes(snapshot().settings, keepDiscovery = true)
+        assertTrue((discovery + unicast).all { address -> locked.any { address in it } })
         val diagnostic = call("diagnostics").getString("text")
         assertFalse(diagnostic.contains("127.0.0.1")); assertFalse(diagnostic.contains("00000000-0000-4000-8000-000000000001")); assertFalse(diagnostic.contains(selected))
         call("settings", obj("settings" to obj("perAppMode" to "off")))

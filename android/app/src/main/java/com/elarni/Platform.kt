@@ -249,7 +249,7 @@ class ElarniVpnService : VpnService() {
             builder.addDisallowedApplication(packageName)
             if (!allowed) names.forEach { runCatching { builder.addDisallowedApplication(it) } }
         }
-        Cidr.routes(settings).forEach { builder.addRoute(it.inet(), it.bits) }
+        Cidr.routes(settings, keepDiscovery = Build.VERSION.SDK_INT >= 29 && isLockdownEnabled).forEach { builder.addRoute(it.inet(), it.bits) }
         return builder.establish() ?: throw AppFailure("vpn_consent_required")
     }
     fun awaitTunnelReady(valid: () -> Unit) {

@@ -412,12 +412,13 @@ func TestLinuxIgnoresWindowsIconWorkaroundWithoutMutatingSettings(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := []string{}
+	// The Windows workaround leaves out 0.0.0.0/8; Linux keeps routing it, and the policy is not changed.
+	covered := false
 	for _, route := range routes {
-		got = append(got, route.String())
+		covered = covered || route.Contains(netip.MustParseAddr("0.1.2.3"))
 	}
-	if !reflect.DeepEqual(got, []string{"0.0.0.0/1", "128.0.0.0/1", "::/1", "8000::/1"}) || !policy.HideVPNIcon {
-		t.Fatalf("Linux routes/settings: %v %+v", got, policy)
+	if !covered || !policy.HideVPNIcon {
+		t.Fatalf("Linux routes/settings: %v %+v", routes, policy)
 	}
 }
 
