@@ -155,6 +155,13 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 	rec := h.server
 	var conn stat.Connection
 
+	// Elarni: Vision refuses UDP/443 (QUIC) below; refusing it before the dial spares the server a
+	// connection and a TLS/REALITY handshake for every QUIC attempt an app makes.
+	if account, ok := rec.User.Account.(*vless.MemoryAccount); ok && account.Flow == vless.XRV &&
+		ob.Target.Network == net.Network_UDP && ob.Target.Port == 443 {
+		return errors.New("XTLS rejected UDP/443 traffic")
+	}
+
 	if h.testpre > 0 && h.reverse == nil {
 		h.initpre.Do(func() {
 			h.preConns = make(chan *ConnExpire)

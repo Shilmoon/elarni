@@ -10,6 +10,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   and broadcast packets that Windows sends out of the VPN adapter. On a recorded Windows session
   they made about 22,000 connections in 10 minutes and kept the UDP session table at its
   1024 limit, so real UDP flows were replaced after 10 s idle.
+- VLESS with XTLS Vision refuses QUIC (UDP/443) before connecting to the server, rather than
+  after a full connection and TLS/REALITY handshake. Browsers retry QUIC often: one recorded
+  10-minute session made 2,611 such handshakes for nothing.
 
 ## 0.5.0 - 2026-11-07
 
