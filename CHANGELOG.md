@@ -22,6 +22,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   previous setting back on disconnect, on quit, and at the next start after a crash.
 - macOS: the app warns when the VPN extension that runs is another build's (a leftover
   development build's extension used 6.6 GB).
+- Android: a line above the servers on Home says when the subscriptions were last updated and that
+  pulling the list down updates them; tapping it updates them too, which TalkBack users need.
 
 ### Changed
 
