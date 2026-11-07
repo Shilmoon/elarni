@@ -644,6 +644,71 @@ fn sessions_refused_at_the_limit_are_counted() {
     );
 }
 
+// Elarni: LAN discovery sent into the tunnel (mDNS, SSDP, DHCP-style broadcast) must not open UDP
+// sessions. A burst of it filled the table, and every new UDP session, DNS included, was refused.
+#[test]
+fn packets_to_many_hosts_open_no_sessions() {
+    let mut ipv6 = packet(6, 8);
+    ipv6[24..40].copy_from_slice(&[0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xfb]);
+    assert!(framing::to_many_at_once(&ipv6));
+    ipv6[24] = 0xfe;
+    assert!(!framing::to_many_at_once(&ipv6), "fe02:: is unicast");
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (release, wait) = std::sync::mpsc::channel::<()>();
+    // Hold the SOCKS connection of the one session there is room for, so it stays active.
+    let server = thread::spawn(move || {
+        let held = listener.accept();
+        let _ = wait.recv_timeout(Duration::from_secs(10));
+        drop(held);
+    });
+    let bridge = elarni_packet_bridge_new(port, 1500, 1, 1, 8, 1500);
+    assert!(!bridge.is_null());
+    let mut counters = ElarniPacketCounters::default();
+    unsafe {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while elarni_packet_bridge_state(bridge) == ElarniPacketState::Starting
+            && Instant::now() < deadline
+        {
+            thread::sleep(Duration::from_millis(1));
+        }
+        for (source_port, destination, port) in [
+            (40_000, [224, 0, 0, 251], 5353),
+            (40_001, [239, 255, 255, 250], 1900),
+            (40_002, [255, 255, 255, 255], 67),
+            (40_003, [192, 0, 2, 10], 443),
+        ] {
+            let datagram = udp_datagram([10, 0, 0, 2], destination, source_port, port);
+            assert_eq!(
+                elarni_packet_bridge_submit(bridge, datagram.as_ptr(), datagram.len()),
+                ElarniPacketStatus::Ok
+            );
+        }
+        while counters.active_udp_sessions + counters.dropped_udp_sessions == 0
+            && Instant::now() < deadline
+        {
+            thread::sleep(Duration::from_millis(5));
+            elarni_packet_bridge_counters(bridge, &mut counters);
+        }
+        // Give a wrongly admitted discovery session time to show up as a refusal of the unicast one.
+        thread::sleep(Duration::from_millis(200));
+        elarni_packet_bridge_counters(bridge, &mut counters);
+        elarni_packet_bridge_free(bridge);
+    }
+    release.send(()).unwrap();
+    server.join().unwrap();
+    assert_eq!(
+        (
+            counters.active_udp_sessions,
+            counters.dropped_udp_sessions,
+            counters.packets_in
+        ),
+        (1, 0, 1),
+        "only the unicast datagram may reach the stack"
+    );
+}
+
 // Collects the stack's IPv4 output until one UDP datagram is complete and returns its payload.
 fn receive_udp_payload(bridge: *mut ElarniPacketBridge, timeout: Duration) -> Option<Vec<u8>> {
     let deadline = Instant::now() + timeout;

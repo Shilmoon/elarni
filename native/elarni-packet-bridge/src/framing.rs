@@ -104,6 +104,20 @@ pub fn validate_packet(packet: &[u8], max_packet_bytes: usize) -> io::Result<()>
     Ok(())
 }
 
+/// Whether a validated packet is addressed to many hosts at once: IPv4 multicast (224.0.0.0/4),
+/// the limited broadcast 255.255.255.255, or IPv6 multicast (ff00::/8). No proxy carries such a
+/// packet, and the system already sends its LAN discovery (mDNS, SSDP, LLMNR) on the LAN itself;
+/// relayed, each one opened a UDP session, and a burst filled the table so that DNS was refused.
+pub fn to_many_at_once(packet: &[u8]) -> bool {
+    match packet.first().map(|first| first >> 4) {
+        Some(4) if packet.len() >= 20 => {
+            packet[16] & 0xf0 == 0xe0 || packet[16..20] == [255, 255, 255, 255]
+        }
+        Some(6) if packet.len() >= 40 => packet[24] == 0xff,
+        _ => false,
+    }
+}
+
 fn packet_length(packet: &[u8]) -> io::Result<Option<usize>> {
     let Some(first) = packet.first() else {
         return Ok(None);
