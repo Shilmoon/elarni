@@ -11,6 +11,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   at each network change, enough to fill the 1024-slot UDP session table with new sessions; the
   VPN then refused every new UDP flow, DNS lookups included, for about 10 s. On a recorded
   session this happened about half the time, and pages waited up to 14 s for DNS.
+  The same applies on every platform: Linux and Android share that packet stack, and the
+  macOS and iOS tunnels now drop such packets as well instead of opening a UDP session for
+  each, which once their table was full refused every new one.
 - VLESS with XTLS Vision refuses QUIC (UDP/443) before connecting to the server, rather than
   after a full connection and TLS/REALITY handshake. Browsers retry QUIC often: one recorded
   10-minute session made 2,611 such handshakes for nothing.
