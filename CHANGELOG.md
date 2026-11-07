@@ -25,6 +25,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   without VPN (and Android's lockdown) keeps them in the tunnel; on Windows the adapter now
   gets its own routes to them, which Windows did not always create, so mDNS no longer left
   through the physical network there.
+- Windows: after the Elarni adapter was disabled, which ends the connection, the next connect failed with
+  "vpn_core_failed_2": the helper reused the disabled adapter it keeps between connects. It now replaces it.
 
 ## 0.5.0 - 2026-11-07
 

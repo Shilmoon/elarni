@@ -105,12 +105,21 @@ func NewTun(options *Config) (Tun, error) {
 }
 
 func startAdapter(options *Config) (*wintun.Adapter, wintun.Session, error) {
-	adapter, err := unpark(options.Name, options.Desc)
+	adapter, reused, err := unpark(options.Name, options.Desc)
 	if err != nil {
 		return nil, wintun.Session{}, err
 	}
 	// start the interface with ring buffer capacity of 8 MiB
 	session, err := adapter.StartSession(0x800000)
+	if err != nil && reused {
+		// Elarni: a parked adapter that was disabled (by the user, or with its tunnel's loss) cannot
+		// start a session; closing removes it, so a new one replaces it.
+		_ = adapter.Close()
+		if adapter, err = open(options.Name, options.Desc); err != nil {
+			return nil, wintun.Session{}, err
+		}
+		session, err = adapter.StartSession(0x800000)
+	}
 	if err != nil {
 		_ = adapter.Close()
 		return nil, wintun.Session{}, err
@@ -134,19 +143,20 @@ var parked struct {
 	adapter *wintun.Adapter
 }
 
-// unpark takes the adapter parked under name, or opens one.
-func unpark(name, desc string) (*wintun.Adapter, error) {
+// unpark takes the adapter parked under name, or opens one; reused reports the parked one.
+func unpark(name, desc string) (adapter *wintun.Adapter, reused bool, err error) {
 	parked.Lock()
 	adapter, same := parked.adapter, parked.name == name
 	parked.adapter = nil
 	parked.Unlock()
 	if adapter != nil {
 		if same {
-			return adapter, nil
+			return adapter, true, nil
 		}
 		_ = adapter.Close()
 	}
-	return open(name, desc)
+	adapter, err = open(name, desc)
+	return adapter, false, err
 }
 
 // park keeps the adapter for the next runtime; it fails when one is parked already.
