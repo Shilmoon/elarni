@@ -89,6 +89,8 @@ class _RoutingEditorState extends State<RoutingEditor> {
     _section = widget.initialSection;
     _profile = Map<String, dynamic>.from(jsonDecode(widget.json) as Map);
     _profile['FakeDNS'] ??= _profile['FakeDns'] ?? 'false';
+    // As the native decoder does: geofiles are reduced unless the profile opts out.
+    _profile['UseChunkFiles'] ??= 'true';
     _explicitDNS = _profile['DomesticDNSDomains'] is List;
     for (final key in <String>[
       'Name',

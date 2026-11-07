@@ -502,7 +502,7 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
 }
 
 @Composable fun RoutingEditor(record: JSONObject?, busy: Boolean, activity: MainActivity, initialSection: String = "", done: () -> Unit) {
-    val original = record?.mapObject("profile") ?: obj("Name" to "My routing", "GlobalProxy" to "true", "RouteOrder" to "block-direct-proxy", "DomainStrategy" to "AsIs", "RemoteDNSType" to "DoU", "RemoteDNSIP" to "1.1.1.1", "DomesticDNSType" to "DoU", "DomesticDNSIP" to "1.1.1.1")
+    val original = record?.mapObject("profile") ?: obj("Name" to "My routing", "GlobalProxy" to "true", "RouteOrder" to "block-direct-proxy", "DomainStrategy" to "AsIs", "RemoteDNSType" to "DoU", "RemoteDNSIP" to "1.1.1.1", "DomesticDNSType" to "DoU", "DomesticDNSIP" to "1.1.1.1", "UseChunkFiles" to "true")
     val id = record?.string("id") ?: ""
     // The compiler falls back to a legacy RemoteDns/DomesticDns IP, which would bring back one cleared here; the form keeps only the current key.
     var encoded by rememberDraft(activity, "routing-$id") { original.copy().apply {

@@ -313,7 +313,8 @@ pub struct HappRoutingProfile {
     #[serde(
         rename = "UseChunkFiles",
         alias = "useChunkFiles",
-        default,
+        // Elarni: reduced unless the profile opts out; full RU geofiles cost ~90 MB and Apple refuses them.
+        default = "default_true",
         deserialize_with = "deserialize_text_bool",
         serialize_with = "serialize_text_bool"
     )]

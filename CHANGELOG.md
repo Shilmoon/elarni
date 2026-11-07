@@ -4,6 +4,14 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Changed
+
+- Reduce routing-data size is on for new routing profiles and for imported ones that do not
+  set `UseChunkFiles`, as in Happ's routing builder: the core loads only the geofile records the
+  rules use. With the full Russian geofiles this cut the Windows helper's peak memory from 478 to
+  112 MB, and on macOS and iOS it lets geofiles over 64 MB load at all.
+  A profile that sets `"UseChunkFiles": "false"` keeps full files.
+
 ### Fixed
 
 - DNS lookups get through when the VPN's UDP session table is full (every platform). A burst of new
