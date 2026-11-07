@@ -329,7 +329,8 @@ try:
             print('startup-cancel: owner EOF prevented tunnel retention', flush=True)
             continue
         options = {'memoryLimitMB': 45}
-        if mode == 'reconnect':
+        if mode in ('reconnect', 'adapter-loss'):
+            # As the app sends it: only such a session reports a lost tunnel and takes the next connect.
             options['reuseSession'] = True
         current = json.loads(json.dumps(config))
         if mode == 'route-enforcement':
@@ -444,8 +445,19 @@ try:
             wait_sessions('Tcp')
             with socket.create_connection(('198.18.0.1', http_server.server_port), timeout=2) as held:
                 held.sendall(b'GET / HTTP/1.1\r\n')
-                time.sleep(0.1)
-                http_target('198.18.0.1', http_server.server_port, False)
+                # Windows retries a refused connect for about a second, past connIdle: the held session
+                # keeps sending header lines so that it stays active and holds its slot meanwhile.
+                done = threading.Event()
+                def keep_active():
+                    while not done.wait(0.25):
+                        held.sendall(b'X-Hold: 1\r\n')
+                keeper = threading.Thread(target=keep_active, daemon=True)
+                keeper.start()
+                try:
+                    http_target('198.18.0.1', http_server.server_port, False)
+                finally:
+                    done.set()
+                    keeper.join()
             wait_sessions('Tcp')
             http_target('198.18.0.1', http_server.server_port)
             wait_sessions('Udp')
@@ -499,18 +511,31 @@ try:
             broker.stdin.close()
         elif mode == 'adapter-loss':
             # Nothing reaches the tunnel once its adapter is down, so the session must end and release DNS.
+            # The owner outlives the session it lost and reports it, so the app reconnects through it.
+            stopped = threading.Event()
+            events = []
+            def await_stop():
+                for line in broker.stdout:
+                    value = json.loads(line)
+                    events.append((value.get('event'), str(value.get('data'))[-300:]))
+                    if value.get('event') == 'stopped':
+                        stopped.set()
+                        return
+            threading.Thread(target=await_stop, daemon=True).start()
             powershell("Disable-NetAdapter -Name '" + adapter + "' -Confirm:$false -ErrorAction Stop")
-            try:
-                broker.wait(timeout=10)
-            except subprocess.TimeoutExpired:
+            if not stopped.wait(10):
+                state = powershell("Get-NetAdapter -IncludeHidden -Name '" + adapter + "' -ErrorAction SilentlyContinue | "
+                    'Select-Object Status,AdminStatus,ifIndex | ConvertTo-Json -Compress')
                 # Later cases must not inherit a disabled adapter.
-                powershell("Enable-NetAdapter -Name '" + adapter + "' -Confirm:$false -ErrorAction Stop")
-                raise AssertionError('The session stayed connected after its adapter was disabled')
-            wait_clean(adapter)
+                powershell("Enable-NetAdapter -Name '" + adapter + "' -Confirm:$false -ErrorAction SilentlyContinue")
+                raise AssertionError('The session stayed connected after its adapter was disabled; adapter=' + state +
+                    '; brokerExit=' + str(broker.poll()) + '; events=' + str(events[-10:]))
+            assert broker.poll() is None, 'The owner exited with the session it lost'
+            dns_probe(True)
             # Recovery reconnects right away, and that connect must get a working adapter.
-            broker = start_process([str(core)])
-            ready = request(broker, 'runVPN', {'configJSON': json.dumps(current), **options})
-            assert ready['adapter'] == adapter, 'Unexpected owned adapter identity: ' + ready['adapter']
+            restarted = request(broker, 'runVPN', {'configJSON': json.dumps(current), **options})
+            assert restarted['helperPid'] == ready['helperPid'], 'Reconnect replaced the elevated owner'
+            assert restarted['adapter'] == adapter, 'Unexpected owned adapter identity: ' + restarted['adapter']
             http_target('198.18.0.1', http_server.server_port)
             broker.stdin.close()
         elif mode == 'helper-death':
