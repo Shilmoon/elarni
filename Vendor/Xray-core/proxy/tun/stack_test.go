@@ -2356,3 +2356,33 @@ func TestChecksum(t *testing.T) {
 		}
 	}
 }
+
+// Elarni: Windows sends its LAN discovery (mDNS, SSDP, LLMNR, WS-Discovery) out of every adapter, the
+// tun's too. Relayed, each packet took a session from the UDP table and a socket for nothing: multicast
+// and broadcast reach no one through a proxy, and the system already sends them on the LAN itself.
+func TestNoSessionsForMulticastOrBroadcast(t *testing.T) {
+	for _, test := range []struct {
+		src, dst string
+		many     []string
+	}{
+		{"10.0.0.1:1234", "10.0.0.2:53", []string{"224.0.0.251:5353", "239.255.255.250:1900", "224.0.0.252:5355", "239.255.255.250:3702", "255.255.255.255:67"}},
+		{"[fd00::1]:1234", "[fd00::2]:53", []string{"[ff02::fb]:5353", "[ff02::c]:1900", "[ff02::1:3]:5355", "[ff05::c]:3702"}},
+	} {
+		conns := make(chan accepted, len(test.many)+1)
+		p, l := newPeer(t, test.src, test.dst)
+		newTestStack(t, l, accept(conns))
+		for _, to := range test.many {
+			l.in <- summed(udpPacket(p.src, netip.MustParseAddrPort(to), []byte("discovery")))
+		}
+		l.in <- summed(udpPacket(p.src, p.dst, []byte("query")))
+		if a := take(t, conns); a.dest.Address.IP().String() != p.dst.Addr().String() || a.dest.Port.Value() != p.dst.Port() {
+			t.Fatal("a session to ", a.dest)
+		}
+		p.silent(50 * time.Millisecond)
+		select {
+		case a := <-conns:
+			t.Fatal("a session to ", a.dest)
+		default:
+		}
+	}
+}

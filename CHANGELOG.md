@@ -4,6 +4,13 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Fixed
+
+- The VPN no longer relays LAN discovery (mDNS, SSDP, LLMNR, WS-Discovery) or other multicast
+  and broadcast packets that Windows sends out of the VPN adapter. On a recorded Windows session
+  they made about 22,000 connections in 10 minutes and kept the UDP session table at its
+  1024 limit, so real UDP flows were replaced after 10 s idle.
+
 ## 0.5.0 - 2026-11-07
 
 ### Security
