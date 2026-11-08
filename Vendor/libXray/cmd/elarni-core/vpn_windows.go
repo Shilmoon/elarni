@@ -731,8 +731,9 @@ func tunnelInterface(guid *windows.GUID) (*winipcfg.MibIfRow2, error) {
 // runVPNTunnel runs one tunnel. code 0 is a requested stop; ready says the tunnel
 // was up; fatal says this process cannot run another one.
 func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, commands <-chan vpnCommand, closed <-chan struct{}, guard *childGuard, held *heldAssets) (code int, ready, fatal bool) {
-	// Elevated by the same account, the child records into the user's own cache.
-	defer startRecording(request.RecordDiagnostics, userRecordingDirectory(), 0)()
+	if request.RecordDiagnostics {
+		defer startRecording(true, vpnRecordingDirectory(parent), 0)()
+	}
 	recordRuntimeConfig(request.Config, request.MemoryLimitMB, request.TCPMaxConnections, request.UDPMaxConnections, true)
 	if flightrecorder.Enabled() {
 		version := windows.RtlGetVersion()

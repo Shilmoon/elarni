@@ -355,9 +355,9 @@ func TestFullUDPTableReplacesAnsweredDNSFlow(t *testing.T) {
 	admitted := func(t *testing.T, h *Handler, n int) {
 		t.Helper()
 		for deadline := time.Now().Add(time.Second); ; time.Sleep(time.Millisecond) {
-			h.udpAdmission.mu.Lock()
-			got := len(h.udpAdmission.sessions)
-			h.udpAdmission.mu.Unlock()
+			h.dnsAdmission.mu.Lock()
+			got := len(h.dnsAdmission.sessions)
+			h.dnsAdmission.mu.Unlock()
 			if got == n {
 				return
 			}
@@ -367,7 +367,7 @@ func TestFullUDPTableReplacesAnsweredDNSFlow(t *testing.T) {
 		}
 	}
 	t.Run("answered", func(t *testing.T) {
-		handler := &Handler{udpAdmission: sessionAdmission{limit: 1, minIdle: time.Minute, finishedIdle: dnsFinishedIdle}}
+		handler := &Handler{dnsAdmission: sessionAdmission{limit: 1, minIdle: time.Minute, finishedIdle: dnsFinishedIdle}}
 		f := newUDPFlowFixture(t, handler)
 		f.exchange(t, 40000, 53)
 		f.exchange(t, 40001, 53) // at once: a lookup burst turns a full table over in milliseconds
@@ -376,7 +376,7 @@ func TestFullUDPTableReplacesAnsweredDNSFlow(t *testing.T) {
 		f.finished(t, 40001, time.Second)
 	})
 	t.Run("extra replies", func(t *testing.T) {
-		handler := &Handler{udpAdmission: sessionAdmission{limit: 1, minIdle: time.Minute}}
+		handler := &Handler{dnsAdmission: sessionAdmission{limit: 1, minIdle: time.Minute}}
 		f := newUDPFlowFixture(t, handler)
 		handler.dispatcher = &udpRoundTripDispatcher{dispatch: func(link *transport.Link) error {
 			for first := true; ; first = false {
@@ -401,7 +401,7 @@ func TestFullUDPTableReplacesAnsweredDNSFlow(t *testing.T) {
 		f.finished(t, 40001, time.Second)
 	})
 	t.Run("unanswered", func(t *testing.T) {
-		handler := &Handler{udpAdmission: sessionAdmission{limit: 1, minIdle: time.Minute}}
+		handler := &Handler{dnsAdmission: sessionAdmission{limit: 1, minIdle: time.Minute}}
 		f := newUDPFlowFixture(t, handler)
 		handler.dispatcher = &udpRoundTripDispatcher{dispatch: func(link *transport.Link) error {
 			for {
@@ -424,6 +424,27 @@ func TestFullUDPTableReplacesAnsweredDNSFlow(t *testing.T) {
 		send(f, 40001, 50000)
 		f.finished(t, 40001, time.Second)
 	})
+}
+
+// A burst of fresh UDP flows (Windows sends ~1,000 discovery packets at each network change) fills the
+// table with sessions too young to replace (Elarni): DNS must still get through, from a table of its own,
+// while other flows are refused.
+func TestFullUDPTableStillAdmitsDNS(t *testing.T) {
+	handler := &Handler{udpAdmission: sessionAdmission{limit: 1, minIdle: time.Minute},
+		dnsAdmission: sessionAdmission{limit: 1, minIdle: time.Minute}}
+	f := newUDPFlowFixture(t, handler)
+	refused := func(client, server net.Port) {
+		t.Helper()
+		f.udp.HandlePacket(net.UDPDestination(net.ParseAddress("198.18.0.2"), client),
+			net.UDPDestination(net.ParseAddress("198.18.0.3"), server), buf.FromBytes([]byte("x")))
+		f.finished(t, client, time.Second)
+	}
+	f.exchange(t, 40000, 50000)
+	f.exchange(t, 40001, 53) // the UDP table is full of a young flow; DNS is answered anyway
+	refused(40002, 50000)
+	f.exchange(t, 40003, 53) // a full DNS table replaces the answered lookup ...
+	f.finished(t, 40001, time.Second)
+	refused(40004, 50000) // ... and that frees no slot for other flows
 }
 
 // Admission retires an answered DNS flow while its session is still ending (Elarni): a query from the same

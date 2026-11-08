@@ -67,6 +67,9 @@ pub mod win_svc;
 const DNS_PORT: u16 = 53;
 /// Elarni: a DNS session still waiting for an answer ends after this long without traffic, as before the UDP timeout rose.
 const DNS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Elarni: UDP sessions past `udp_max_sessions` that only DNS may take. A burst of fresh UDP flows filled
+/// the cap and refused every lookup with it; DNS sessions end with their answer, so this bounds lookups in flight.
+const DNS_RESERVED_SESSIONS: usize = 128;
 
 /// Elarni: `tproxy_config::is_private_ip` with std checks instead of nine regexes compiled per call,
 /// which every IPv6 or public IPv4 DNS session paid.
@@ -381,7 +384,10 @@ where
                 });
             }
             IpStackStream::Udp(udp) => {
-                let max_sessions = args.udp_max_sessions;
+                let mut max_sessions = args.udp_max_sessions;
+                if udp.peer_addr().port() == DNS_PORT {
+                    max_sessions = max_sessions.saturating_add(DNS_RESERVED_SESSIONS);
+                }
                 if udp_metrics.active_udp.load(Relaxed) >= max_sessions {
                     if args.exit_on_fatal_error {
                         log::info!("Too many sessions that over {max_sessions}, exiting...");

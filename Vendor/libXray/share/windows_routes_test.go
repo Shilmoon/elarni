@@ -105,3 +105,48 @@ func TestWindowsBlockWithoutVPNGuardsEveryRoute(t *testing.T) {
 		t.Fatal("enforced specific routes accepted beside the block")
 	}
 }
+
+// Elarni: LAN discovery (mDNS, SSDP, LLMNR, WS-Discovery, DHCP-style broadcast) stays on the
+// physical network, where its replies come from; routed into the tunnel it reached no device
+// and filled the UDP session table. Block traffic without VPN keeps everything in the tunnel.
+func TestWindowsRoutesLeaveDiscoveryOnTheLocalNetwork(t *testing.T) {
+	covered := func(routes []netip.Prefix, ip string) bool {
+		for _, p := range routes {
+			if p.Contains(netip.MustParseAddr(ip)) {
+				return true
+			}
+		}
+		return false
+	}
+	discovery := []string{"224.0.0.251", "239.255.255.250", "224.0.0.252", "255.255.255.255", "ff02::fb", "ff02::c", "ff05::1:3"}
+	unicast := []string{"8.8.8.8", "223.255.255.255", "240.0.0.1", "255.255.255.254", "2001:db8::1", "fe80::1", "feff::1"}
+	for _, policy := range []*WindowsRoutePolicy{nil, {IncludedRoutes: []string{"0.0.0.0/0", "::/0"}},
+		{IncludedRoutes: []string{"10.0.0.0/8"}, IncludeAllNetworks: true}, {IncludedRoutes: []string{"224.0.0.0/4", "ff00::/8", "8.8.8.8/32"}}} {
+		routes, err := WindowsRoutes(policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, ip := range discovery {
+			if covered(routes, ip) {
+				t.Fatalf("policy %+v routes discovery address %s into the tunnel: %v", policy, ip, routes)
+			}
+		}
+		if policy != nil && !policy.IncludeAllNetworks && len(policy.IncludedRoutes) == 3 {
+			continue // only 8.8.8.8 is left of that list
+		}
+		for _, ip := range unicast {
+			if !covered(routes, ip) {
+				t.Fatalf("policy %+v lost %s: %v", policy, ip, routes)
+			}
+		}
+	}
+	routes, err := WindowsRoutes(&WindowsRoutePolicy{IncludedRoutes: []string{"10.0.0.0/8"}, BlockWithoutVPN: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ip := range append(discovery, unicast...) {
+		if !covered(routes, ip) {
+			t.Fatalf("block traffic without VPN leaves %s outside the tunnel: %v", ip, routes)
+		}
+	}
+}

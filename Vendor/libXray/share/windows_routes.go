@@ -16,6 +16,16 @@ type WindowsRoutePolicy struct {
 	BlockWithoutVPN bool `json:"blockWithoutVPN"`
 }
 
+// DiscoveryPrefixes are the destinations of LAN discovery: IPv4 multicast (mDNS, SSDP,
+// LLMNR, WS-Discovery), the limited broadcast and IPv6 multicast. Routed into the tunnel, they
+// reach no device, so unless Block traffic without VPN keeps everything inside, the tunnel
+// leaves them to the physical network (Elarni).
+var DiscoveryPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("224.0.0.0/4"),
+	netip.MustParsePrefix("255.255.255.255/32"),
+	netip.MustParsePrefix("ff00::/8"),
+}
+
 // WindowsRoutes derives only routes owned by the disposable tunnel adapter.
 func WindowsRoutes(policy *WindowsRoutePolicy) ([]netip.Prefix, error) {
 	if policy == nil {
@@ -38,6 +48,12 @@ func WindowsRoutes(policy *WindowsRoutePolicy) ([]netip.Prefix, error) {
 		included = append(included, netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0"))
 	}
 	excluded := append([]string{}, policy.ExcludedRoutes...)
+	if !policy.BlockWithoutVPN {
+		// Elarni: LAN discovery stays on the physical network, where its replies come from.
+		for _, p := range DiscoveryPrefixes {
+			excluded = append(excluded, p.String())
+		}
+	}
 	if policy.HideVPNIcon {
 		excluded = append(excluded, "0.0.0.0/8", "::/128")
 	}

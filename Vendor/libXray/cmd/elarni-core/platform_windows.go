@@ -35,8 +35,8 @@ func deviceVersion() string {
 	return fmt.Sprintf("%d.%d.%d", version.MajorVersion, version.MinorVersion, version.BuildNumber)
 }
 
-// The elevated VPN child shares this profile's cache, so one directory holds both.
-func recordingDirectories() []string { return []string{userRecordingDirectory()} }
+// The VPN child records apart from this profile (recording_windows.go), so export reads both.
+func recordingDirectories() []string { return windowsRecordingDirectories() }
 
 func platformRequest(method string, payload json.RawMessage) (any, error, bool) {
 	switch method {

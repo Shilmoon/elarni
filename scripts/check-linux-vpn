@@ -58,6 +58,7 @@ class Core:
         self.replies = queue.Queue()
         self.metrics = {}
         self.metric_time = 0
+        self.stopped = threading.Event()
         def read():
             try:
                 for line in self.process.stdout:
@@ -65,6 +66,8 @@ class Core:
                     if value.get('event') == 'metrics':
                         self.metrics = value['data']
                         self.metric_time = time.monotonic()
+                    elif value.get('event') == 'stopped':
+                        self.stopped.set()
                     # Log events stream between replies too.
                     elif 'event' not in value:
                         self.replies.put(value)
@@ -100,7 +103,9 @@ def dns_packet(kind):
 
 def peer_main(core, protocol='vless'):
     counts = {'directHTTP': 0, 'proxyHTTP': 0, 'directUDP': 0, 'proxyUDP': 0, 'physicalDNS': 0, 'profileDNS': 0}
-    parallel_probes = threading.Barrier(32)
+    # The supervisor runs linuxProbeRuns (probe_linux.go) physical probes at once and queues
+    # the rest, so the 32 probes pass in rounds that each hold this many open together.
+    parallel_probes = threading.Barrier(8)
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path == '/parallel':
@@ -406,6 +411,16 @@ def isolated_main(core, selected, protocol='vless'):
                 after = counts()
                 assert after['profileDNS'] > before['profileDNS'], 'DNS did not use the configured profile server'
                 assert after['physicalDNS'] == before['physicalDNS'], 'Application DNS bypassed capture'
+            if case == 'include-all' or case.startswith('block-'):
+                # LAN discovery stays on the physical network unless Block traffic without VPN
+                # keeps everything in the tunnel.
+                for address in ('224.0.0.251', '239.255.255.250', '255.255.255.255', 'ff02::fb'):
+                    route = json.loads(subprocess.run(['ip', '-j', 'route', 'get', address], capture_output=True, text=True).stdout or '[{}]')[0]
+                    # IPv6 multicast always takes the kernel's per-interface ff00::/8 route in the
+                    # local table, whose rule precedes the tunnel's; the leak guard allows it.
+                    captured = case.startswith('block-') and ':' not in address
+                    assert (route.get('dev') == ready['adapter']) == captured, \
+                        case + ': discovery to ' + address + ' takes ' + str(route)
             if case == 'enforcement':
                 check_http(TARGET4, interface='rvclient', allowed=False)
                 check_http(TARGET6, interface='rvclient', allowed=False)
@@ -469,14 +484,23 @@ def isolated_main(core, selected, protocol='vless'):
                 os.kill(workers[0],signal.SIGKILL)
             elif case in ('launcher-death', 'block-launcher-death'): owner.process.kill()
             else: owner.close()
-            if case.endswith('-death'): owner.process.wait(timeout=15)
+            worker_death = case in ('worker-death', 'block-worker-death')
+            if worker_death:
+                # The supervisor outlives its worker: the owner reports the drop and stays to reconnect.
+                assert owner.stopped.wait(timeout=15), 'The owner did not report the lost tunnel'
+                assert owner.process.poll() is None, 'The owner exited with its worker'
+                if not case.startswith('block-'): wait_clean()
+            elif case.endswith('-death'): owner.process.wait(timeout=15)
             if case.startswith('block-'):
                 # Block traffic without VPN fails closed: nothing leaves outside the dead tunnel...
                 check_http(TARGET4, allowed=False); check_http(TARGET6, allowed=False)
                 assert resource_state()['tables'], 'The block was removed with the tunnel'
                 # ...until the next connect reaps it, and a requested stop lifts it.
-                owner = Core(core); owners.append(owner)
-                owner.request('runVPN', options)
+                if not worker_death: owner = Core(core); owners.append(owner)
+            if case.startswith('block-') or worker_death:
+                restarted = owner.request('runVPN', options)
+                if worker_death:
+                    assert restarted['helperPid'] == ready['helperPid'], 'Reconnect after a worker death replaced the elevated supervisor'
                 check_http(TARGET4); check_http(TARGET6)
                 owner.request('stopVPN', {}); owner.close()
             wait_clean()

@@ -12,7 +12,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use device::{InputRoom, PacketDevice};
-use framing::{FrameAssembler, validate_packet};
+use framing::{FrameAssembler, to_many_at_once, validate_packet};
 use tokio::runtime::Builder;
 use tokio::sync::mpsc;
 use tun2proxy::{ArgDns, ArgProxy, Args, CancellationToken, ProxyType, VirtualDnsMetrics};
@@ -350,6 +350,10 @@ pub unsafe extern "C" fn elarni_packet_bridge_submit(
     if validate_packet(packet, bridge.max_packet_bytes).is_err() {
         bridge.counters.malformed.fetch_add(1, Ordering::Relaxed);
         return ElarniPacketStatus::MalformedPacket;
+    }
+    if to_many_at_once(packet) {
+        // Accepted and dropped, as a link that does not carry it would.
+        return ElarniPacketStatus::Ok;
     }
     let status = match bridge.input.try_send(packet.to_vec()) {
         Ok(()) => ElarniPacketStatus::Ok,

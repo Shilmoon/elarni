@@ -213,6 +213,9 @@ func (r *room) Read(b []byte) (int, error) {
 	return len(b), nil
 }
 
+// limitedBroadcast is 255.255.255.255, the IPv4 address of every host on the link.
+var limitedBroadcast = netip.AddrFrom4([4]byte{255, 255, 255, 255})
+
 // Input implements Stack. Several tunnels may hand over their packets at once
 func (s *stack) Input(b []byte) {
 	s.input(b, 0)
@@ -221,10 +224,12 @@ func (s *stack) Input(b []byte) {
 // input takes a packet that is b and rest bytes after it, in the bufs that follow the one that b is in
 func (s *stack) input(b []byte, rest int) {
 	p, ok := parsePacket(b, rest)
-	if !ok || p.src.Is4In6() || p.dst.Is4In6() || p.src.IsLoopback() || p.dst.IsLoopback() || p.dst.IsUnspecified() || p.src.IsMulticast() {
+	if !ok || p.src.Is4In6() || p.dst.Is4In6() || p.src.IsLoopback() || p.dst.IsLoopback() || p.dst.IsUnspecified() || p.src.IsMulticast() ||
+		p.dst.IsMulticast() || p.dst == limitedBroadcast {
 		// nothing comes from many at once, and an address that stands for this machine itself is not one
 		// that the other side of a tun can ask for. Nor is an IPv6 address that stands for an IPv4 one, which
-		// would be dialed as that: ::ffff:0.0.0.0 is this machine as well
+		// would be dialed as that: ::ffff:0.0.0.0 is this machine as well. Elarni: nor is a packet to many at
+		// once, which no proxy carries; the system already sends its LAN discovery on the LAN itself
 		return
 	}
 	if s.verify && b[0]>>4 == 4 && checksum(sum(b[:int(b[0]&0xf)*4], 0)) != 0 {

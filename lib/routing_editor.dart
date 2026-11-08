@@ -69,6 +69,8 @@ class _RoutingEditorState extends State<RoutingEditor> {
   String? _error;
   bool _saving = false;
   late int _section;
+  // Which sections are open; it also restores them when a tab is rebuilt. The tiles carry no
+  // PageStorageKey: the text fields inside would read the tile's stored bool as their scroll offset.
   final _expanded = <String>{'Direct', 'Remote'};
   String _dnsName(String role) =>
       role == 'Remote' ? l10n.remoteDns : l10n.domesticDns;
@@ -89,6 +91,8 @@ class _RoutingEditorState extends State<RoutingEditor> {
     _section = widget.initialSection;
     _profile = Map<String, dynamic>.from(jsonDecode(widget.json) as Map);
     _profile['FakeDNS'] ??= _profile['FakeDns'] ?? 'false';
+    // As the native decoder does: geofiles are reduced unless the profile opts out.
+    _profile['UseChunkFiles'] ??= 'true';
     _explicitDNS = _profile['DomesticDNSDomains'] is List;
     for (final key in <String>[
       'Name',
@@ -295,7 +299,7 @@ class _RoutingEditorState extends State<RoutingEditor> {
       ),
       for (final action in ['Direct', 'Proxy', 'Block'])
         ExpansionTile(
-          key: PageStorageKey('routing-rules:$action'),
+          key: ValueKey('routing-rules:$action'),
           title: Text(switch (action) {
             'Direct' => l10n.directRules,
             'Proxy' => l10n.proxyRules,
@@ -365,7 +369,7 @@ class _RoutingEditorState extends State<RoutingEditor> {
       ),
       for (final role in ['Remote', 'Domestic'])
         ExpansionTile(
-          key: PageStorageKey('routing-dns:$role'),
+          key: ValueKey('routing-dns:$role'),
           title: Text(role == 'Remote' ? l10n.remoteDns : l10n.directDns),
           tilePadding: EdgeInsets.zero,
           initiallyExpanded: _expanded.contains(role),
@@ -389,7 +393,7 @@ class _RoutingEditorState extends State<RoutingEditor> {
           ],
         ),
       ExpansionTile(
-        key: const PageStorageKey('routing-dns:domains'),
+        key: const ValueKey('routing-dns:domains'),
         title: Text(l10n.chooseDnsByDomain),
         tilePadding: EdgeInsets.zero,
         initiallyExpanded: _expanded.contains('domains'),

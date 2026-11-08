@@ -4,6 +4,50 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+## 0.5.1 - 2026-11-08
+
+### Changed
+
+- Reduce routing-data size is on for new routing profiles and for imported ones that do not
+  set `UseChunkFiles`, as in Happ's routing builder: the core loads only the geofile records the
+  rules use. With the full Russian geofiles this cut the Windows helper's peak memory from 478 to
+  112 MB, and on macOS and iOS it lets geofiles over 64 MB load at all.
+  A profile that sets `"UseChunkFiles": "false"` keeps full files.
+
+### Fixed
+
+- The VPN no longer relays LAN discovery (mDNS, SSDP, LLMNR, WS-Discovery) or other multicast
+  and broadcast packets that Windows sends out of the VPN adapter. Windows sends a burst of them
+  at each network change, enough to fill the 1024-slot UDP session table with new sessions; the
+  VPN then refused every new UDP flow, DNS lookups included, for about 10 s. On a recorded
+  session this happened about half the time, and pages waited up to 14 s for DNS.
+  The same applies on every platform: Linux and Android share that packet stack, and the
+  macOS and iOS tunnels now drop such packets as well instead of opening a UDP session for
+  each, which once their table was full refused every new one.
+- VLESS with XTLS Vision refuses QUIC (UDP/443) before connecting to the server, rather than
+  after a full connection and TLS/REALITY handshake. Browsers retry QUIC often: one recorded
+  10-minute session made 2,611 such handshakes for nothing.
+- LAN discovery (mDNS, SSDP, LLMNR, WS-Discovery, DHCP-style broadcast) stays on the local
+  network instead of entering the VPN, where it reached no device: apps that send it without
+  choosing an interface now send it on the local network. The tunnel's routes leave out
+  multicast and the limited broadcast on Windows, Linux, Android, macOS and iOS; on Windows
+  the VPN adapter's own discovery routes also lose to every other interface. Block traffic
+  without VPN (and Android's lockdown) keeps them in the tunnel; on Windows the adapter now
+  gets its own routes to them, which Windows did not always create, so mDNS no longer left
+  through the physical network there.
+- Windows: after the Elarni adapter was disabled, which ends the connection, the next connect failed with
+  "vpn_core_failed_2": the helper reused the disabled adapter it keeps between connects. It now replaces it.
+- DNS lookups get through when the VPN's UDP session table is full (every platform). A burst of new
+  UDP flows, such as the discovery packets Windows sends at each network change, refused every
+  lookup for about 10 s; lookups now have up to 128 sessions of their own.
+- Windows: a recording build recorded no VPN traffic when the ElarniVPN service started the
+  helper (Connect without administrator approval), or when another administrator approved
+  it: the helper wrote into that account's profile, which Save recording as ZIP cannot read.
+  It now records under the helper's admin-only folder, readable only by the connecting account.
+- Windows, Linux and macOS: in the routing editor, opening a collapsed section (Direct DNS,
+  Choose DNS by domain, Proxy rules, Block rules) or reopening one showed grey boxes instead of
+  its text fields.
+
 ## 0.5.0 - 2026-11-07
 
 ### Security
