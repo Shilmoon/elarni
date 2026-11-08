@@ -4,6 +4,14 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Fixed
+
+- Traffic to the VPN adapter's own subnet, other than DNS, now ends at once instead of
+  following routing rules for private ranges. On Android, each connect set off 2,000-4,000
+  Private DNS connections (port 853 on the VPN's resolver) in about 3 s, and the check hung
+  for 16 s or more before it fell back to plain DNS; Windows sent subnet broadcasts (NetBIOS,
+  Spotify device discovery) out the direct route.
+
 ## 0.5.1 - 2026-11-08
 
 ### Changed

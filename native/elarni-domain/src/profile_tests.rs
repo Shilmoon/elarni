@@ -129,7 +129,7 @@ fn per_app_policy_gates_tun_then_preserves_provider_and_app_routing() {
         )
         .unwrap();
         let config: Value = serde_json::from_slice(&result.config).unwrap();
-        let rules = config["routing"]["rules"].as_array().unwrap();
+        let rules = after_own_subnet_block(&config);
         let entry = rules[0]["outboundTag"].as_str().unwrap();
         assert_ne!(entry, "elarni-apps-0");
         assert_eq!(rules[0]["port"], 53);
@@ -178,6 +178,21 @@ fn per_app_policy_gates_tun_then_preserves_provider_and_app_routing() {
     }
 }
 
+// The TUN's own-subnet block (compiler.rs block_tun_own_subnets) precedes the per-app gate.
+fn after_own_subnet_block(config: &Value) -> &[Value] {
+    let rules = config["routing"]["rules"].as_array().unwrap();
+    assert_eq!(rules[0]["inboundTag"], json!(["elarni-tun"]));
+    assert_eq!(rules[0]["port"], "1-52,54-65535");
+    let block = config["outbounds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|outbound| outbound["tag"] == rules[0]["outboundTag"])
+        .unwrap();
+    assert_eq!(block["protocol"], "blackhole");
+    &rules[1..]
+}
+
 fn per_app_runtime(targets: Value) -> RuntimeOptions {
     serde_json::from_value(json!({
         "perAppMode": "bypass",
@@ -221,7 +236,7 @@ fn per_app_targets_send_each_listed_app_to_its_own_outbound() {
         {"process":"steam", "target":"routing"},
     ])))
     .unwrap();
-    let rules = config["routing"]["rules"].as_array().unwrap();
+    let rules = after_own_subnet_block(&config);
     let reentry = rules[0]["outboundTag"].as_str().unwrap();
     assert_eq!(rules[0]["port"], 53);
     let target = |process: &str| {
@@ -305,7 +320,7 @@ fn only_listed_keeps_unattributed_flows_in_the_tunnel() {
     ]));
     runtime.per_app_mode = PerAppMode::ProxyOnly;
     let config = compile_per_app(&runtime).unwrap();
-    let rules = config["routing"]["rules"].as_array().unwrap();
+    let rules = after_own_subnet_block(&config);
     let reentry = &rules[0]["outboundTag"];
     let miss = rules
         .iter()
