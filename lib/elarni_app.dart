@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import 'tunnel_channel.dart';
@@ -287,6 +288,9 @@ class _ElarniHomeState extends State<ElarniHome> {
   bool get _pingControlsDisabled => _busy || _pinging;
   bool get _profileEditsDisabled => _busy;
   String _search = '';
+  // Each subscription's servers as shown, for the frame being built: several
+  // parts of a page ask for the same list.
+  final _displayNodesMemo = <String, List<SubscriptionNode>>{};
   final Map<String, String> _subscriptionSearches = {};
   // Loaded when a subscription's details open; the HTTP host is part of the ID.
   final Map<String, Future<String>> _deviceIDs = {};
@@ -387,6 +391,7 @@ class _ElarniHomeState extends State<ElarniHome> {
 
   @override
   Widget build(BuildContext context) {
+    _displayNodesMemo.clear();
     // The resolver skips its callback when the language returns to the system
     // one, so [appLocale] follows the Localizations scope, rebuilding with it.
     appLocale = Localizations.localeOf(context);
