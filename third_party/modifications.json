@@ -3,7 +3,7 @@
   "components": [
     {
       "name": "Xray-core",
-      "upstreamRevision": "a52db8f6ed19384dbc91a6f7e2cf4c09fbe7c2ca",
+      "upstreamRevision": "676eaf66f8f05d4d558ee7a74b4736623d3feeb9",
       "files": [
         "Vendor/Xray-core/app/dispatcher/default.go",
         "Vendor/Xray-core/app/dispatcher/sniffer.go",

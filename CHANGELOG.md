@@ -4,6 +4,16 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Changed
+
+- The Xray core is updated to upstream v26.11.9. Its default TLS fingerprint ("chrome") now
+  imitates Chrome 155, which upstream reports Russia's TSPU does not target yet. Multiplexed
+  (mux) connections no longer write to their server connection from two streams at once and
+  carry up to 128 streams each by default, an inbound that fails to start is closed instead of
+  left half-registered, and on Windows the VPN adapter's IPv6 setup errors are only logged
+  when the registry's DisabledComponents turns IPv6 off, with IPv6 outside the tunnel blocked
+  when leak blocking is on.
+
 ### Fixed
 
 - Traffic to the VPN adapter's own subnet, other than DNS, now ends at once instead of
