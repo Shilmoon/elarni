@@ -137,12 +137,6 @@ func Invoke(requestJSON string) string {
 		}
 		catalog, err := share.ValidateCatalogBackup(payload.Catalog)
 		return encodeInvokeResponse(map[string]any{"catalog": catalog}, err)
-	case LibXrayMethodPingBatch:
-		return invokePingBatch(request.Payload)
-	case LibXrayMethodTestXray:
-		return invokeTestXray(request.Payload)
-	case LibXrayMethodRunXray:
-		return invokeRunXray(request.Payload)
 	case LibXrayMethodRunXrayFromJson:
 		return invokeRunXrayFromJSON(request.Payload)
 	case LibXrayMethodStopXray:
@@ -343,8 +337,7 @@ func invokePing(payload json.RawMessage) string {
 		len(*request.ExpectedBody) > 4096 || request.Timeout < 1 || request.Timeout > 15 ||
 		(request.Method != "GET" && request.Method != "HEAD") ||
 		(request.Method == "HEAD" && *request.ExpectedBody != "") ||
-		// A trace reads the body, which a config-path probe never sees.
-		(request.Trace && (request.Method != "GET" || request.ConfigJSON == "" && !request.RunningCore && !request.PacketPath)) {
+		(request.Trace && request.Method != "GET") {
 		return encodeInvokeResponse(nil, errors.New("invalid_response_contract"))
 	}
 	expected := &nodep.ExpectedResponse{Status: request.ExpectedStatus, Body: *request.ExpectedBody}
@@ -384,14 +377,14 @@ func invokePing(payload json.RawMessage) string {
 		return encodeInvokeResponse(nil, errors.New(probe.Code(err)))
 	}
 	if request.RunningCore {
-		if request.ConfigJSON != "" || request.ConfigPath != "" || request.Proxy != "" || request.PacketPath {
+		if request.ConfigJSON != "" || request.Proxy != "" || request.PacketPath {
 			return encodeInvokeResponse(nil, errors.New("invalid_running_core_probe"))
 		}
 		delay, err := xray.PingRunningCore(ctx, request.Timeout, request.URL, request.Method, expected)
 		return encodeInvokeResponse(&PingResponse{Delay: delay, Exit: exit(err)}, err)
 	}
 	if request.PacketPath {
-		if request.ConfigJSON != "" || request.ConfigPath != "" || request.Proxy != "" {
+		if request.ConfigJSON != "" || request.Proxy != "" {
 			return encodeInvokeResponse(nil, errors.New("invalid_packet_probe"))
 		}
 		ctx, recorder := probe.New(ctx, "")
@@ -414,25 +407,12 @@ func invokePing(payload json.RawMessage) string {
 		}
 		return encodeInvokeResponse(&PingResponse{Delay: delay, Diagnostics: diagnostic, Exit: exit(err)}, err)
 	}
-	var delay int64
-	if request.ConfigJSON != "" {
-		var diagnostic *xray.ProbeDiagnostics
-		delay, diagnostic, err = xray.PingJSONWithPreparation(ctx, request.ConfigJSON, request.Timeout, request.URL, request.Proxy, request.Method, request.Mode, request.DiagnosticVariant,
-			func() (func(), error) { return prepareProbeAssets(request.AndroidAssetDirectory) }, expected)
-		if err != nil {
-			err = fmt.Errorf("%s", diagnostic.Code)
-		}
-		return encodeInvokeResponse(&PingResponse{Delay: delay, Diagnostics: diagnostic, Exit: exit(err)}, err)
-	} else {
-		delay, err = xray.PingWithOptions(request.ConfigPath, request.Timeout, request.URL, request.Proxy, request.Method, request.Mode, expected)
-	}
+	delay, diagnostic, err := xray.PingJSONWithPreparation(ctx, request.ConfigJSON, request.Timeout, request.URL, request.Proxy, request.Method, request.Mode, request.DiagnosticVariant,
+		func() (func(), error) { return prepareProbeAssets(request.AndroidAssetDirectory) }, expected)
 	if err != nil {
-		if delay == nodep.PingDelayError || delay == nodep.PingDelayTimeout {
-			return encodeInvokeResponse(&PingResponse{Delay: delay}, err)
-		}
-		return encodeInvokeResponse(nil, err)
+		err = fmt.Errorf("%s", diagnostic.Code)
 	}
-	return encodeInvokeResponse(&PingResponse{Delay: delay}, nil)
+	return encodeInvokeResponse(&PingResponse{Delay: delay, Diagnostics: diagnostic, Exit: exit(err)}, err)
 }
 
 func packetProbeFailure(err error) (string, string) {
@@ -441,58 +421,6 @@ func packetProbeFailure(err error) (string, string) {
 		return "target_dns", "target_dns_failed"
 	}
 	return "target_request", probe.Code(err)
-}
-
-func invokePingBatch(payload json.RawMessage) string {
-	request, err := decodePayload[PingBatchRequest](payload)
-	if err != nil {
-		return encodeInvokeResponse(nil, err)
-	}
-
-	configs := make([]xray.PingBatchItem, len(request.Configs))
-	for i, config := range request.Configs {
-		configs[i] = xray.PingBatchItem{
-			ConfigPath:  config.ConfigPath,
-			OutboundTag: config.OutboundTag,
-		}
-	}
-
-	results, err := xray.PingBatch(
-		configs,
-		request.Timeout,
-		request.URL,
-	)
-	if err != nil {
-		return encodeInvokeResponse(nil, err)
-	}
-
-	responseResults := make([]PingBatchItemResponse, len(results))
-	for i, result := range results {
-		responseResults[i] = PingBatchItemResponse{
-			Success: result.Success,
-			Delay:   result.Delay,
-			Error:   result.Error,
-		}
-	}
-	return encodeInvokeResponse(&PingBatchResponse{Results: responseResults}, nil)
-}
-
-func invokeTestXray(payload json.RawMessage) string {
-	request, err := decodePayload[RunXrayRequest](payload)
-	if err != nil {
-		return encodeInvokeNoDataResponse(err)
-	}
-	err = xray.TestXray(request.ConfigPath)
-	return encodeInvokeNoDataResponse(err)
-}
-
-func invokeRunXray(payload json.RawMessage) string {
-	request, err := decodePayload[RunXrayRequest](payload)
-	if err != nil {
-		return encodeInvokeNoDataResponse(err)
-	}
-	err = xray.RunXray(request.ConfigPath)
-	return encodeInvokeNoDataResponse(err)
 }
 
 func invokeRunXrayFromJSON(payload json.RawMessage) string {

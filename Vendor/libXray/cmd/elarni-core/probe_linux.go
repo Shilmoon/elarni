@@ -430,7 +430,7 @@ func linuxProbeChild(ctx context.Context, input io.Reader, output io.Writer) int
 			libxray.PingRequest
 			AssetRevision string `json:"assetRevision"`
 		}
-		if decodeLinuxJSON(request.Payload, &payload) != nil || payload.ConfigPath != "" || payload.PacketPath || payload.OperationID != "" {
+		if decodeLinuxJSON(request.Payload, &payload) != nil || payload.PacketPath || payload.OperationID != "" {
 			return 1
 		}
 		payload.ConfigJSON, err = linuxProbeConfig(payload.ConfigJSON)
