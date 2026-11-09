@@ -70,18 +70,8 @@ pub fn compile_profile(
     }
     // These sections are supplied by the app, never activated from a subscription.
     // Reverse would let the provider open connections into this device.
-    for field in [
-        "inbounds",
-        "log",
-        "api",
-        "env",
-        "transport",
-        "metrics",
-        "reverse",
-    ] {
-        if field != "inbounds" {
-            root.remove(field);
-        }
+    for field in ["log", "api", "env", "transport", "metrics", "reverse"] {
+        root.remove(field);
     }
     const SUPPORTED: &[&str] = &[
         "remarks",
