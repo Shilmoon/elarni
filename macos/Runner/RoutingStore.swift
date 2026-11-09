@@ -194,7 +194,9 @@ final class RoutingStore {
     return try checkpoint()
   }
 
-  func importContent(_ content: String, selectedSubscriptionID: String?) throws -> [String: Any] {
+  /// A repeated import replaces the manual profile that has its name. `asNew` is the editor's "New profile",
+  /// whose drafts all start under one name: it takes a free name instead.
+  func importContent(_ content: String, selectedSubscriptionID: String?, asNew: Bool = false) throws -> [String: Any] {
     let decoded = try RoutingDomainDecoder.decode(content)
     if decoded.action == "off" {
       guard let selectedSubscriptionID else { throw RoutingStoreError.noSelectedSubscription }
@@ -202,17 +204,26 @@ final class RoutingStore {
       try save()
       return snapshot()
     }
-    guard let profile = decoded.profile,
+    guard var profile = decoded.profile,
           let routeModel = decoded.routeModel else {
       throw RoutingStoreError.invalidImport
     }
-    let name = (profile["Name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    var name = (profile["Name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
       ?? "Routing Profile"
+    if asNew {
+      let base = name
+      var suffix = 2
+      while catalog.profiles.contains(where: { $0.name == name }) {
+        name = "\(base) \(suffix)"
+        suffix += 1
+      }
+      profile["Name"] = name
+    }
     let profileData = try JSONSerialization.data(withJSONObject: profile, options: [.sortedKeys])
     let routeData = try JSONSerialization.data(withJSONObject: routeModel, options: [.sortedKeys])
     let id: String
     let previous: RoutingRecord?
-    if let index = catalog.profiles.firstIndex(where: {
+    if !asNew, let index = catalog.profiles.firstIndex(where: {
       $0.providerSubscriptionID == nil && $0.name == name
     }) {
       previous = catalog.profiles[index]

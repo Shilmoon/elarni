@@ -239,7 +239,7 @@ struct RoutingEditor: View {
       let text = try prettyJSON(saved)
       try await model.editRouting { store in
         if let profile { _ = try store.update(id: profile.id, content: text) }
-        else { _ = try store.importContent(text, selectedSubscriptionID: model.selected?.subscriptionID) }
+        else { _ = try store.importContent(text, selectedSubscriptionID: model.selected?.subscriptionID, asNew: true) }
       }
       dismiss()
     }

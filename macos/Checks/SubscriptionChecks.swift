@@ -189,6 +189,32 @@ struct SubscriptionChecks {
       try expect(!reloaded.isManual(subscriptionID: "chosen"), "a deleted subscription kept the user's choice")
     }
 
+    try check("a new routing profile keeps the one that has its name") {
+      let routes = try RoutingStore(directory: directory.appendingPathComponent("routing-new"))
+      // The editor's "New profile" opens every draft as "My routing".
+      func draft(_ blocked: String) -> String {
+        #"{"Name":"My routing","RemoteDNSType":"DoU","RemoteDNSIP":"1.1.1.1","DomesticDNSType":"DoU","DomesticDNSIP":"8.8.8.8","BlockSites":[""# + blocked + #""]}"#
+      }
+      let blocked = { () throws -> [String: [String]] in
+        var result: [String: [String]] = [:]
+        for route in try routes.backupCatalog()["routes"] as! [[String: Any]] {
+          let profile = route["profile"] as! [String: Any]
+          result[profile["Name"] as! String] = profile["BlockSites"] as? [String]
+        }
+        return result
+      }
+      _ = try routes.importContent(draft("first.example"), selectedSubscriptionID: nil, asNew: true)
+      _ = try routes.importContent(draft("second.example"), selectedSubscriptionID: nil, asNew: true)
+      try expect(blocked() == ["My routing": ["first.example"], "My routing 2": ["second.example"]],
+        "a second new profile replaced the first one's rules")
+      let names = (routes.snapshot()["profiles"] as! [[String: Any]]).map { $0["name"] as! String }
+      try expect(names.sorted() == ["My routing", "My routing 2"], "the new profile's listed name differs from its own")
+      // Importing the same profile again still replaces it.
+      _ = try routes.importContent(draft("third.example"), selectedSubscriptionID: nil)
+      try expect(blocked() == ["My routing": ["third.example"], "My routing 2": ["second.example"]],
+        "a repeated import no longer replaced its profile")
+    }
+
     try check("assigned routing deletion persists detachment and supports rollback") {
       let routeDirectory = directory.appendingPathComponent("routing-delete")
       let routes = try RoutingStore(directory: routeDirectory)
