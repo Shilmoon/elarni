@@ -58,7 +58,9 @@ class AndroidUIE2E {
     }
     private fun click(text: String) {
         dismissKeyboard()
-        val match = hasText(text) and hasClickAction()
+        // A disabled control keeps its click action but ignores the tap: editors disable theirs while the
+        // repository is busy, as the per-app editor is while it loads the installed apps.
+        val match = hasText(text) and hasClickAction() and isEnabled()
         // A menu composes its items a frame or more after the click that opened it: look again before
         // scrolling the list for a node that is not there yet.
         try {
@@ -66,7 +68,7 @@ class AndroidUIE2E {
                 ui.onAllNodes(match).fetchSemanticsNodes().isNotEmpty() ||
                     runCatching { ui.onNode(hasScrollToIndexAction()).performScrollToNode(match) }.isSuccess
             }
-        } catch (error: ComposeTimeoutException) { throw AssertionError("No clickable \"$text\" on screen or in its list", error) }
+        } catch (error: ComposeTimeoutException) { throw AssertionError("No enabled clickable \"$text\" on screen or in its list", error) }
         if (ui.onAllNodes(match and hasAnyAncestor(hasScrollAction())).fetchSemanticsNodes().isNotEmpty()) ui.onNode(match).performScrollTo()
         ui.waitForIdle()
         ui.onNode(match).assertIsDisplayed().performClick()
