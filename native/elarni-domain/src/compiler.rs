@@ -155,37 +155,6 @@ pub fn compile_xray_config(request: &CompileRequest) -> Result<Vec<u8>, CompileE
     )
 }
 
-pub fn compile_xray_outbound_config(
-    outbound: Value,
-    routes: &crate::model::RouteModel,
-    socks_port: u16,
-) -> Result<(Vec<u8>, String), CompileError> {
-    compile_xray_outbound_config_for_backend(
-        outbound,
-        routes,
-        socks_port,
-        PacketBackend::NativeTun2Proxy,
-        1500,
-    )
-}
-
-pub fn compile_xray_outbound_config_for_backend(
-    outbound: Value,
-    routes: &crate::model::RouteModel,
-    socks_port: u16,
-    packet_backend: PacketBackend,
-    tun_mtu: u16,
-) -> Result<(Vec<u8>, String), CompileError> {
-    compile_xray_outbound_config_with_options(
-        outbound,
-        routes,
-        socks_port,
-        packet_backend,
-        tun_mtu,
-        &RuntimeOptions::default(),
-    )
-}
-
 pub fn compile_xray_outbound_config_with_options(
     mut outbound: Value,
     routes: &crate::model::RouteModel,
