@@ -42,6 +42,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   that one connection instead of reading every socket on the computer (Windows: 0.64 ms to
   25 µs per connection), and macOS reads its socket table once for connections that open
   together, as a browser's do (64 at once: 70 ms to 2.6 ms).
+- The per-app app list opens faster the second time on macOS and Linux: app icons are drawn
+  once and kept until the app or the icon theme changes, and macOS builds the list off the
+  main thread, so the window no longer freezes while it loads.
 
 ### Fixed
 
