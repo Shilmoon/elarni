@@ -25,7 +25,6 @@ class Automation(saved: JSONObject) {
     private var exhaustions = 0
     private var rotation = 0
     val cooldown = mutableMapOf<String, Double>()
-    val invalid = mutableSetOf<String>()
     // Mobile whitelists pass Russian addresses only: set when a Russian-entry
     // server passes after two foreign-entry ones failed, cleared by a foreign pass.
     var whitelist = false
@@ -87,7 +86,7 @@ class Automation(saved: JSONObject) {
         attempts++; return true
     }
     fun round(order: List<String>, current: String, time: Double): List<String> {
-        val eligible = order.filter { it !in invalid && (cooldown[it] ?: 0.0) <= time }
+        val eligible = order.filter { (cooldown[it] ?: 0.0) <= time }
         val rest = eligible.filter { it != current }
         val offset = if (rest.isEmpty()) 0 else rotation % rest.size
         val output = (eligible.filter { it == current } + rest.drop(offset) + rest.take(offset)).take(10)
