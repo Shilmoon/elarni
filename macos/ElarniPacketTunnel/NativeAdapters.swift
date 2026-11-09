@@ -385,17 +385,35 @@ final class NativeXrayCore: XrayCore, @unchecked Sendable {
     let hosts = Set(endpoints.map(\.host)).sorted()
     var pinHosts: [String] = []
     var candidatesByHost: [String: [String]] = [:]
-    for host in hosts {
-      try Task.checkCancellation()
+    // The hosts resolve at the same time. One after another, each with its 10 s limit, a profile with several
+    // servers on a network whose DNS does not answer outlasted the 15 s a switch has.
+    try Task.checkCancellation()
+    let preferredIP = plan.effectivePreferredIP
+    let lookups = hosts.compactMap { host -> (host: String, name: String)? in
       let mapping = manifest.mappings[host]
-      do {
-        if mapping?["blocked"] as? Bool == true { throw NativeAdapterError.resolutionFailed }
-        let candidates: [String]
-        if let mapped = mapping?["addresses"] as? [String] { candidates = mapped }
-        else { candidates = try await SystemEndpointResolver.resolve(mapping?["alias"] as? String ?? host, preferredIP: plan.effectivePreferredIP, attempt: attempt) }
-        candidatesByHost[host] = candidates
-        if mapping != nil { pinHosts.append(host) }
-      } catch NativeAdapterError.resolutionFailed { candidatesByHost[host] = [] }
+      guard mapping?["blocked"] as? Bool != true, mapping?["addresses"] as? [String] == nil else { return nil }
+      return (host, mapping?["alias"] as? String ?? host)
+    }
+    let found = try await withThrowingTaskGroup(of: (host: String, candidates: [String]?).self) { group -> [String: [String]] in
+      for lookup in lookups {
+        group.addTask {
+          do {
+            let candidates = try await SystemEndpointResolver.resolve(lookup.name, preferredIP: preferredIP, attempt: attempt)
+            return (lookup.host, candidates)
+          } catch NativeAdapterError.resolutionFailed { return (lookup.host, nil) }
+        }
+      }
+      var found: [String: [String]] = [:]
+      for try await result in group { if let candidates = result.candidates { found[result.host] = candidates } }
+      return found
+    }
+    for host in hosts {
+      let mapping = manifest.mappings[host]
+      // A blocked host and one that did not resolve have no address.
+      guard mapping?["blocked"] as? Bool != true,
+            let candidates = mapping?["addresses"] as? [String] ?? found[host] else { candidatesByHost[host] = []; continue }
+      candidatesByHost[host] = candidates
+      if mapping != nil { pinHosts.append(host) }
     }
     for endpoint in endpoints {
       let candidates = TunnelSettingsFactory.endpointAddresses(candidatesByHost[endpoint.host] ?? [], strategy: endpoint.domainStrategy, preferredIP: plan.effectivePreferredIP)
