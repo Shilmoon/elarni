@@ -158,7 +158,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
         }
         if let selected = arguments["processes"] as? [String], selected.count <= 256 {
           for path in selected where path.hasPrefix("/") && path.utf8.count <= 1024 {
-            if let entry = self.routingApplication(URL(fileURLWithPath: path)) {
+            if let entry = self.routingApplication(URL(fileURLWithPath: path), followsUpdates: false) {
               let process = entry["process"] as! String
               if applications[process] == nil { applications[process] = entry }
             }
@@ -217,12 +217,14 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     }
   }
 
-  private func routingApplication(_ url: URL, name: String? = nil) -> [String: Any]? {
+  // Running, installed and chosen apps get a rule that follows updates; a saved rule is listed as saved.
+  private func routingApplication(_ url: URL, name: String? = nil, followsUpdates: Bool = true) -> [String: Any]? {
     let bundle = url.pathExtension == "app" ? Bundle(url: url) : nil
     guard url.pathExtension == "app" ? bundle?.executableURL != nil :
       ((try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true &&
        FileManager.default.isExecutableFile(atPath: url.path)) else { return nil }
-    let path = url.path + (bundle == nil ? "" : "/")
+    let path = (followsUpdates ? RoutingApplicationRule.versionsFolder(of: url.path) : nil)
+      ?? url.path + (bundle == nil ? "" : "/")
     guard path.utf8.count <= 1024, !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
     var entry: [String: Any] = ["name": name ?? (bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
       ?? url.deletingPathExtension().lastPathComponent, "process": path]

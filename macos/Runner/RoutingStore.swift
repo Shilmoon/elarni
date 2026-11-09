@@ -1170,3 +1170,29 @@ private struct RoutingRecord: Codable {
   var managedRevision: String?
   var publicationGeneration: UUID?
 }
+
+// Apps that keep each version beside the previous one, such as Claude Code that the Claude app
+// installs (~/Library/Application Support/Claude/claude-code/<version>/<build>/claude.app), get a
+// new path with every update. Their rule is that folder of versions when it holds nothing else: the
+// nearest version among the app's four parents.
+enum RoutingApplicationRule {
+  static func versionsFolder(of path: String, fileManager: FileManager = .default) -> String? {
+    var folder = URL(fileURLWithPath: path)
+    for _ in 0..<4 {
+      folder = folder.deletingLastPathComponent()
+      guard folder.path != "/" else { return nil }
+      guard isVersion(folder.lastPathComponent) else { continue }
+      let root = folder.deletingLastPathComponent()
+      // At least two folders deep, so a version never widens to /opt/.
+      guard root.pathComponents.count >= 3, let entries = try? fileManager.contentsOfDirectory(atPath: root.path),
+            entries.allSatisfy({ $0.hasPrefix(".") || isVersion($0) }) else { return nil }
+      return root.path + "/"
+    }
+    return nil
+  }
+
+  static func isVersion(_ name: String) -> Bool {
+    name.contains(".") && !name.hasPrefix(".") && !name.hasSuffix(".") && !name.contains("..") &&
+      name.allSatisfy { $0 == "." || ("0"..."9").contains($0) }
+  }
+}

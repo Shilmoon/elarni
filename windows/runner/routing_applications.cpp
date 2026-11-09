@@ -4,8 +4,10 @@
 #include <tlhelp32.h>
 #include <wrl/client.h>
 #include <wincodec.h>
+#include <algorithm>
 #include <set>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 std::string RoutingUTF8(const wchar_t* text) {
@@ -57,31 +59,135 @@ std::vector<uint8_t> ApplicationIcon(const std::wstring& path) {
   return png;
 }
 
-std::wstring ExecutableRule(const std::wstring& path) {
-  if (!LocalApplicationPath(path)) return path;
+namespace {
+bool OnlyOf(const std::wstring& text, const wchar_t* allowed) {
+  return !text.empty() && text.find_first_not_of(allowed) == std::wstring::npos;
+}
+
+std::vector<std::wstring> Split(const std::wstring& text, wchar_t separator) {
+  std::vector<std::wstring> parts;
+  for (size_t start = 0;;) {
+    const auto end = text.find(separator, start);
+    parts.push_back(text.substr(start, end == std::wstring::npos ? std::wstring::npos : end - start));
+    if (end == std::wstring::npos) return parts;
+    start = end + 1;
+  }
+}
+
+constexpr wchar_t kAlphanumeric[] = L"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+constexpr wchar_t kPackageName[] = L"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-";
+
+// The bounds of the folder directly below a WindowsApps folder in path.
+bool PackageFolder(const std::wstring& path, size_t& start, size_t& end) {
+  std::wstring lower = path;
+  CharLowerBuffW(lower.data(), static_cast<DWORD>(lower.size()));
+  constexpr wchar_t parent[] = L"\\windowsapps\\";
+  const auto found = lower.find(parent);
+  if (found == std::wstring::npos) return false;
+  start = found + std::size(parent) - 1;
+  end = path.find(L'\\', start);
+  return end != std::wstring::npos && end > start;
+}
+
+// Microsoft Store apps run from <volume>\WindowsApps\<name>_<version>_<arch>_<resource>_<publisher>\,
+// which each update replaces. Vendor/Xray-core/app/router compares that folder, by the same rules, as
+// <name>_<publisher>, its package family, so the rule is that family folder.
+std::wstring PackageRule(const std::wstring& path) {
+  size_t start = 0, end = 0;
+  if (!PackageFolder(path, start, end)) return {};
+  const auto parts = Split(path.substr(start, end - start), L'_');
+  if (parts.size() != 5) return {};
+  auto arch = parts[2];
+  CharLowerBuffW(arch.data(), static_cast<DWORD>(arch.size()));
+  const auto version = Split(parts[1], L'.');
+  const wchar_t* arches[] = {L"x86", L"x64", L"arm", L"arm64", L"neutral", L"x86a64"};
+  if (!OnlyOf(parts[0], kPackageName) || version.size() != 4 ||
+      !std::all_of(version.begin(), version.end(), [](const std::wstring& field) { return OnlyOf(field, L"0123456789"); }) ||
+      std::none_of(std::begin(arches), std::end(arches), [&](const wchar_t* known) { return arch == known; }) ||
+      parts[4].size() != 13 || !OnlyOf(parts[4], kAlphanumeric)) return {};
+  return path.substr(0, start) + parts[0] + L"_" + parts[4] + L"\\";
+}
+
+// A family folder rule names its app after the package name without the publisher's prefix:
+// 5319275A.WhatsAppDesktop is WhatsAppDesktop.
+std::wstring PackageAppName(const std::wstring& rule) {
+  size_t start = 0, end = 0;
+  if (!PackageFolder(rule, start, end) || end + 1 != rule.size()) return {};
+  const auto parts = Split(rule.substr(start, end - start), L'_');
+  if (parts.size() != 2 || !OnlyOf(parts[0], kPackageName) || parts[1].size() != 13 ||
+      !OnlyOf(parts[1], kAlphanumeric)) return {};
+  return parts[0].substr(parts[0].find_last_of(L'.') + 1);
+}
+
+// Squirrel apps such as Discord run from <root>\app-<version>\ and start through
+// <root>\Update.exe or a stub.
+std::wstring SquirrelRule(const std::wstring& path) {
   auto root = path.substr(0, path.find_last_of(L"\\/"));
   const auto parent = root.find_last_of(L"\\/");
   if (parent != std::wstring::npos && _wcsnicmp(root.c_str() + parent + 1, L"app-", 4) == 0) root.resize(parent);
   // A drive root would match every executable on that drive.
-  if (root.find_first_of(L"\\/") == std::wstring::npos) return path;
+  if (root.find_first_of(L"\\/") == std::wstring::npos) return {};
   const auto updater = GetFileAttributesW((root + L"\\Update.exe").c_str());
-  if (updater == INVALID_FILE_ATTRIBUTES || (updater & FILE_ATTRIBUTE_DIRECTORY)) return path;
+  if (updater == INVALID_FILE_ATTRIBUTES || (updater & FILE_ATTRIBUTE_DIRECTORY)) return {};
   WIN32_FIND_DATAW found{};
   const HANDLE search = FindFirstFileExW((root + L"\\app-*").c_str(), FindExInfoBasic, &found,
       FindExSearchLimitToDirectories, nullptr, 0);
-  if (search == INVALID_HANDLE_VALUE) return path;
+  if (search == INVALID_HANDLE_VALUE) return {};
   bool versioned = false;
   do versioned = (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
   while (!versioned && FindNextFileW(search, &found));
   FindClose(search);
-  return versioned ? root + L"\\" : path;
+  return versioned ? root + L"\\" : std::wstring{};
+}
+
+bool VersionName(const std::wstring& name) {
+  return OnlyOf(name, L"0123456789.") && name.find(L'.') != std::wstring::npos && name.front() != L'.' &&
+      name.back() != L'.' && name.find(L"..") == std::wstring::npos;
+}
+
+// Apps that keep each version in <root>\<version>\ beside the previous one, such as Claude Code
+// that the Claude app installs (<root>\<version>\<build>\claude.exe): the nearest version folder
+// among the executable's four parents, when everything in <root> is a version.
+std::wstring VersionsRule(const std::wstring& path) {
+  auto end = path.find_last_of(L"\\/");
+  for (int level = 0; level < 4 && end != std::wstring::npos && end > 0; ++level) {
+    const auto start = path.find_last_of(L"\\/", end - 1);
+    if (start == std::wstring::npos) return {};
+    if (!VersionName(path.substr(start + 1, end - start - 1))) { end = start; continue; }
+    const auto root = path.substr(0, start);
+    // At least two folders below the drive, so a version folder never widens to C:\Tools\.
+    if (std::count_if(root.begin(), root.end(), [](wchar_t c) { return c == L'\\' || c == L'/'; }) < 2) return {};
+    WIN32_FIND_DATAW found{};
+    const HANDLE search = FindFirstFileExW((root + L"\\*").c_str(), FindExInfoBasic, &found,
+        FindExSearchNameMatch, nullptr, 0);
+    if (search == INVALID_HANDLE_VALUE) return {};
+    bool versions = true;
+    do {
+      const std::wstring name = found.cFileName;
+      versions = name.front() == L'.' || VersionName(name);
+    } while (versions && FindNextFileW(search, &found));
+    FindClose(search);
+    return versions ? root + L"\\" : std::wstring{};
+  }
+  return {};
+}
+}
+
+std::wstring ExecutableRule(const std::wstring& path) {
+  if (!LocalApplicationPath(path)) return path;
+  for (const auto rule : {PackageRule, SquirrelRule, VersionsRule}) {
+    auto folder = rule(path);
+    if (!folder.empty()) return folder;
+  }
+  return path;
 }
 
 flutter::EncodableMap RoutingApplication(const std::wstring& path, bool running, const std::wstring& rule) {
   using flutter::EncodableValue;
   const auto& process = rule.empty() ? path : rule;
-  // A folder rule has no file name; Dart names it after the folder.
-  const auto name = process.substr(process.find_last_of(L"\\/") + 1);
+  // A folder rule has no file name; Dart names it after the folder, unless it is a Store package.
+  auto name = process.substr(process.find_last_of(L"\\/") + 1);
+  if (name.empty()) name = PackageAppName(process);
   flutter::EncodableMap app = {{EncodableValue("name"), EncodableValue(RoutingUTF8(name.c_str()))},
       {EncodableValue("process"), EncodableValue(RoutingUTF8(process.c_str()))}};
   auto icon = running && LocalApplicationPath(path) ? ApplicationIcon(path) : std::vector<uint8_t>{};

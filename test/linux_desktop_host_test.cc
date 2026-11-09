@@ -60,6 +60,38 @@ int main(int argc, char** argv) {
   assert(fl_value_get_length(apps) == 1);
   assert(g_unlink(alias.c_str()) == 0);
 
+  // Snap apps run from /snap/<name>/<revision>/, which each refresh replaces.
+  std::string rule_name;
+  assert(application_rule("/snap/firefox/5134/usr/lib/firefox/firefox", rule_name) == "/snap/firefox/" && rule_name == "firefox");
+  assert(application_rule("/snap/telegram-desktop/x2/usr/bin/telegram-desktop", rule_name) == "/snap/telegram-desktop/");
+  for (const std::string& path : {"/snap/firefox/current/usr/lib/firefox/firefox", "/snap/firefox/5134", "/snap/bin/firefox"})
+    assert(application_rule(path, rule_name) == path);
+  // Claude Code keeps each version as ~/.local/share/claude/versions/<version> beside the previous one.
+  // A version matches its folder of versions only when that folder holds nothing else.
+  const std::string versions = std::string(directory) + "/claude/versions", tools = std::string(directory) + "/tools";
+  assert(g_mkdir_with_parents(versions.c_str(), 0700) == 0 && g_mkdir_with_parents((tools + "/1.0").c_str(), 0700) == 0 &&
+         g_mkdir((tools + "/plugins").c_str(), 0700) == 0);
+  for (const std::string& file : {versions + "/2.1.300", versions + "/2.1.314", tools + "/1.0/tool"})
+    assert(g_file_set_contents(file.c_str(), "fixture", -1, nullptr) && g_chmod(file.c_str(), 0700) == 0);
+  rule_name.clear();
+  assert(application_rule(versions + "/2.1.314", rule_name) == versions + "/" && rule_name == "claude");
+  assert(application_rule(tools + "/1.0/tool", rule_name) == tools + "/1.0/tool");
+  g_autoptr(FlValue) versioned = fl_value_new_list();
+  std::set<std::string> versioned_seen;
+  add_app(versioned, versioned_seen, nullptr, (versions + "/2.1.300").c_str(), nullptr, true);
+  add_app(versioned, versioned_seen, nullptr, (versions + "/2.1.314").c_str(), nullptr, true);
+  assert(fl_value_get_length(versioned) == 1);
+  auto* claude_code = fl_value_get_list_value(versioned, 0);
+  assert(fl_value_get_string(fl_value_lookup_string(claude_code, "process")) == versions + "/");
+  assert(strcmp(fl_value_get_string(fl_value_lookup_string(claude_code, "name")), "claude") == 0);
+  // A saved rule is listed as saved.
+  add_app(versioned, versioned_seen, nullptr, (versions + "/2.1.314").c_str());
+  assert(fl_value_get_length(versioned) == 2);
+  for (const std::string& file : {versions + "/2.1.300", versions + "/2.1.314", tools + "/1.0/tool"})
+    assert(g_unlink(file.c_str()) == 0);
+  for (const std::string& folder : {versions, std::string(directory) + "/claude", tools + "/1.0", tools + "/plugins", tools})
+    assert(g_rmdir(folder.c_str()) == 0);
+
   // A save name near NAME_MAX leaves no room to suffix the temporary file's name.
   const std::string exported = std::string(directory) + "/" + std::string(245, 'a') + ".json";
   for (const char* content : {"first", "second"}) {

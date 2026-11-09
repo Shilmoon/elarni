@@ -8,6 +8,7 @@
 #include <sys/sysinfo.h>
 #include <sys/utsname.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -233,14 +234,61 @@ void camera_frame(DesktopHost* host, FlMethodCall* call) {
   gst_buffer_unmap(buffer, &map);
   gst_sample_unref(sample);
 }
-void add_app(FlValue* list, std::set<std::string>& seen, const char* name, const char* process, GIcon* icon = nullptr) {
+bool version_name(const std::string& name) {
+  return !name.empty() && name.find_first_not_of("0123456789.") == std::string::npos && name.find('.') != std::string::npos &&
+         name.front() != '.' && name.back() != '.' && name.find("..") == std::string::npos;
+}
+// The rule for a running or listed executable, and the app's name when the rule is a folder. Snap
+// apps run from /snap/<name>/<revision>/, which each refresh replaces, so they match /snap/<name>/.
+// Apps that keep each version beside the previous one, such as Claude Code
+// (~/.local/share/claude/versions/<version>), match that folder of versions when it holds nothing
+// else: the nearest version among the file and its four parents.
+std::string application_rule(const std::string& path, std::string& name) {
+  if (path.compare(0, 6, "/snap/") == 0) {
+    const auto snap = path.find('/', 6);
+    const auto revision_end = snap == std::string::npos ? snap : path.find('/', snap + 1);
+    if (snap == std::string::npos || snap == 6 || revision_end == std::string::npos) return path;
+    auto revision = path.substr(snap + 1, revision_end - snap - 1);
+    if (!revision.empty() && revision[0] == 'x') revision.erase(0, 1);
+    if (revision.empty() || revision.find_first_not_of("0123456789") != std::string::npos) return path;
+    name = path.substr(6, snap - 6);
+    return path.substr(0, snap + 1);
+  }
+  size_t end = path.size();
+  for (int level = 0; level < 5 && end != std::string::npos && end > 0; ++level) {
+    const auto start = path.rfind('/', end - 1);
+    if (start == std::string::npos) return path;
+    if (!version_name(path.substr(start + 1, end - start - 1))) { end = start; continue; }
+    const auto root = path.substr(0, start);
+    // At least two folders deep, so a version never widens to /opt/.
+    if (std::count(root.begin(), root.end(), '/') < 2) return path;
+    GDir* folder = g_dir_open(root.c_str(), 0, nullptr);
+    if (!folder) return path;
+    bool versions = true;
+    while (const char* entry = g_dir_read_name(folder)) versions = versions && (entry[0] == '.' || version_name(entry));
+    g_dir_close(folder);
+    if (!versions) return path;
+    g_autofree char* base = g_path_get_basename(root.c_str());
+    g_autofree char* owner = g_path_get_dirname(root.c_str());
+    g_autofree char* owner_name = g_path_get_basename(owner);
+    name = strcmp(base, "versions") == 0 ? owner_name : base;
+    return root + "/";
+  }
+  return path;
+}
+// Running and listed apps get a rule that follows updates; a saved rule is listed as saved.
+void add_app(FlValue* list, std::set<std::string>& seen, const char* name, const char* process, GIcon* icon = nullptr,
+             bool follow_updates = false) {
   g_autofree char* canonical = process ? realpath(process, nullptr) : nullptr;
-  process = canonical;
-  if (!process || !*process || strlen(process) > 1024 || !g_utf8_validate(process, -1, nullptr)
-      || !seen.insert(process).second || seen.size() > 4096) return;
+  if (!canonical || !*canonical || strlen(canonical) > 1024 || !g_utf8_validate(canonical, -1, nullptr)) return;
+  std::string rule_name;
+  const std::string rule = follow_updates ? application_rule(canonical, rule_name) : canonical;
+  if (!seen.insert(rule).second || seen.size() > 4096) return;
+  g_autofree char* base = g_path_get_basename(canonical);
   auto* item = fl_value_new_map();
-  fl_value_set_string_take(item, "name", fl_value_new_string(name && *name ? name : process));
-  fl_value_set_string_take(item, "process", fl_value_new_string(process));
+  fl_value_set_string_take(item, "name", fl_value_new_string(name && *name ? name : !rule_name.empty() ? rule_name.c_str() : base));
+  fl_value_set_string_take(item, "process", fl_value_new_string(rule.c_str()));
+  process = canonical;
   // Installed desktop entries provide their own artwork. For custom binaries,
   // use the file's native icon; failure simply leaves Flutter's app fallback.
   g_autoptr(GFile) file = g_file_new_for_path(process);
@@ -296,7 +344,7 @@ FlValue* applications(FlValue* args) {
     bool wrapper = false;
     for (const char* known : {"sh", "bash", "dash", "zsh", "firejail"}) wrapper = wrapper || (base && strcmp(base, known) == 0);
     if (wrapper || launcher(resolved)) continue;
-    add_app(list, seen, g_app_info_get_display_name(app), resolved, g_app_info_get_icon(app));
+    add_app(list, seen, g_app_info_get_display_name(app), resolved, g_app_info_get_icon(app), true);
   }
   g_list_free_full(apps, g_object_unref);
   g_autoptr(GDir) proc = g_dir_open("/proc", 0, nullptr);
@@ -305,8 +353,7 @@ FlValue* applications(FlValue* args) {
     std::string path = std::string("/proc/") + pid + "/exe";
     g_autofree char* binary = g_file_read_link(path.c_str(), nullptr);
     if (!binary || !g_file_test(binary, G_FILE_TEST_IS_EXECUTABLE)) continue;
-    g_autofree char* name = g_path_get_basename(binary);
-    add_app(list, seen, name, binary);
+    add_app(list, seen, nullptr, binary, nullptr, true);
   }
   auto* selected = field(args, "processes", FL_VALUE_TYPE_LIST);
   if (selected && fl_value_get_length(selected) <= 256) {
@@ -374,8 +421,7 @@ void picker(DesktopHost* host, FlMethodCall* call, bool apps) {
       for (GSList* item = files; item && !error; item = item->next) {
         const char* path = static_cast<char*>(item->data);
         if ((error = chosen_application_error(path))) break;
-        g_autofree char* name = g_path_get_basename(path);
-        add_app(result, seen, name, path);
+        add_app(result, seen, nullptr, path, nullptr, true);
       }
       g_slist_free_full(files, g_free);
     } else {

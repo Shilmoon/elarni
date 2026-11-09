@@ -201,6 +201,7 @@ struct NativeControlChecks {
     await record { try await crossSubscriptionRecoveryCheck(defaults: defaults) }
     await record { try await perAppTargetCheck(defaults: defaults) }
     await record { try await coreLogCheck(defaults: defaults) }
+    await record { try versionsFolderCheck() }
 
     // Call the actual socket probe without measureICMP, which requires an OS
     // VPN manager. Loopback exposes address-family selection without a tunnel.
@@ -219,7 +220,30 @@ struct NativeControlChecks {
     print("PASS production ICMP probe supports Automatic IPv4/IPv6, address fallback and explicit family")
     guard keychainCalls == 0 else { throw Failure(message: "fixture unexpectedly needed credentials") }
     guard selectionFailures.isEmpty else { throw Failure(message: selectionFailures.joined(separator: "; ")) }
-    print("21 native control checks passed; no VPN preferences or credentials used; ICMP uses loopback only")
+    print("22 native control checks passed; no VPN preferences or credentials used; ICMP uses loopback only")
+  }
+
+  // Claude Code as the Claude app installs it, claude-code/<version>/<build>/claude.app, gets a new
+  // version folder with each update. Its rule is the folder of versions, when that holds nothing else.
+  static func versionsFolderCheck() throws {
+    let manager = FileManager.default
+    let base = manager.temporaryDirectory.appendingPathComponent("elarni-versions-\(UUID())")
+    defer { try? manager.removeItem(at: base) }
+    let claude = base.appendingPathComponent("claude-code"), mixed = base.appendingPathComponent("Mixed")
+    let apps = [claude.appendingPathComponent("2.1.309/5af865b9901c/claude.app"),
+                claude.appendingPathComponent("2.1.317/91184d3d9ba3/claude.app"),
+                mixed.appendingPathComponent("1.0/Tool.app")]
+    for app in apps { try manager.createDirectory(at: app, withIntermediateDirectories: true) }
+    try manager.createDirectory(at: mixed.appendingPathComponent("Plugins"), withIntermediateDirectories: true)
+    try Data().write(to: claude.appendingPathComponent(".DS_Store"))
+    let rules = apps.map { RoutingApplicationRule.versionsFolder(of: $0.path) }
+    guard rules[0] == claude.path + "/", rules[1] == claude.path + "/" else {
+      throw Failure(message: "Claude Code did not match its folder of versions: \(rules)")
+    }
+    guard rules[2] == nil, RoutingApplicationRule.versionsFolder(of: "/Applications/Claude.app") == nil else {
+      throw Failure(message: "a version folder beside other folders widened the rule: \(rules)")
+    }
+    print("PASS apps in version folders, such as Claude Code, match every version")
   }
 
   // Other local apps must not reach a fresh install's listeners without a login (v2rayNG #5457).

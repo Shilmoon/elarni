@@ -4,6 +4,16 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Fixed
+
+- Per-app rules for the Claude app on Windows, and for other Microsoft Store apps, stopped
+  matching after each app update: the app runs from a folder named after its version. Rules now
+  match the package in any version, including rules saved before. Claude Code, which the Claude
+  app keeps in a new `claude-code\<version>\` folder with each update, is listed as one app that
+  matches every version, on Windows, macOS and Linux; so are Snap apps on Linux, whose path
+  changes with each refresh. Pick Claude Code and Snap apps again from the list to get the new
+  rule; Store app rules need nothing.
+
 ## 0.5.1 - 2026-11-08
 
 ### Changed
