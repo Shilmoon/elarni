@@ -34,6 +34,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   app had closed its socket by the time routing asked Android who owned it. With per-app rules
   on, the VPN now asks when the connection arrives and remembers a socket's app for 30 s after
   it closes.
+- Automatic server tests on Windows, macOS and Linux start 50 ms apart instead of 40 ms, so
+  uneven dial times no longer put three handshakes to one server name within 50 ms. Russia's
+  TSPU freezes a server name after more than three handshakes that close together.
 
 ## 0.5.1 - 2026-11-08
 
