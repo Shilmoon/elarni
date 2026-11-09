@@ -819,20 +819,10 @@ final class NativePacketBridge: PacketBridge, @unchecked Sendable {
       "bytesOut": value.bytes_out,
       "malformed": value.malformed,
       "overflows": value.overflows,
-      "syntheticDnsAnswers": value.synthetic_dns_answers,
-      "mappingHits": value.synthetic_mapping_hits,
-      "restoredDomainSessions": value.restored_domain_sessions,
-      "restoredProxySessions": value.restored_proxy_sessions,
-      "restoredDirectSessions": value.restored_direct_sessions,
-      "restoredBlockSessions": value.restored_block_sessions,
-      "restoredDnsSessions": value.restored_dns_sessions,
       "activeTcpSessions": value.active_tcp_sessions,
       "activeUdpSessions": value.active_udp_sessions,
       "droppedTcpSessions": value.dropped_tcp_sessions,
       "droppedUdpSessions": value.dropped_udp_sessions,
-      "mappingEvictions": value.synthetic_mapping_evictions,
-      "mappingExpirations": value.synthetic_mapping_expirations,
-      "allocationCollisions": value.synthetic_allocation_collisions,
       ]
     }
   }

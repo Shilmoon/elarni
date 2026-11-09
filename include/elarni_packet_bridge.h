@@ -9,7 +9,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#define ELARNI_PACKET_ABI_VERSION 6
+#define ELARNI_PACKET_ABI_VERSION 7
 
 typedef enum ElarniPacketStatus {
   ELARNI_PACKET_STATUS_OK = 0,
@@ -40,16 +40,6 @@ typedef struct ElarniPacketCounters {
   uint64_t bytes_out;
   uint64_t malformed;
   uint64_t overflows;
-  uint64_t synthetic_dns_answers;
-  uint64_t synthetic_mapping_hits;
-  uint64_t restored_domain_sessions;
-  uint64_t restored_proxy_sessions;
-  uint64_t restored_direct_sessions;
-  uint64_t restored_block_sessions;
-  uint64_t restored_dns_sessions;
-  uint64_t synthetic_mapping_evictions;
-  uint64_t synthetic_mapping_expirations;
-  uint64_t synthetic_allocation_collisions;
   uint64_t active_tcp_sessions;
   uint64_t active_udp_sessions;
   uint64_t dropped_tcp_sessions;

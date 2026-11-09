@@ -15,9 +15,9 @@ use device::{InputRoom, PacketDevice};
 use framing::{FrameAssembler, to_many_at_once, validate_packet};
 use tokio::runtime::Builder;
 use tokio::sync::mpsc;
-use tun2proxy::{ArgDns, ArgProxy, Args, CancellationToken, ProxyType, VirtualDnsMetrics};
+use tun2proxy::{ArgDns, ArgProxy, Args, CancellationToken};
 
-pub const ELARNI_PACKET_ABI_VERSION: u32 = 6;
+pub const ELARNI_PACKET_ABI_VERSION: u32 = 7;
 const STOP_TIMEOUT: Duration = Duration::from_secs(2);
 const MIN_PACKET_BYTES: usize = 1280;
 const MAX_PACKET_BYTES: usize = 65_535;
@@ -58,16 +58,6 @@ pub struct ElarniPacketCounters {
     pub bytes_out: u64,
     pub malformed: u64,
     pub overflows: u64,
-    pub synthetic_dns_answers: u64,
-    pub synthetic_mapping_hits: u64,
-    pub restored_domain_sessions: u64,
-    pub restored_proxy_sessions: u64,
-    pub restored_direct_sessions: u64,
-    pub restored_block_sessions: u64,
-    pub restored_dns_sessions: u64,
-    pub synthetic_mapping_evictions: u64,
-    pub synthetic_mapping_expirations: u64,
-    pub synthetic_allocation_collisions: u64,
     pub active_tcp_sessions: u64,
     pub active_udp_sessions: u64,
     pub dropped_tcp_sessions: u64,
@@ -95,7 +85,6 @@ pub struct ElarniPacketBridge {
     counters: Arc<Counters>,
     thread: Mutex<Option<JoinHandle<()>>>,
     max_packet_bytes: usize,
-    virtual_dns_metrics: Arc<VirtualDnsMetrics>,
     session_metrics: Arc<tun2proxy::SessionMetrics>,
 }
 
@@ -142,7 +131,6 @@ pub extern "C" fn elarni_packet_bridge_new_with_udp_timeout(
 ) -> *mut ElarniPacketBridge {
     new_bridge(
         ArgProxy {
-            proxy_type: ProxyType::Socks5,
             addr: ([127, 0, 0, 1], socks_port).into(),
             credentials: None,
         },
@@ -248,24 +236,16 @@ fn new_bridge(
     );
     let thread_cancellation = cancellation.clone();
     let thread_state = state.clone();
-    let virtual_dns_metrics = Arc::new(VirtualDnsMetrics::default());
     let session_metrics = Arc::new(tun2proxy::SessionMetrics::default());
     let args = Args {
         proxy,
-        setup: false,
         ipv6_enabled: true,
         dns: ArgDns::OverTcp,
         dns_addr: "198.18.0.1".parse().expect("constant DNS listener address"),
-        max_sessions: tcp_max_sessions.saturating_add(udp_max_sessions),
         tcp_max_sessions,
         udp_max_sessions,
         session_metrics: Some(session_metrics.clone()),
-        mtu,
         udp_timeout,
-        virtual_dns_capacity: 256,
-        virtual_dns_mapping_ttl: 60,
-        virtual_dns_answer_ttl: 5,
-        virtual_dns_metrics: Some(virtual_dns_metrics.clone()),
         ..Args::default()
     };
 
@@ -313,7 +293,6 @@ fn new_bridge(
         counters,
         thread: Mutex::new(Some(worker)),
         max_packet_bytes,
-        virtual_dns_metrics,
         session_metrics,
     }))
 }
@@ -497,7 +476,6 @@ pub unsafe extern "C" fn elarni_packet_bridge_counters(
     let Some(counters_out) = (unsafe { counters.as_mut() }) else {
         return ElarniPacketStatus::InvalidArgument;
     };
-    let virtual_dns = bridge.virtual_dns_metrics.snapshot();
     *counters_out = ElarniPacketCounters {
         packets_in: bridge.counters.packets_in.load(Ordering::Relaxed),
         bytes_in: bridge.counters.bytes_in.load(Ordering::Relaxed),
@@ -506,16 +484,6 @@ pub unsafe extern "C" fn elarni_packet_bridge_counters(
         malformed: bridge.counters.malformed.load(Ordering::Relaxed),
         overflows: bridge.counters.overflows.load(Ordering::Relaxed)
             + bridge.output.lock().map_or(0, |output| output.dropped()),
-        synthetic_dns_answers: virtual_dns.synthetic_answers,
-        synthetic_mapping_hits: virtual_dns.mapping_hits,
-        restored_domain_sessions: virtual_dns.restored_domain_sessions,
-        restored_proxy_sessions: virtual_dns.restored_proxy_sessions,
-        restored_direct_sessions: virtual_dns.restored_direct_sessions,
-        restored_block_sessions: virtual_dns.restored_block_sessions,
-        restored_dns_sessions: virtual_dns.restored_dns_sessions,
-        synthetic_mapping_evictions: virtual_dns.evictions,
-        synthetic_mapping_expirations: virtual_dns.expirations,
-        synthetic_allocation_collisions: virtual_dns.allocation_collisions,
         active_tcp_sessions: bridge.session_metrics.active_tcp.load(Ordering::Relaxed) as u64,
         active_udp_sessions: bridge.session_metrics.active_udp.load(Ordering::Relaxed) as u64,
         dropped_tcp_sessions: bridge.session_metrics.dropped_tcp.load(Ordering::Relaxed) as u64,
