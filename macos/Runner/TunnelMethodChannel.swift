@@ -961,6 +961,11 @@ final class TunnelMethodChannel {
         "backend": settings.xrayTunEnabled, "profileIP": settings.profilePreferredIP ?? "inherit"]
       return (try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]).base64EncodedString()) ?? ""
     }
+    store.compileContext = { [weak self] in
+      guard let self else { return "" }
+      let settings = self.settingsStore.current
+      return "\(settings.socksPort) \(settings.inboundAuthEnabled) \(settings.inboundCredentialRef ?? "")"
+    }
     store.compilePreview = { [weak self, weak store] outbound, routes, preference in
       guard let self, let store else { throw CancellationError() }
       let settings = self.settingsStore.current.applyingIPPreference(preference)

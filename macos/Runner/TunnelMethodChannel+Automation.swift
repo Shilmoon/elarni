@@ -340,13 +340,8 @@ extension TunnelMethodChannel {
           Set(settings.includedRoutes) == Set(["0.0.0.0/0", "::/0"]) else {
       throw AutomationFailure.unsupportedPolicy
     }
-    let configuration = try subscriptionStore().routing.runtimeProbeConfiguration(
-      subscriptionID: subscriptionID)
-    if let routes = configuration.routes {
-      guard routes["fallbackAction"] as? String == "proxy",
-            (routes["rules"] as? [[String: Any]])?.isEmpty == true else {
-        throw AutomationFailure.unsupportedPolicy
-      }
+    guard try subscriptionStore().routing.runtimeProbeProxiesAll(subscriptionID: subscriptionID) != false else {
+      throw AutomationFailure.unsupportedPolicy
     }
   }
 

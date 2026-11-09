@@ -1,5 +1,6 @@
 import Foundation
 import CoreImage
+import CryptoKit
 import Security
 
 @main
@@ -383,6 +384,7 @@ struct SubscriptionChecks {
 
     passed += try safetyChecks()
     passed += try await deletionChecks(directory: directory.appendingPathComponent("deletion"), profile: vless)
+    passed += try await revisionChecks(directory: directory.appendingPathComponent("revision"), profile: vless)
     passed += try reclamationChecks(directory: directory.appendingPathComponent("reclamation"))
     let localSecrets = MemorySecrets()
     let localDirectory = directory.appendingPathComponent("local")
@@ -1223,6 +1225,66 @@ struct SubscriptionChecks {
       "source deletion retained provider routing or removed an independent copy")
     print("PASS source deletion rolls back both catalogs and removes only provider-owned routing")
     return 1
+  }
+
+  static func revisionChecks(directory: URL, profile: String) async throws -> Int {
+    let secrets = MemorySecrets()
+    let store = try SubscriptionStore(directory: directory,
+      routing: RoutingStore(directory: directory.appendingPathComponent("routing")), secretAccess: secrets.access())
+    store.publishRefresh = { candidate in
+      _ = try store.beginPublication(candidate)
+      try store.finishPublication(candidate)
+    }
+    var compiled = 0
+    store.previewContext = { "settings/1" }
+    store.compilePreview = { config, _, _ in compiled += 1; return config }
+    let first = try store.registerProfiles(profile), second = try store.registerProfiles("#hide-url: yes\n" + profile)
+    _ = try await store.refresh(id: first)
+    _ = try await store.refresh(id: second)
+    func nodes() -> [(source: String, id: String, revision: String)] {
+      (store.snapshot()["subscriptions"] as! [[String: Any]]).flatMap { source in
+        (source["nodes"] as! [[String: Any]]).map {
+          (source: source["id"] as! String, id: $0["id"] as! String, revision: $0["configurationRevision"] as! String)
+        }
+      }
+    }
+    func revision(_ source: String) -> String { nodes().first { $0.source == source }!.revision }
+    // What every earlier build hashed: the whole object, routes included, written with sorted keys.
+    func plain(_ source: String, _ node: String) throws -> String {
+      let value: [String: Any] = ["reference": try store.outboundRef(nodeID: node),
+        "routes": try store.routing.previewRoutes(subscriptionID: source) ?? [:],
+        "assets": store.routing.previewAssetRevision(subscriptionID: source) ?? NSNull(),
+        "ip": "inherit", "context": store.previewContext()]
+      return Data(SHA256.hash(data: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]))).base64EncodedString()
+    }
+    func current() throws -> Bool { try nodes().allSatisfy { try $0.revision == plain($0.source, $0.id) } }
+    try expect(nodes().count >= 2 && current(), "a server without routes has another revision than earlier builds gave it")
+    let route = #"{"Name":"Provider route","RemoteDNSType":"DoU","RemoteDNSIP":"1.1.1.1","DomesticDNSType":"DoU","DomesticDNSIP":"8.8.8.8","DirectSites":["full:example.com"]}"#
+    let firstBefore = revision(first), secondBefore = revision(second)
+    try store.routing.importProvider(route, subscriptionID: first)
+    try expect(try store.routing.previewRoutes(subscriptionID: first) != nil && current(),
+      "a server with routes has another revision than earlier builds gave it")
+    try expect(revision(first) != firstBefore && revision(second) == secondBefore,
+      "a route did not change the revisions of its subscription's servers alone")
+    let routed = nodes().map(\.revision)
+    store.previewContext = { "settings/2" }
+    try expect(current() && Set(nodes().map(\.revision)).isDisjoint(with: routed), "a settings change kept a server's revision")
+    print("PASS a server's revision is the digest earlier builds computed and follows its routes and the settings")
+
+    let servers = nodes().count, routedServers = nodes().filter { $0.source == first }.count
+    compiled = 0
+    try store.validateNodes()
+    try expect(compiled == servers, "validation did not compile every server after a settings change")
+    try store.validateNodes()
+    try expect(compiled == servers, "an unchanged catalog compiled its servers again")
+    try store.routing.importProvider(route.replacingOccurrences(of: "example.com", with: "example.org"), subscriptionID: first)
+    try store.validateNodes()
+    try expect(compiled == servers + routedServers, "a changed route did not compile its subscription's servers, or compiled the others")
+    store.compileContext = { "port 1081" }
+    try store.validateNodes()
+    try expect(compiled == 2 * servers + routedServers, "a setting that only the compile reads did not compile every server again")
+    print("PASS validation compiles a server again only after its secret, its routes or the settings change")
+    return 2
   }
 
   static func reclamationChecks(directory: URL) throws -> Int {

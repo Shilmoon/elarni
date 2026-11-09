@@ -53,6 +53,22 @@ final class RoutingStore {
     return try JSONSerialization.jsonObject(with: record.routeModel) as? [String: Any]
   }
 
+  /// The routes previewRoutes returns, as sorted-key JSON with its digest: what the revisions of a subscription's
+  /// servers hash. A route model may be megabytes, so it is parsed and written again only after it changed.
+  func previewRouteKey(subscriptionID: String) throws -> (sorted: Data, digest: String) {
+    guard let id = catalog.assignments[subscriptionID],
+          let record = catalog.profiles.first(where: { $0.id == id && $0.enabled }) else { return Self.noRoutes }
+    if let kept = routeKeys[id], kept.model == record.routeModel { return (kept.sorted, kept.digest) }
+    let routes = try JSONSerialization.jsonObject(with: record.routeModel) as? [String: Any]
+    let sorted = try JSONSerialization.data(withJSONObject: routes ?? [:], options: [.sortedKeys])
+    let digest = Data(SHA256.hash(data: sorted)).base64EncodedString()
+    routeKeys = routeKeys.filter { key, _ in catalog.profiles.contains { $0.id == key } }
+    routeKeys[id] = (record.routeModel, sorted, digest)
+    return (sorted, digest)
+  }
+  private var routeKeys: [String: (model: Data, sorted: Data, digest: String)] = [:]
+  private static let noRoutes = (sorted: Data("{}".utf8), digest: Data(SHA256.hash(data: Data("{}".utf8))).base64EncodedString())
+
   func previewAssetRevision(subscriptionID: String) -> String? {
     guard let id = catalog.assignments[subscriptionID],
           let record = catalog.profiles.first(where: { $0.id == id && $0.enabled }) else { return nil }
@@ -462,7 +478,13 @@ final class RoutingStore {
           let profile = catalog.profiles.first(where: { $0.id == profileID }),
           profile.enabled else { return nil }
     guard profile.routeModel.count <= Self.maxRouteModelBytes else { throw RoutingStoreError.routeModelTooLarge }
-    let digest = SHA256.hash(data: profile.routeModel).map { String(format: "%02x", $0) }.joined()
+    // Callers ask on every poll and a model may be megabytes: one is hashed again only after it changed.
+    let digest: String
+    if let kept = modelDigests[profileID], kept.model == profile.routeModel { digest = kept.digest } else {
+      digest = SHA256.hash(data: profile.routeModel).map { String(format: "%02x", $0) }.joined()
+      modelDigests = modelDigests.filter { key, _ in catalog.profiles.contains { $0.id == key } }
+      modelDigests[profileID] = (profile.routeModel, digest)
+    }
     let name = "route-model-\(digest).json"
     let url = revisionsURL.appendingPathComponent(name, isDirectory: false)
     if !FileManager.default.fileExists(atPath: url.path) {
@@ -502,6 +524,36 @@ final class RoutingStore {
     }
   }
 
+  /// Whether the routes a probe would get leave every connection to the proxy, which nested probes need; nil
+  /// without routes. Kept per route revision: a status poll asks every few seconds, and the answer otherwise
+  /// costs the stored model read, hashed and parsed.
+  func runtimeProbeProxiesAll(subscriptionID: String) throws -> Bool? {
+    guard let revision = try runtimeRevision(subscriptionID: subscriptionID) else { return nil }
+    if let kept = probePolicies[revision.digest] {
+      // The answer holds for the model; a probe would still fail without its geofiles.
+      if let assets = revision.assetRevision { _ = try assetDirectory(assets) }
+      return kept
+    }
+    guard let routes = try runtimeProbeConfiguration(subscriptionID: subscriptionID).routes else { return nil }
+    let proxiesAll = routes["fallbackAction"] as? String == "proxy" && (routes["rules"] as? [[String: Any]])?.isEmpty == true
+    if probePolicies.count >= 16 { probePolicies.removeAll() }
+    probePolicies[revision.digest] = proxiesAll
+    return proxiesAll
+  }
+  private var probePolicies: [String: Bool] = [:]
+  private var modelDigests: [String: (model: Data, digest: String)] = [:]
+
+  private func assetDirectory(_ revision: String) throws -> String {
+    guard revision.count <= 64,
+          revision.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || ".-_".contains($0)) })
+    else { throw RoutingStoreError.invalidCatalog }
+    let url = assetsURL.appendingPathComponent(revision, isDirectory: true)
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+          isDirectory.boolValue else { throw RoutingStoreError.invalidCatalog }
+    return url.path
+  }
+
   func runtimeProbeConfiguration(subscriptionID: String) throws
     -> (routes: [String: Any]?, assetDirectory: String?) {
     guard let revision = try runtimeRevision(subscriptionID: subscriptionID) else {
@@ -513,18 +565,8 @@ final class RoutingStore {
           let routes = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       throw RoutingStoreError.invalidCatalog
     }
-    var assetDirectory: String?
-    if let revision = revision.assetRevision {
-      guard revision.count <= 64,
-            revision.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || ".-_".contains($0)) })
-      else { throw RoutingStoreError.invalidCatalog }
-      let url = assetsURL.appendingPathComponent(revision, isDirectory: true)
-      var isDirectory: ObjCBool = false
-      guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-            isDirectory.boolValue else { throw RoutingStoreError.invalidCatalog }
-      assetDirectory = url.path
-    }
-    return (routes, assetDirectory)
+    let directory = try revision.assetRevision.map { try assetDirectory($0) }
+    return (routes, directory)
   }
 
   func refreshGeofiles(id: String, force: Bool = false, file: String? = nil) async throws -> [String: Any] {

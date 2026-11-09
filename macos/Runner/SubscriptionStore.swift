@@ -84,6 +84,8 @@ final class SubscriptionStore {
   var publishRefresh: ((RefreshCandidate) async throws -> Void)?
   var compilePreview: (([String: Any], [String: Any]?, String?) throws -> [String: Any])?
   var previewContext: () -> String = { "" }
+  /// What compilePreview reads besides its arguments and previewContext; validateNodes compiles a server again when it changes.
+  var compileContext: () -> String = { "" }
   private let challengeVault = SubscriptionApprovalChallengeVault()
   private let secretAccess: SubscriptionSecretAccess
   let routing: RoutingStore
@@ -136,9 +138,15 @@ final class SubscriptionStore {
   }
 
   func snapshot() -> [String: Any] {
-    [
+    let context = previewContext()
+    let subscriptions = catalog.subscriptions.map { subscriptionMap($0, context: context) }
+    if revisions.count > 2 * catalog.subscriptions.reduce(0, { $0 + $1.nodes.count }) + 64 {
+      let nodes = Set(catalog.subscriptions.flatMap { $0.nodes.map(\.id) })
+      revisions = revisions.filter { nodes.contains($0.key) }
+    }
+    return [
       "selectedNodeId": catalog.selectedNodeID ?? NSNull(),
-      "subscriptions": catalog.subscriptions.map(subscriptionMap),
+      "subscriptions": subscriptions,
     ]
   }
 
@@ -844,17 +852,49 @@ final class SubscriptionStore {
   }
 
   private func nodeRevision(_ node: SubscriptionNode) throws -> String {
-    let source = try subscriptionID(nodeID: node.id)
-    let routes = try routing.previewRoutes(subscriptionID: source)
+    try nodeRevision(node, scope: revisionScope(subscriptionID: subscriptionID(nodeID: node.id), context: previewContext()))
+  }
+
+  /// What a server's revision covers besides the server, the same for every server of a subscription:
+  /// its routes as sorted-key JSON, its geofile revision and the settings, with a key that names all three.
+  private struct RevisionScope {
+    let routes: Data
+    let assets: String?
+    let context: String
+    let key: String
+  }
+
+  private func revisionScope(subscriptionID: String, context: String) throws -> RevisionScope {
+    let routes = try routing.previewRouteKey(subscriptionID: subscriptionID)
+    let assets = routing.previewAssetRevision(subscriptionID: subscriptionID)
+    let revision = assets.map { "=" + $0 } ?? ""
+    let key = Data(SHA256.hash(data: Data("\(routes.digest)\n\(revision)\n\(context)".utf8))).base64EncodedString()
+    return RevisionScope(routes: routes.sorted, assets: assets, context: context, key: key)
+  }
+
+  /// The digest of the sorted-key JSON of reference, routes, assets, ip and context, as every build has computed it.
+  /// The routes may be megabytes: they are parsed and written once per subscription, not per server, and a server
+  /// whose inputs did not change keeps its revision.
+  private func nodeRevision(_ node: SubscriptionNode, scope: RevisionScope) throws -> String {
     // References are reused only for identical runtime configuration. Include
     // policy, local choices and runtime settings without returning secrets.
     let preference: String = node.ipPreference ?? "inherit"
-    let context: [String: Any] = ["reference": node.outboundRef,
-      "routes": routes ?? [:], "assets": routing.previewAssetRevision(subscriptionID: source) ?? NSNull(),
-      "ip": preference, "context": previewContext()]
-    let bytes = try JSONSerialization.data(withJSONObject: context, options: [.sortedKeys])
-    return Data(SHA256.hash(data: bytes)).base64EncodedString()
+    let key = "\(node.outboundRef)\n\(preference)\n\(scope.key)"
+    if let kept = revisions[node.id], kept.key == key { return kept.value }
+    // "routes" sorts last, so the object is its other members, then the routes.
+    let others: [String: Any] = ["reference": node.outboundRef, "assets": scope.assets ?? NSNull(),
+      "ip": preference, "context": scope.context]
+    let head = try JSONSerialization.data(withJSONObject: others, options: [.sortedKeys])
+    var hash = SHA256()
+    hash.update(data: head.dropLast())
+    hash.update(data: Data(",\"routes\":".utf8))
+    hash.update(data: scope.routes)
+    hash.update(data: Data("}".utf8))
+    let value = Data(hash.finalize()).base64EncodedString()
+    revisions[node.id] = (key, value)
+    return value
   }
+  private var revisions: [String: (key: String, value: String)] = [:]
 
   func recordSuccess(nodeID: String, revision: String, session: String? = nil) throws {
     guard try configurationRevision(nodeID: nodeID) == revision else { return }
@@ -880,13 +920,25 @@ final class SubscriptionStore {
     return compiled
   }
 
-  /// Compiles every server, which validates a catalog before it is published.
+  /// Compiles every server, which validates a catalog before it is published. A server that compiled with the
+  /// same secret, routes and settings is not compiled again, so a refresh or a routing change costs what it changes.
   func validateNodes() throws {
+    let context = previewContext() + "\n" + compileContext()
     for source in catalog.subscriptions {
-      let routes = try routing.previewRoutes(subscriptionID: source.id)
-      for node in source.nodes { _ = try compiledPreview(node: node, routes: routes) }
+      let scope = try revisionScope(subscriptionID: source.id, context: context)
+      var routes: [String: Any]?
+      var parsed = false
+      for node in source.nodes {
+        let key = "\(node.outboundRef)\n\(node.format ?? "")\n\(node.ipPreference ?? "")\n\(scope.key)"
+        if validated.contains(key) { continue }
+        if !parsed { routes = try routing.previewRoutes(subscriptionID: source.id); parsed = true }
+        _ = try compiledPreview(node: node, routes: routes)
+        if validated.count >= 16384 { validated.removeAll() }
+        validated.insert(key)
+      }
     }
   }
+  private var validated = Set<String>()
 
   func selectedSubscriptionID() -> String? {
     guard let selectedNodeID = catalog.selectedNodeID else { return nil }
@@ -1561,15 +1613,17 @@ final class SubscriptionStore {
     return "Subscription \(number)"
   }
 
-  private func subscriptionMap(_ record: SubscriptionRecord) -> [String: Any] {
-    [
+  private func subscriptionMap(_ record: SubscriptionRecord, context: String) -> [String: Any] {
+    let scope = try? revisionScope(subscriptionID: record.id, context: context)
+    let schedule = scheduleFor(record)
+    return [
       "id": record.id,
       "name": record.manualName ?? record.providerName,
       "status": record.status,
       "riskCodes": record.riskCodes ?? [],
       "lastSuccessfulFetch": record.lastSuccessfulFetch?.timeIntervalSince1970 ?? NSNull(),
-      "nextRefreshAt": record.isLocal == true ? NSNull() : (scheduleFor(record).due?.timeIntervalSince1970 ?? NSNull()),
-      "refreshError": scheduleFor(record).errorCategory ?? NSNull(),
+      "nextRefreshAt": record.isLocal == true ? NSNull() : (schedule.due?.timeIntervalSince1970 ?? NSNull()),
+      "refreshError": schedule.errorCategory ?? NSNull(),
       "publishedRevision": record.publishedRevision ?? NSNull(),
       "metadata": record.metadata?.channelMap ?? NSNull(),
       "actions": providerLinks(record).actions,
@@ -1579,7 +1633,8 @@ final class SubscriptionStore {
       "fetchOptions": record.fetchOptions ?? [:],
       "hiddenNodes": (record.hiddenNodes ?? []).map { ["id": $0.id, "name": $0.displayName] },
       "nodes": record.nodes.map { node in
-        [
+        let revision = scope.flatMap { try? nodeRevision(node, scope: $0) }
+        return [
           "id": node.id,
           "name": node.displayName,
           "protocol": node.protocolName,
@@ -1590,9 +1645,9 @@ final class SubscriptionStore {
           "groups": (node.groups ?? []).map { ["name": $0.name, "options": $0.options, "selected": $0.selected] as [String: Any] },
           "selected": node.id == catalog.selectedNodeID,
           "favorite": node.favorite ?? false,
-          "configurationRevision": (try? nodeRevision(node)) ?? "unavailable",
+          "configurationRevision": revision ?? "unavailable",
           "lastSuccessAt": node.lastSuccessAt?.timeIntervalSince1970 ?? NSNull(),
-          "lastSuccessCurrent": node.lastSuccessRevision != nil && node.lastSuccessRevision == (try? nodeRevision(node)),
+          "lastSuccessCurrent": node.lastSuccessRevision != nil && node.lastSuccessRevision == revision,
           "probeKey": node.probeKey as Any? ?? NSNull(),
         ] as [String: Any]
       },
@@ -1614,10 +1669,16 @@ final class SubscriptionStore {
   }
 
   private func providerLinks(_ record: SubscriptionRecord) -> ProviderLinks {
-    guard let ref = record.finalURLRef, let data = try? readSecret(ref: ref),
+    guard let ref = record.finalURLRef else { return ProviderLinks() }
+    if let kept = linksRead[ref] { return kept }
+    guard let data = try? readSecret(ref: ref),
           let links = try? JSONDecoder().decode(ProviderLinks.self, from: data) else { return ProviderLinks() }
+    if linksRead.count >= 1024 { linksRead.removeAll() }
+    linksRead[ref] = links
     return links
   }
+  // A reference names one stored value for as long as it exists, so each snapshot need not ask the keychain again.
+  private var linksRead: [String: ProviderLinks] = [:]
 
   func providerURL(subscriptionID: String, action: String) throws -> URL {
     guard let record = catalog.subscriptions.first(where: { $0.id == subscriptionID }),
@@ -1710,6 +1771,7 @@ final class SubscriptionStore {
   }
 
   private func deleteSecret(_ ref: String) {
+    linksRead.removeValue(forKey: ref)
     guard let accessGroup = try? effectiveAccessGroup() else { return }
     _ = secretAccess.delete([
       kSecClass: kSecClassGenericPassword,
