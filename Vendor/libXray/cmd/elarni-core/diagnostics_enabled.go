@@ -28,7 +28,7 @@ func diagnosticsMain() (bool, int) {
 	build, _ := strconv.ParseInt(diagnosticBuild, 10, 64)
 	flightrecorder.Record(flightrecorder.Event{Name: "diagnostic_build", Values: map[string]int64{"build_id": build}})
 	if len(os.Args) > 1 && os.Args[1] == "--diagnostics-export" {
-		if len(os.Args) < 2 || len(os.Args) > 3 || err != nil {
+		if len(os.Args) > 3 || err != nil {
 			fmt.Fprintln(os.Stderr, "diagnostics unavailable or invalid export arguments")
 			return true, 1
 		}

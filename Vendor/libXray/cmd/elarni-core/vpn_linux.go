@@ -348,11 +348,7 @@ func startVPN(payload json.RawMessage) (any, error) {
 		linuxBroker.Unlock()
 		return nil, errors.New("cancelled")
 	}
-	if child == nil && command == nil {
-		// The running child exited between the locks; start over as idle.
-		linuxBroker.Unlock()
-		return startVPN(payload)
-	}
+	// Only a stop clears the child, and it closes the broker too: a child seen above is still here.
 	if child == nil {
 		child, err = startLinuxChild(command, func(reply linuxReply) {
 			linuxBroker.Lock()
