@@ -363,7 +363,10 @@ func TestBurstOfPathChangesRebindsOnceMore(t *testing.T) {
 	var passes atomic.Int32
 	defer close(done)
 	go coalesce(moves, done, gap, func() { passes.Add(1) })
-	for range 10 { // spread over one gap, as a path monitor reports a change
+	// Signals spread over most of one gap, as a path monitor reports a change. A loaded runner
+	// oversleeps each step; one sent after a gap would rightly start a third rebind.
+	signals := 0
+	for start := time.Now(); time.Since(start) < gap*9/10; signals++ {
 		select {
 		case moves <- struct{}{}:
 		default:
@@ -372,6 +375,6 @@ func TestBurstOfPathChangesRebindsOnceMore(t *testing.T) {
 	}
 	time.Sleep(3 * gap)
 	if n := passes.Load(); n < 1 || n > 2 {
-		t.Fatalf("a burst of 10 signals ran %d rebinds, want 1 or 2", n)
+		t.Fatalf("a burst of %d signals ran %d rebinds, want 1 or 2", signals, n)
 	}
 }
