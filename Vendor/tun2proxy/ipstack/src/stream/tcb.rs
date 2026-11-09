@@ -354,10 +354,14 @@ impl Tcb {
             Some((&seq, _)) if ack < seq => return,
             _ => {}
         }
+        // Elarni: segments are kept in sequence order and do not overlap, so the one an ACK ends in
+        // is the last that starts before it, and everything before the ACK leaves at once. Both were
+        // a pass over every segment in flight, for each ACK.
         if let Some(seq) = self
             .inflight_packets
-            .iter()
-            .find(|(_, p)| p.contains_seq_num(ack - 1))
+            .range(..ack)
+            .next_back()
+            .filter(|(_, p)| p.contains_seq_num(ack - 1))
             .map(|(&s, _)| s)
         {
             let mut inflight_packet = self.inflight_packets.remove(&seq).unwrap();
@@ -368,7 +372,7 @@ impl Tcb {
                 self.inflight_packets.insert(ack, inflight_packet);
             }
         }
-        self.inflight_packets.retain(|_, p| ack < p.seq + p.payload.len() as u32);
+        self.inflight_packets = self.inflight_packets.split_off(&ack);
     }
 
     pub(crate) fn find_inflight_packet(&self, seq: SeqNum) -> Option<&InflightPacket> {
@@ -524,6 +528,39 @@ mod tests {
         // test 2: confirm all packets (ack=2000)
         tcb.update_inflight_packet_queue(SeqNum(2000));
         assert_eq!(tcb.inflight_packets.len(), 0); // all packets are acknowledged
+    }
+
+    // Elarni: an ACK before the queue, on a segment boundary and inside a segment, across the wrap of
+    // the sequence space.
+    #[test]
+    fn test_update_inflight_packet_queue_boundaries() {
+        let mut tcb = Tcb::new(
+            SeqNum(1000),
+            1500,
+            MAX_UNACK,
+            READ_BUFFER_SIZE,
+            MAX_COUNT_FOR_DUP_ACK,
+            RTO,
+            MAX_RETRANSMIT_COUNT,
+        );
+        tcb.seq = SeqNum(u32::MAX - 499);
+        tcb.add_inflight_packet(vec![1; 500]).unwrap(); // ends where the sequence space wraps
+        tcb.add_inflight_packet(vec![2; 500]).unwrap(); // seq=0
+        tcb.add_inflight_packet(vec![3; 500]).unwrap(); // seq=500
+        let queue = |tcb: &Tcb| tcb.inflight_packets.values().map(|p| (p.seq, p.payload.len())).collect::<Vec<_>>();
+        let all = vec![(SeqNum(u32::MAX - 499), 500), (SeqNum(0), 500), (SeqNum(500), 500)];
+
+        tcb.update_inflight_packet_queue(SeqNum(u32::MAX - 600));
+        assert_eq!(queue(&tcb), all);
+        tcb.update_inflight_packet_queue(SeqNum(u32::MAX - 499));
+        assert_eq!(queue(&tcb), all);
+
+        tcb.update_inflight_packet_queue(SeqNum(0));
+        assert_eq!(queue(&tcb), all[1..]);
+
+        tcb.update_inflight_packet_queue(SeqNum(700));
+        assert_eq!(queue(&tcb), vec![(SeqNum(700), 300)]);
+        assert_eq!(tcb.inflight_packets[&SeqNum(700)].payload, vec![3; 300]);
     }
 
     #[test]

@@ -804,17 +804,15 @@ async fn handle_udp_associate_session(
                     let header = UdpHeader::retrieve_from_stream(&mut &buf2[..])?;
                     let data = &buf2[header.len()..];
 
-                    let buf = if session_info.dst.port() == DNS_PORT {
+                    // Elarni: only an answer that loses its IPv6 records is parsed and rebuilt; the rest
+                    // goes on as received, without a copy.
+                    if session_info.dst.port() == DNS_PORT && !ipv6_enabled {
                         let mut message = dns::parse_data_to_dns_message(data, false)?;
-                        if !ipv6_enabled {
-                            dns::remove_ipv6_entries(&mut message);
-                        }
-                        message.to_vec()?
+                        dns::remove_ipv6_entries(&mut message);
+                        udp_stack.write_all(&message.to_vec()?).await?;
                     } else {
-                        data.to_vec()
-                    };
-
-                    udp_stack.write_all(&buf).await?;
+                        udp_stack.write_all(data).await?;
+                    }
                 } else {
                     udp_stack.write_all(buf2).await?;
                 }
@@ -900,6 +898,12 @@ async fn handle_dns_over_tcp_session(
                     let data = pending[2..len + 2].to_vec();
                     pending.drain(..len + 2);
 
+                    // Elarni: an answer is parsed only to drop its IPv6 records or for the trace line, not
+                    // to be rebuilt unchanged, which also ended the session on an answer the parser rejects.
+                    if ipv6_enabled && !log::log_enabled!(log::Level::Trace) {
+                        to_send.push_back(data);
+                        continue;
+                    }
                     let mut message = dns::parse_data_to_dns_message(&data, false)?;
 
                     let name = dns::extract_domain_from_dns_message(&message)?;
