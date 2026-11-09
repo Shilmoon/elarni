@@ -573,7 +573,8 @@ final class RoutingStore {
     pendingAssetRevisions[id] = Set([previous.assetRevision, previous.originalAssetRevision].compactMap { $0 })
     defer { pendingAssetRevisions.removeValue(forKey: id) }
     let fresh = previous.lastGeoRefresh.map { now().timeIntervalSince($0) < 7 * 24 * 60 * 60 } ?? false
-    if !force, !reapply, fresh, previous.geofileStatus != "pending" {
+    // A failed refresh runs again when it is retried, also within the week of an earlier success.
+    if !force, !reapply, fresh, previous.geofileStatus == "ready" {
       return snapshot()
     }
     guard let publish else { throw RoutingStoreError.invalidImport }
@@ -724,18 +725,20 @@ final class RoutingStore {
     }
   }
 
+  // A failed refresh is due again after its retry delay, like a pending one: one failure (offline at the
+  // weekly refresh, a server error) used to end automatic refreshes for the profile.
   func dueGeofiles() -> [String] {
     catalog.profiles.filter { record in
       !refreshingGeofiles.contains(record.id) && record.enabled &&
         (geofileRetryAfter[record.id].map { $0 <= now() } ?? true) &&
-        (record.geofileStatus == "pending" || (record.geofileStatus == "ready" &&
+        (record.geofileStatus == "pending" || record.geofileStatus == "failed" || (record.geofileStatus == "ready" &&
           record.lastGeoRefresh.map { $0.addingTimeInterval(7 * 86400) <= now() } == true))
     }.map(\.id)
   }
 
   func nextGeofileDate() -> Date? {
     catalog.profiles.filter { $0.enabled && !refreshingGeofiles.contains($0.id) }.compactMap { record in
-      let due = record.geofileStatus == "pending" ? now() :
+      let due = record.geofileStatus == "pending" || record.geofileStatus == "failed" ? now() :
         (record.geofileStatus == "ready" ? record.lastGeoRefresh?.addingTimeInterval(7 * 86400) : nil)
       return due.map { max($0, geofileRetryAfter[record.id] ?? $0) }
     }.min()

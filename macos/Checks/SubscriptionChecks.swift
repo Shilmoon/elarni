@@ -875,6 +875,47 @@ struct SubscriptionChecks {
     try expect(sent.count == 4 && sent[3] == GeofileValidators(etag: "\"v2\""), "the new validators were not stored")
     print("PASS geofile refresh downloads only a changed file")
 
+    // One failed refresh must not end automatic refreshes for the profile.
+    let retried = try RoutingStore(directory: directory.appendingPathComponent("retried"))
+    var clock = Date()
+    var failing = true
+    retried.now = { clock }
+    retried.fetchGeofile = { _, _, file in
+      if failing { throw Failure(message: "synthetic download failure") }
+      try data.write(to: file)
+      return (true, nil)
+    }
+    retried.publishManaged = { try retried.publish($0) }
+    try retried.importProvider(content, subscriptionID: "source")
+    let retriedID = (retried.snapshot()["profiles"] as! [[String: Any]])[0]["id"] as! String
+    func retriedStatus() -> String? { (retried.snapshot()["profiles"] as! [[String: Any]])[0]["geofileStatus"] as? String }
+    func failedRefresh(force: Bool) async throws {
+      do {
+        _ = try await retried.refreshGeofiles(id: retriedID, force: force)
+        throw Failure(message: "a failing download refreshed the geofiles")
+      } catch let failure as Failure {
+        try expect(failure.message == "synthetic download failure", failure.message)
+      }
+    }
+    try await failedRefresh(force: false)
+    try expect(retriedStatus() == "failed" && retried.dueGeofiles().isEmpty &&
+      retried.nextGeofileDate() == clock.addingTimeInterval(15 * 60), "a failed refresh was retried at once, or had no retry date")
+    clock.addTimeInterval(15 * 60)
+    try expect(retried.dueGeofiles() == [retriedID], "a failed first download was never retried")
+    failing = false
+    _ = try await retried.refreshGeofiles(id: retriedID)
+    try expect(retriedStatus() == "ready" && retried.dueGeofiles().isEmpty &&
+      retried.runtimeRevision(subscriptionID: "source")?.assetRevision != nil, "the retry did not prepare the geofiles")
+    // The same within the week of a success, where an automatic refresh otherwise has nothing to do.
+    failing = true
+    try await failedRefresh(force: true)
+    clock.addTimeInterval(15 * 60)
+    try expect(retriedStatus() == "failed" && retried.dueGeofiles() == [retriedID], "a failed refresh of fresh geofiles was never retried")
+    failing = false
+    _ = try await retried.refreshGeofiles(id: retriedID)
+    try expect(retriedStatus() == "ready" && retried.dueGeofiles().isEmpty, "the retry left fresh geofiles failed")
+    print("PASS a failed geofile refresh is retried after its delay")
+
     let retained = try routes.checkpoint()
     try routes.importProvider(content.replacingOccurrences(of: "geosite:TEST", with: "geosite:UNUSED"), subscriptionID: "source")
     try expect(routes.runtimeRevision(subscriptionID: "source")?.assetRevision == original.assetRevision,
