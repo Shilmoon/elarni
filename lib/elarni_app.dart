@@ -569,8 +569,9 @@ class _ElarniHomeState extends State<ElarniHome> {
         ],
       ),
     );
-    final settingsSections = <SettingsCategory, List<Widget>>{
-      SettingsCategory.general: [
+    // Built for the open category only: together they are most of this page.
+    final settingsSections = <SettingsCategory, List<Widget> Function()>{
+      SettingsCategory.general: () => [
         ElarniSelectTile(
           title: Text(l10n.language),
           trailing: ElarniSelect<String>(
@@ -747,7 +748,7 @@ class _ElarniHomeState extends State<ElarniHome> {
           ),
         ],
       ],
-      SettingsCategory.appearance: [
+      SettingsCategory.appearance: () => [
         ElarniSelectTile(
           title: Text(l10n.theme),
           trailing: ElarniSelect<ThemeMode>(
@@ -788,7 +789,7 @@ class _ElarniHomeState extends State<ElarniHome> {
         if (widget.desktop.error != null)
           ListTile(title: Text(widget.desktop.error!)),
       ],
-      SettingsCategory.connection: [
+      SettingsCategory.connection: () => [
         section('VPN'),
         if (widget.desktopCore)
           ElarniSelectTile(
@@ -1055,7 +1056,7 @@ class _ElarniHomeState extends State<ElarniHome> {
               : (value) => _saveSettings(_settings.copyWith(allowLAN: value)),
         ),
       ],
-      SettingsCategory.dns: [
+      SettingsCategory.dns: () => [
         ElarniSelectTile(
           title: ElarniHelpLabel(l10n.dnsSettings, help: l10n.dnsSettingsHelp),
           trailing: ElarniSelect<String>(
@@ -1111,7 +1112,7 @@ class _ElarniHomeState extends State<ElarniHome> {
                     _saveSettings(_settings.copyWith(resolveServer: value)),
         ),
       ],
-      SettingsCategory.advanced: [
+      SettingsCategory.advanced: () => [
         section(l10n.transport),
         ElarniCheckboxTile(
           title: ElarniHelpLabel(
@@ -1212,7 +1213,7 @@ class _ElarniHomeState extends State<ElarniHome> {
           ),
         ],
       ],
-      SettingsCategory.backup: [
+      SettingsCategory.backup: () => [
         section(l10n.backups),
         action(
           label: l10n.export,
@@ -1242,7 +1243,7 @@ class _ElarniHomeState extends State<ElarniHome> {
           onPressed: _busy ? null : _repairTunnel,
         ),
       ],
-      SettingsCategory.system: [
+      SettingsCategory.system: () => [
         for (final entry in {
           'os': l10n.operatingSystem,
           'architecture': l10n.appArchitecture,
@@ -1300,7 +1301,7 @@ class _ElarniHomeState extends State<ElarniHome> {
           ),
         ),
       ],
-      SettingsCategory.routes: [
+      SettingsCategory.routes: () => [
         if (_routesError != null) ListTile(subtitle: Text(_routesError!)),
         if (_routeTable != null)
           SizedBox(
@@ -1323,7 +1324,7 @@ class _ElarniHomeState extends State<ElarniHome> {
           child: Text(_routesBusy ? l10n.refreshingEllipsis : l10n.refresh),
         ),
       ],
-      SettingsCategory.ping: [
+      SettingsCategory.ping: () => [
         Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
@@ -1507,7 +1508,7 @@ class _ElarniHomeState extends State<ElarniHome> {
                       ? l10n.routeTableHelp
                       : null,
                   onSelect: _selectSettingsCategory,
-                  children: settingsSections[_settingsCategory]!,
+                  children: settingsSections[_settingsCategory]!(),
                 ),
                 DesktopPage.routing => pageList(
                   'routing-list',
