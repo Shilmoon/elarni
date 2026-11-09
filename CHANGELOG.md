@@ -4,6 +4,16 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Fixed
+
+- In per-app **Only listed** mode on Windows, macOS and Linux, a connection whose app could not
+  be found went direct, so a listed app's connection could leave outside the VPN. It now follows
+  normal routing, as on Android. Such traffic can include WSL, virtual machines and containers:
+  to send it direct as before, add **Unidentified traffic** to the app list and set it to Direct.
+- On Linux, per-app rules missed IPv4 connections made from IPv6 sockets, which Java apps
+  (Minecraft, JetBrains IDEs) and many servers use, and rules stopped matching a program whose
+  package was upgraded while it ran, until it restarted.
+
 ## 0.5.1 - 2026-11-08
 
 ### Changed

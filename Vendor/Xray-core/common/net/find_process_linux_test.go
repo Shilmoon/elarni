@@ -443,3 +443,60 @@ func BenchmarkLinuxFindProcess(b *testing.B) {
 		}
 	})
 }
+
+// A package upgrade replaces the files of running programs; until such a program restarts,
+// /proc/<pid>/exe reads "<path> (deleted)". Rules name the path, so the lookup drops the suffix.
+func TestLinuxProcessOfAReplacedExecutable(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := os.ReadFile(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := filepath.Join(t.TempDir(), "upgraded-app")
+	if err := os.WriteFile(app, program, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	cmd := exec.Command(app, "-test.run=^TestFindProcessChild$")
+	cmd.Env = append(os.Environ(), "ELARNI_PROCESS_FIXTURE="+listener.Addr().String())
+	cmd.Stderr = os.Stderr
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { in.Close(); cmd.Process.Kill(); cmd.Wait() })
+	var sources []string
+	if err := json.NewDecoder(out).Decode(&sources); err != nil || len(sources) != 2 {
+		t.Fatalf("child sockets %v: %v", sources, err)
+	}
+	// Upgrade it as dpkg does: the new file takes the old one's name.
+	upgraded := app + ".dpkg-new"
+	if err := os.WriteFile(upgraded, program, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(upgraded, app); err != nil {
+		t.Fatal(err)
+	}
+	if link, _ := os.Readlink("/proc/" + strconv.Itoa(cmd.Process.Pid) + "/exe"); link != app+" (deleted)" {
+		t.Fatalf("exe link %q, want the replaced form", link)
+	}
+	source, _ := net.ResolveTCPAddr("tcp", sources[0])
+	pid, name, path, err := FindProcess("tcp", "127.0.0.1", uint16(source.Port), "127.0.0.1", uint16(port(listener.Addr())))
+	if err != nil || pid != cmd.Process.Pid || name != "upgraded-app" || path != app {
+		t.Fatalf("lookup pid=%d name=%q path=%q err=%v; want pid=%d %q", pid, name, path, err, cmd.Process.Pid, app)
+	}
+}

@@ -298,6 +298,10 @@ type ProcessNameMatcher struct {
 	AbsPaths      []string
 	Folders       []string
 	MatchXraySelf bool
+	// Elarni: "-1" also names the owner of a local flow that the lookup could not find
+	// (Android's finder already returns that name). Such a flow may belong to a listed
+	// app, so "Only listed" keeps it in the tunnel.
+	MatchUnknown bool
 }
 
 func NewProcessNameMatcher(names []string) *ProcessNameMatcher {
@@ -341,6 +345,7 @@ func NewProcessNameMatcher(names []string) *ProcessNameMatcher {
 		AbsPaths:      absPaths,
 		Folders:       folders,
 		MatchXraySelf: matchXraySelf,
+		MatchUnknown:  slices.Contains(processNames, "-1"),
 	}
 }
 
@@ -352,7 +357,7 @@ func (m *ProcessNameMatcher) Apply(ctx routing.Context) (matched bool) {
 	if flightrecorder.Enabled() {
 		started := time.Now()
 		defer func() {
-			if matched {
+			if matched && code == "not_matched" {
 				code = "matched"
 			}
 			flightrecorder.Record(flightrecorder.Event{Name: "process_match", Code: code, Values: map[string]int64{"network": int64(ctx.GetNetwork()), "elapsed_us": time.Since(started).Microseconds()}})
@@ -397,7 +402,7 @@ func (m *ProcessNameMatcher) Apply(ctx routing.Context) (matched bool) {
 		pid, name, path, err := lookupProcess(network, srcIP, srcPort, dstIP, dstPort)
 		if err != nil && err != net.ErrNotLocal {
 			// Elarni: once per connection rather than per process rule, and at info: the connection is still routed by the other rules.
-			errors.LogInfo(context.Background(), "Unables to find local process name: ", err)
+			errors.LogInfo(context.Background(), "Unable to find the process of ", network, " ", srcIP, ":", srcPort, ": ", err)
 		}
 		return pid, name, path, err
 	}
@@ -410,11 +415,15 @@ func (m *ProcessNameMatcher) Apply(ctx routing.Context) (matched bool) {
 		pid, name, absPath, err = find()
 	}
 	if err != nil {
-		code = "lookup_failed"
 		if err == net.ErrNotLocal {
 			code = "not_local"
+			return false
 		}
-		return false
+		code = "lookup_failed"
+		if m.MatchUnknown {
+			code = "unknown_owner"
+		}
+		return m.MatchUnknown
 	}
 	code = "not_matched"
 	if m.MatchXraySelf {

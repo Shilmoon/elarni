@@ -1043,7 +1043,7 @@ abstract class AppLocalizations {
   /// No description provided for @appRoutingUses.
   ///
   /// In en, this message translates to:
-  /// **'App routing uses {engine}. In bypass mode, unlisted or unidentified processes follow normal routing. In only-selected mode, they connect directly.'**
+  /// **'App routing uses {engine}. Unlisted apps connect directly in only-selected mode and follow normal routing in bypass mode. Traffic Elarni cannot link to an app (WSL, virtual machines, containers, connections that closed early) may come from a listed app: in only-selected mode it follows normal routing. Add Unidentified traffic to the list to choose where it goes.'**
   String appRoutingUses(String engine);
 
   /// No description provided for @systemWideVpn.
@@ -5065,6 +5065,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Mark problem'**
   String get markProblem;
+
+  /// Per-app list entry for traffic whose app could not be identified (rule "-1").
+  ///
+  /// In en, this message translates to:
+  /// **'Unidentified traffic'**
+  String get perAppUnknownOwner;
 }
 
 class _AppLocalizationsDelegate
