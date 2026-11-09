@@ -173,6 +173,9 @@ func linuxTCPProbe(ctx context.Context, payload json.RawMessage, mark uint32) (a
 	conn.Close()
 	return map[string]any{"delay": time.Since(started).Milliseconds()}, nil
 }
+
+var pingTime = regexp.MustCompile(`time[=<]([0-9]+(?:\.[0-9]+)?) ms`)
+
 func linuxICMP(payload json.RawMessage) (any, error) {
 	var request struct {
 		Address string `json:"address"`
@@ -193,7 +196,7 @@ func linuxICMP(payload json.RawMessage) (any, error) {
 	if err != nil || len(output) > 8192 {
 		return nil, errors.New("ping_failed")
 	}
-	match := regexp.MustCompile(`time[=<]([0-9]+(?:\.[0-9]+)?) ms`).FindSubmatch(output)
+	match := pingTime.FindSubmatch(output)
 	if len(match) != 2 {
 		return nil, errors.New("ping_failed")
 	}

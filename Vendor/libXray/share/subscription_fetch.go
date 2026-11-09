@@ -60,9 +60,11 @@ var privateNetworks = func() []netip.Prefix {
 	return result
 }()
 
+var nat64Prefix = netip.MustParsePrefix("64:ff9b::/96")
+
 func addressRisk(address netip.Addr) string {
 	address = address.Unmap()
-	if netip.MustParsePrefix("64:ff9b::/96").Contains(address) {
+	if nat64Prefix.Contains(address) {
 		bytes := address.As16()
 		address = netip.AddrFrom4([4]byte(bytes[12:]))
 	}
