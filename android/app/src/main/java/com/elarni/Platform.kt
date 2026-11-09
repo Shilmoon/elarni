@@ -171,6 +171,14 @@ class ElarniVpnService : VpnService() {
     private val screen = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) { app.repository.scope.launch { app.repository.screenChanged(intent.action == Intent.ACTION_SCREEN_OFF) } }
     }
+    private val packageEvents = java.util.concurrent.atomic.AtomicLong()
+    // A reinstall sends removed and then added, and a store may install several apps at once: check once they settle.
+    private val packages = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val event = packageEvents.incrementAndGet()
+            app.repository.scope.launch { delay(PACKAGES_SETTLE_MS); if (packageEvents.get() == event) app.repository.packagesChanged() }
+        }
+    }
     override fun onCreate() {
         super.onCreate()
         // The owner can observe its VPN even though its own UID is excluded.
@@ -181,6 +189,8 @@ class ElarniVpnService : VpnService() {
             .addTransportType(NetworkCapabilities.TRANSPORT_VPN).build(), tunnelCallback)
         val filter = IntentFilter(Intent.ACTION_SCREEN_OFF).apply { addAction(Intent.ACTION_SCREEN_ON) }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(screen, filter, Context.RECEIVER_NOT_EXPORTED) else registerReceiver(screen, filter)
+        val installs = IntentFilter(Intent.ACTION_PACKAGE_ADDED).apply { addAction(Intent.ACTION_PACKAGE_REMOVED); addDataScheme("package") }
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(packages, installs, Context.RECEIVER_NOT_EXPORTED) else registerReceiver(packages, installs)
         app.watchService(true)
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -296,7 +306,7 @@ class ElarniVpnService : VpnService() {
     override fun onRevoke() { app.repository.scope.launch { app.repository.serviceGone(this@ElarniVpnService, true); finish() } }
     override fun onDestroy() {
         monitor?.cancel(); monitor = null
-        unregisterReceiver(screen)
+        unregisterReceiver(screen); unregisterReceiver(packages)
         app.watchService(false)
         app.repository.scope.launch {
             try { app.repository.serviceGone(this@ElarniVpnService, false) }
@@ -308,6 +318,7 @@ class ElarniVpnService : VpnService() {
         const val CONNECT = "com.elarni.CONNECT"; const val DISCONNECT = "com.elarni.DISCONNECT"; const val GENERATION = "generation"
         // Each TUN packet costs the userspace stack one syscall; 9000 moves bulk TCP in about 6x fewer.
         const val MTU = 9000
+        const val PACKAGES_SETTLE_MS = 2000L
     }
 }
 

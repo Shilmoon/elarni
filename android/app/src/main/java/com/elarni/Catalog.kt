@@ -550,6 +550,12 @@ class Catalog(val data: JSONObject) {
                 else -> null
             }
         }
+        /**
+         * Each listed app's UID, or null for one not installed. Android works out the tunnel's apps by UID when the VPN
+         * starts, and so do the per-app rules, so an app installed, removed or reinstalled later needs a new start.
+         */
+        fun listedUids(settings: JSONObject, uid: (String) -> Int?): Map<String, Int?>? =
+            if (settings.string("perAppMode") == "off") null else settings.strings("perAppProcesses").associateWith(uid)
         // Subscriptions, managed lists and geodata retry a failed refresh after 60, 300, then 1800 s.
         fun retryDelay(failures: Int) = listOf(60, 300, 1800)[(failures - 1).coerceIn(0, 2)]
         // Whole hours from 1 to 168, without a leading zero.

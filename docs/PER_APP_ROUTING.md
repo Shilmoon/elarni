@@ -94,6 +94,14 @@ per-app routing until the app reconnects. When the tunnel starts, Elarni looks f
 whether it was closed. Android needs nothing: it closes the apps' connections itself when
 a VPN starts.
 
+## Apps installed while connected
+
+Android takes the VPN's apps by user ID when the tunnel starts, and so do the per-app
+rules. When a listed app is installed, removed or reinstalled while connected, Elarni
+builds the tunnel again a few seconds later, so the app takes its route at once. This
+resets the tunnel's open connections, as reconnecting does. An app update keeps the
+app's user ID and changes nothing.
+
 ## Checking rules
 
 On desktop, each listed rule shows how many running programs it matches now, counted

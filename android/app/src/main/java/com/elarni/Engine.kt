@@ -56,6 +56,11 @@ class Engine(private val app: ElarniApplication, private val assets: RoutingAsse
     var network: Network? = null
         private set
     private var activeAssets = ""
+    /** The listed apps' UIDs the running tunnel and per-app rules took, or null when per-app routing does not apply. */
+    private var listedUids: Map<String, Int?>? = null
+    private fun uid(name: String) = runCatching { app.packageManager.getApplicationInfo(name, 0).uid }.getOrNull()
+    /** Whether a listed app was installed, removed or reinstalled since the running tunnel started. */
+    fun listedAppsChanged() = running && listedUids?.let { it != it.keys.associateWith(::uid) } == true
     private val dns = Executors.newFixedThreadPool(32)
     private val connectivity get() = app.getSystemService(ConnectivityManager::class.java)
     private fun isPhysical(network: Network): Boolean =
@@ -112,6 +117,8 @@ class Engine(private val app: ElarniApplication, private val assets: RoutingAsse
     // instead of leaving the device while automatic recovery retries.
     fun start(catalog: Catalog, keepTunnel: Boolean = false, valid: () -> Unit) = synchronized(Native.runtimeLock) {
         val owner = service ?: throw AppFailure("service_unavailable")
+        // Read before the tunnel and rules resolve them, so an install meanwhile shows up as a change.
+        val uids = if (catalog.settings.getBoolean("xrayTunEnabled")) Catalog.listedUids(catalog.settings, ::uid) else null
         // A recording that cannot start must not block the connection.
         if (BuildConfig.ELARNI_RECORDING) runCatching { record(catalog.settings.optBoolean("recordDiagnostics")) }
         val network = physical()
@@ -145,13 +152,13 @@ class Engine(private val app: ElarniApplication, private val assets: RoutingAsse
             // installing the new VPN network and UID routes after reconfiguration.
             if (vpn) owner.awaitTunnelReady(valid)
             valid()
-            activeAssets = directory; running = true; sessionAuth = auth; fetchProxy = socksProxy(catalog); this.network = network
+            activeAssets = directory; running = true; sessionAuth = auth; fetchProxy = socksProxy(catalog); this.network = network; listedUids = uids
         } catch (error: Exception) { stop(releaseTunnel = !keepTunnel); throw error }
     }
     fun stop(releaseTunnel: Boolean = true) = synchronized(Native.runtimeLock) {
         try { Native.call("stopXray") }
         finally {
-            running = false; activeAssets = ""; fetchProxy = null; sessionAuth = null
+            running = false; activeAssets = ""; fetchProxy = null; sessionAuth = null; listedUids = null
             runCatching { LibXray.setTunFD(-1) }
             if (releaseTunnel) service?.closeTunnel()
             LibXray.resetDNS()

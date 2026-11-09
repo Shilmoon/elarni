@@ -98,6 +98,21 @@ class CatalogTest {
             apps("bypass", listOf("com.shared.one", "com.shared.two"), obj("com.shared.one" to "direct", "com.shared.two" to "routing")))
     }
 
+    @Test fun listedAppUidsChangeOnlyWhenAListedAppIsInstalledRemovedOrReinstalled() {
+        val settings = obj("perAppMode" to "bypass", "perAppProcesses" to JSONArray(listOf("com.a", "com.later")))
+        val started = mutableMapOf("com.a" to 10001, "com.other" to 10002)
+        val taken = Catalog.listedUids(settings) { started[it] }
+        assertEquals("An app not installed yet has no UID", mapOf("com.a" to 10001, "com.later" to null), taken)
+        assertNull("Without per-app routing no UID matters", Catalog.listedUids(JSONObject(settings.toString()).put("perAppMode", "off")) { started[it] })
+        fun now(vararg uids: Pair<String, Int>) = Catalog.listedUids(settings) { (started + uids)[it] }
+        assertEquals("An update keeps the UID", taken, now("com.a" to 10001))
+        assertEquals("An app nobody listed changes nothing", taken, now("com.new" to 10003))
+        assertNotEquals("A listed app installed meanwhile", taken, now("com.later" to 10004))
+        assertNotEquals("A listed app reinstalled with another UID", taken, now("com.a" to 10005))
+        started.remove("com.a")
+        assertNotEquals("A listed app removed, whose UID another app may get", taken, Catalog.listedUids(settings) { started[it] })
+    }
+
     @Test fun retryDelayAndCanonicalForm() {
         assertEquals(listOf(60, 60, 300, 1800, 1800), listOf(0, 1, 2, 3, 9).map(Catalog::retryDelay))
         assertEquals(Catalog.canonical(JSONObject("""{"b":[1,{"y":2,"x":"s"}],"a":null}""")), Catalog.canonical(JSONObject("""{"a":null,"b":[1,{"x":"s","y":2}]}""")))
