@@ -30,6 +30,16 @@ folder `WindowsApps\<name>_<version>_<arch>_<resource>_<publisher>\` matches as
 `WindowsApps\<name>_<publisher>\`, its package family, so rules saved for an earlier
 version match too.
 
+## Traffic without an app
+
+Some traffic reaches the VPN without an app Elarni can find: connections that closed
+before routing looked them up, and traffic the computer forwards for WSL, virtual
+machines or containers under its own address. Such traffic may come from a listed app, so in **Only listed** it follows normal
+routing; in **Bypass** it does too. To send it elsewhere, add **Unidentified traffic**
+from the app list (rule `-1`) and give it a target, such as Direct. Traffic from other
+devices on the network is not an app on this computer and is not affected.
+On Android only listed apps enter the VPN in **Only listed**, so there is nothing to choose.
+
 ## Sharing
 
 **Copy routing profile** copies the rules as JSON; **Paste routing profile** loads them into the

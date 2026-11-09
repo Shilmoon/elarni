@@ -50,22 +50,32 @@ func FindProcess(network, srcIP string, srcPort uint16, destIP string, destPort 
 		panic("Unsupported network type for process lookup.")
 	}
 
-	targetHexAddr, err := formatLittleEndianString(net.ParseIP(srcIP), Port(srcPort))
-	if err != nil {
-		return 0, "", "", errors.New("failed to format address: ", err)
-	}
-
-	remote := ""
-	if destIP != "" && destPort != 0 {
-		remote, err = formatLittleEndianString(net.ParseIP(destIP), Port(destPort))
+	query := func(file string, mapped bool) (*socketQuery, error) {
+		local, err := formatLittleEndianString(net.ParseIP(srcIP), Port(srcPort), mapped)
 		if err != nil {
+			return nil, errors.New("failed to format address: ", err)
+		}
+		remote := ""
+		if destIP != "" && destPort != 0 {
+			remote, err = formatLittleEndianString(net.ParseIP(destIP), Port(destPort), mapped)
+			if err != nil {
+				return nil, err
+			}
+		}
+		q := newSocketQuery(file, local, remote, network == "udp")
+		lookupSocket(q)
+		return q, q.err
+	}
+	q, err := query(procFile, false)
+	if err != nil {
+		return 0, "", "", err
+	}
+	// Elarni: an IPv6 socket without IPV6_V6ONLY (Java's default, or one bound to [::]) that
+	// talks to an IPv4 address is listed only in the IPv6 table, with the address mapped.
+	if q.inode == "" && !strings.HasSuffix(procFile, "6") {
+		if q, err = query(procFile+"6", true); err != nil {
 			return 0, "", "", err
 		}
-	}
-	q := newSocketQuery(procFile, targetHexAddr, remote, network == "udp")
-	lookupSocket(q)
-	if q.err != nil {
-		return 0, "", "", q.err
 	}
 	if q.inode == "" {
 		return 0, "", "", errors.New("connection for ", srcIP, ":", srcPort, " not found in ", procFile)
@@ -91,10 +101,12 @@ func FindProcess(network, srcIP string, srcPort uint16, destIP string, destPort 
 	return pid, procName, absPath, nil
 }
 
-func formatLittleEndianString(addr net.IP, port Port) (string, error) {
+// formatLittleEndianString formats an address as /proc/net prints it; mapped formats an
+// IPv4 address as the IPv4-mapped IPv6 address of the IPv6 tables.
+func formatLittleEndianString(addr net.IP, port Port, mapped bool) (string, error) {
 	ip := addr
 	var ipBytes []byte
-	if ip.To4() != nil {
+	if ip.To4() != nil && !mapped {
 		ipBytes = ip.To4()
 	} else {
 		ipBytes = ip.To16()
@@ -344,6 +356,8 @@ func claimSockets(pid string, wanted map[string][]*socketQuery) bool {
 }
 
 func getAbsPath(pid string) (string, error) {
-	path := fmt.Sprintf("/proc/%s/exe", pid)
-	return readLink(path)
+	path, err := readLink(fmt.Sprintf("/proc/%s/exe", pid))
+	// Elarni: a program whose file a package upgrade replaced reads "<path> (deleted)" until it
+	// restarts. Rules name the path.
+	return strings.TrimSuffix(path, " (deleted)"), err
 }

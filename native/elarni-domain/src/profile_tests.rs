@@ -133,7 +133,7 @@ fn per_app_policy_gates_tun_then_preserves_provider_and_app_routing() {
         let entry = rules[0]["outboundTag"].as_str().unwrap();
         assert_ne!(entry, "elarni-apps-0");
         assert_eq!(rules[0]["port"], 53);
-        // In "Only listed" a flow whose owner Android could not look up ("-1") stays proxied.
+        // In "Only listed" a flow whose owner the lookup could not find ("-1") stays proxied.
         let mut listed = runtime.per_app_processes.clone();
         if mode == PerAppMode::ProxyOnly {
             listed.push("-1".into());
@@ -293,7 +293,7 @@ fn per_app_targets_send_each_listed_app_to_its_own_outbound() {
     );
 }
 
-// Android names the owner of a flow it could not look up "-1". In "Only listed" that flow
+// "-1" names the owner of a flow the lookup could not find. In "Only listed" that flow
 // could belong to a listed app, so it must not go direct.
 #[test]
 fn only_listed_keeps_unattributed_flows_in_the_tunnel() {
@@ -2517,4 +2517,41 @@ fn dns_outbound_skips_a_resolver_limited_to_its_domains() {
             .unwrap();
         assert_eq!(dns["settings"]["address"], address, "{servers}");
     }
+}
+
+// Listing "-1" gives unidentified traffic (WSL, virtual machines, closed sockets) a target
+// of its own, in either mode, instead of the one "Only listed" adds.
+#[test]
+fn listed_unknown_owner_takes_its_own_target() {
+    use crate::model::PerAppMode;
+    let mut runtime = per_app_runtime(json!([{"process":"-1", "target":"direct"}]));
+    runtime.per_app_processes = vec!["-1".into(), "telegram".into()];
+    for mode in [PerAppMode::ProxyOnly, PerAppMode::Bypass] {
+        runtime.per_app_mode = mode;
+        let config = compile_per_app(&runtime).unwrap();
+        let unknown: Vec<&Value> = config["routing"]["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|rule| {
+                rule["process"]
+                    .as_array()
+                    .is_some_and(|names| names.contains(&json!("-1")))
+            })
+            .collect();
+        assert_eq!(unknown.len(), 1, "{mode:?}");
+        assert_eq!(unknown[0]["process"], json!(["-1"]), "{mode:?}");
+        assert_eq!(unknown[0]["outboundTag"], "elarni-direct", "{mode:?}");
+    }
+    // Listed without a target, it follows the mode like any listed app.
+    runtime.per_app_targets.clear();
+    runtime.per_app_mode = PerAppMode::Bypass;
+    let config = compile_per_app(&runtime).unwrap();
+    let rules = config["routing"]["rules"].as_array().unwrap();
+    let listed = rules
+        .iter()
+        .find(|rule| rule.get("process").is_some())
+        .unwrap();
+    assert_eq!(listed["process"], json!(runtime.per_app_processes));
+    assert_eq!(listed["outboundTag"], "elarni-direct");
 }
