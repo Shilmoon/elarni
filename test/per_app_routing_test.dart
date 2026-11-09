@@ -316,6 +316,28 @@ void main() {
       ]).valid,
       isTrue,
     );
+    // "children:" wraps one rule of a program, which is checked as that rule.
+    expect(
+      PerAppProfile('linux', 'bypass', ['children:/opt/claude/claude']).valid,
+      isTrue,
+    );
+    for (final rule in [
+      'children:',
+      'children:-1',
+      'children:children:/opt/x',
+      r'children:C:\Apps\x.exe',
+      'children:service:BITS',
+    ]) {
+      expect(
+        PerAppProfile('linux', 'bypass', [rule]).valid,
+        isFalse,
+        reason: rule,
+      );
+    }
+    expect(
+      PerAppProfile('android', 'bypass', ['children:com.example.app']).valid,
+      isFalse,
+    );
     // Flatpak and AppImage rules belong to Linux, service rules to Windows.
     expect(
       PerAppProfile('linux', 'bypass', [
@@ -1073,6 +1095,95 @@ void main() {
       'appimage:/home/u/Apps/Old-1.0.AppImage',
       'flatpak:org.telegram.desktop',
     ]);
+  });
+
+  testWidgets('a listed app can include the programs it starts', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final messenger = tester.binding.defaultBinaryMessenger;
+    final hosted = <Object?>[];
+    messenger.setMockMethodCallHandler(DesktopIntegration.channel, (
+      call,
+    ) async {
+      if (call.method != 'routingApplications') return null;
+      hosted.add((call.arguments as Map)['processes']);
+      return [
+        {'name': 'Claude', 'process': '/opt/claude/claude'},
+      ];
+    });
+    addTearDown(
+      () =>
+          messenger.setMockMethodCallHandler(DesktopIntegration.channel, null),
+    );
+    TunnelSettings? saved;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: PerAppRoutingEditor(
+              settings: const TunnelSettings(
+                xrayTunEnabled: true,
+                perAppMode: 'bypass',
+                perAppProcesses: ['/opt/claude/claude'],
+                perAppTargets: {'/opt/claude/claude': 'routing'},
+              ),
+              windows: false,
+              linux: true,
+              readConnections: ({int epoch = 0, int after = 0}) async =>
+                  RecentConnections.fromMap({
+                    'epoch': 1,
+                    'seq': 1,
+                    'connections': [
+                      {
+                        'key': 1,
+                        'seq': 1,
+                        'time': DateTime(2026, 11, 9).millisecondsSinceEpoch,
+                        'network': 'tcp',
+                        'host': 'api.example.com',
+                        'port': 443,
+                        'outbound': 'elarni-proxy',
+                        'kind': 'proxy',
+                        'rules': ['elarni-per-app-listed-0'],
+                        'owner': 'found',
+                        'pid': 31,
+                        'path': '/home/u/.local/bin/claude-code',
+                        'via': '/opt/claude/claude',
+                      },
+                    ],
+                  }),
+              onSave: (value) async => saved = value,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Details'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('per-app-include-children')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Done').last);
+    await tester.pumpAndSettle();
+    // The app keeps its name, icon and target; its rule says what it takes.
+    expect(find.text('Claude'), findsOneWidget);
+    expect(
+      find.text('Executable rule · with the programs it starts'),
+      findsOneWidget,
+    );
+    // Hosts are asked about the app's own rule.
+    expect(hosted.last, ['/opt/claude/claude']);
+
+    await tester.tap(find.byKey(const Key('per-app-connections')));
+    await tester.pumpAndSettle();
+    expect(find.text('Started by Claude'), findsOneWidget);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+    expect(saved!.perAppProcesses, ['children:/opt/claude/claude']);
+    expect(saved!.perAppTargets, {'children:/opt/claude/claude': 'routing'});
   });
 
   testWidgets('a Windows service rule is labelled and needs no file', (

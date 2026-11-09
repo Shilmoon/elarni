@@ -308,22 +308,33 @@ type ProcessNameMatcher struct {
 	FlatpakApps []string
 	AppImages   []string
 	Services    []string
+	// Elarni: "children:<rule>" also matches the programs that a program matching <rule> started,
+	// and theirs: Claude starts Claude Code, Discord its updater.
+	Ancestors *ProcessNameMatcher
 }
+
+// maxProcessAncestors bounds the walk from a program to the programs that started it.
+const maxProcessAncestors = 32
 
 // Elarni: what the system knows of a process beyond its path; tests replace these.
 var (
 	processFlatpakApp = net.FlatpakApp
 	processAppImage   = net.AppImage
 	processServices   = net.ProcessServices
+	parentProcess     = net.ParentProcess
 )
 
 func NewProcessNameMatcher(names []string) *ProcessNameMatcher {
 	processNames := []string{}
 	folders := []string{}
 	absPaths := []string{}
-	var flatpakApps, appImages, services []string
+	var flatpakApps, appImages, services, ancestors []string
 	matchXraySelf := false
 	for _, name := range names {
+		if rule, ok := strings.CutPrefix(name, "children:"); ok {
+			ancestors = append(ancestors, rule)
+			continue
+		}
 		if name == "self/" {
 			matchXraySelf = true
 			continue
@@ -366,7 +377,14 @@ func NewProcessNameMatcher(names []string) *ProcessNameMatcher {
 		// curl.exe or curl
 		processNames = append(processNames, strings.TrimSuffix(name, ".exe"))
 	}
+	var ancestorMatcher *ProcessNameMatcher
+	if len(ancestors) > 0 {
+		ancestorMatcher = NewProcessNameMatcher(ancestors)
+		// "children:" wraps one rule; nested, it adds nothing.
+		ancestorMatcher.Ancestors = nil
+	}
 	return &ProcessNameMatcher{
+		Ancestors:     ancestorMatcher,
 		ProcessNames:  processNames,
 		AbsPaths:      absPaths,
 		Folders:       folders,
@@ -495,12 +513,50 @@ func (m *ProcessNameMatcher) Apply(ctx routing.Context) (matched bool) {
 		return m.MatchUnknown
 	}
 	code = "not_matched"
-	return m.MatchesProcess(pid, name, absPath)
+	matched, via := m.matchProcess(pid, name, absPath)
+	if via != "" {
+		if original, ok := lookupContext.(*routingsession.Context); ok {
+			original.NoteProcessAncestor(via)
+		}
+	}
+	return matched
 }
 
 // MatchesProcess reports whether the rule names a process, as FindProcess describes it.
 // Elarni: the per-app editor counts running programs with it, as routing would match them.
 func (m *ProcessNameMatcher) MatchesProcess(pid int, name, absPath string) bool {
+	matched, _ := m.matchProcess(pid, name, absPath)
+	return matched
+}
+
+// matchProcess also returns the path of the program that started this one, when a children
+// rule matched that program rather than this one.
+func (m *ProcessNameMatcher) matchProcess(pid int, name, absPath string) (bool, string) {
+	if m.matchesSelf(pid, name, absPath) {
+		return true, ""
+	}
+	if m.Ancestors == nil || pid <= 0 {
+		return false, ""
+	}
+	if m.Ancestors.matchesSelf(pid, name, absPath) {
+		return true, ""
+	}
+	seen := map[int]bool{pid: true}
+	for depth := 0; depth < maxProcessAncestors; depth++ {
+		parent, ok := parentProcess(pid)
+		if !ok || seen[parent.PID] {
+			return false, ""
+		}
+		if m.Ancestors.matchesSelf(parent.PID, parent.Name, parent.Path) {
+			return true, parent.Path
+		}
+		seen[parent.PID] = true
+		pid = parent.PID
+	}
+	return false, ""
+}
+
+func (m *ProcessNameMatcher) matchesSelf(pid int, name, absPath string) bool {
 	if m.MatchXraySelf && pid == os.Getpid() {
 		return true
 	}

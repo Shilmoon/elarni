@@ -39,6 +39,8 @@ type RecentConnection struct {
 	// The rule for the app when its path does not name it (a Flatpak, an AppImage, a service);
 	// the reader sets it.
 	App string `json:"app,omitempty"`
+	// The program that started this one, when its "children:" rule took the connection.
+	Via string `json:"via,omitempty"`
 }
 
 const recentCapacity = 500
@@ -177,6 +179,7 @@ func owner(entry *RecentConnection, link *routing_session.Context) {
 		entry.Owner = "unknown"
 	default:
 		entry.Owner, entry.PID, entry.Name, entry.Path = "found", pid, name, path
+		entry.Via = link.ProcessAncestor()
 	}
 }
 

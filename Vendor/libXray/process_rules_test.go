@@ -192,6 +192,32 @@ func TestProcessRuleChecksOfTypedRules(t *testing.T) {
 	}
 }
 
+// A rule that also takes the programs an app starts is checked as the app's rule; its fixes
+// keep "children:".
+func TestProcessRuleChecksOfChildrenRules(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+		executable = resolved
+	}
+	folder := filepath.Dir(executable)
+	gone := filepath.Join(t.TempDir(), "gone")
+	sep := string(filepath.Separator)
+	rules := []string{"children:" + executable, "children:" + folder, "children:" + gone}
+	result := checkProcessRules(rules)
+	want := [][]string{nil, {"folder=children:" + folder + sep}, {"missing="}}
+	for i, check := range result.Rules {
+		if got := warningCodes(check); !slices.Equal(got, want[i]) {
+			t.Errorf("%q: warnings %v, want %v", check.Rule, got, want[i])
+		}
+	}
+	if result.Listed && result.Rules[0].Running == 0 {
+		t.Errorf("%q matches no running program", rules[0])
+	}
+}
+
 // The count uses the core's own matcher, so it agrees with what routing will do.
 func TestProcessRuleChecksCountRunningPrograms(t *testing.T) {
 	executable, err := os.Executable()

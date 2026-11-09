@@ -2570,3 +2570,46 @@ fn listed_unknown_owner_takes_its_own_target() {
     assert_eq!(listed["process"], json!(runtime.per_app_processes));
     assert_eq!(listed["outboundTag"], "elarni-direct");
 }
+
+// "children:<rule>" also takes the programs a listed app starts. A program listed on its own
+// keeps its own target: every app's direct rule comes before any rule that matches parents.
+#[test]
+fn per_app_children_rules_follow_the_direct_ones() {
+    let mut runtime = per_app_runtime(json!([
+        {"process":"children:/opt/claude/claude", "target":"routing"},
+        {"process":"/home/u/.local/bin/claude-code", "target":"direct"}
+    ]));
+    runtime.per_app_processes = vec![
+        "children:/opt/claude/claude".into(),
+        "/home/u/.local/bin/claude-code".into(),
+        "telegram".into(),
+    ];
+    let config = compile_per_app(&runtime).unwrap();
+    let listed: Vec<&Value> = config["routing"]["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|rule| {
+            rule["ruleTag"]
+                .as_str()
+                .is_some_and(|tag| tag.starts_with("elarni-per-app-listed-"))
+        })
+        .collect();
+    let processes: Vec<&Value> = listed.iter().map(|rule| &rule["process"]).collect();
+    assert_eq!(
+        processes,
+        [
+            &json!(["/opt/claude/claude"]),
+            &json!(["/home/u/.local/bin/claude-code"]),
+            &json!(["telegram"]),
+            &json!(["children:/opt/claude/claude"]),
+        ]
+    );
+    assert_eq!(listed[0]["outboundTag"], listed[3]["outboundTag"]);
+    assert_eq!(listed[1]["outboundTag"], "elarni-direct");
+    for invalid in ["children:", "children:-1", "children:children:/opt/x"] {
+        runtime.per_app_processes = vec![invalid.into()];
+        runtime.per_app_targets.clear();
+        assert!(compile_per_app(&runtime).is_err(), "{invalid}");
+    }
+}

@@ -134,8 +134,8 @@ func TestCompiledPerAppRoutingWithSeveralTargetsStarts(t *testing.T) {
 			listed++
 		}
 	}
-	if listed != 3 {
-		t.Fatalf("%d per-app rules for three targets", listed)
+	if listed != 4 {
+		t.Fatalf("%d per-app rules for three targets and a children rule", listed)
 	}
 	_, stop := startTrafficCore(t, config)
 	stop()

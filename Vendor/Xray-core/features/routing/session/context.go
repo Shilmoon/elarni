@@ -25,6 +25,8 @@ type processLookup struct {
 	pid        int
 	name, path string
 	err        error
+	// The program that started this one, when a "children:" rule matched it instead.
+	ancestor string
 }
 
 // LookupProcess returns find's result, calling it once per routing decision (Elarni): every process
@@ -42,6 +44,13 @@ func (ctx *Context) LookedUpProcess() (pid int, name, path string, err error, ok
 	p := &ctx.process
 	return p.pid, p.name, p.path, p.err, p.done
 }
+
+// NoteProcessAncestor records the program whose "children:" rule took this decision; the
+// rule that matched last wins, as routing takes the first matching rule and stops.
+func (ctx *Context) NoteProcessAncestor(path string) { ctx.process.ancestor = path }
+
+// ProcessAncestor returns the program that NoteProcessAncestor recorded, or "".
+func (ctx *Context) ProcessAncestor() string { return ctx.process.ancestor }
 
 // GetInboundTag implements routing.Context.
 func (ctx *Context) GetInboundTag() string {

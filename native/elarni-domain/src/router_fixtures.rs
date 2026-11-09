@@ -76,7 +76,8 @@ fn compiled_fixtures() -> Value {
         },
     )
     .unwrap();
-    // Per-app routing with several targets: each target's apps share a rule of their own.
+    // Per-app routing with several targets: each target's apps share a rule of their own, and
+    // a "children:" rule adds one more.
     let per_app = compile_profile(
         json!({"outbounds": [client("proxy"),
             {"tag": "direct", "protocol": "freedom", "settings": {}}]}),
@@ -86,9 +87,9 @@ fn compiled_fixtures() -> Value {
         1500,
         &serde_json::from_value::<RuntimeOptions>(json!({
             "perAppMode": "proxyOnly",
-            "perAppProcesses": ["/opt/listed", "/opt/blocked", "/opt/direct"],
+            "perAppProcesses": ["/opt/listed", "/opt/blocked", "children:/opt/direct"],
             "perAppTargets": [{"process": "/opt/blocked", "target": "block"},
-                {"process": "/opt/direct", "target": "direct"}]}))
+                {"process": "children:/opt/direct", "target": "direct"}]}))
         .unwrap(),
         None,
     )

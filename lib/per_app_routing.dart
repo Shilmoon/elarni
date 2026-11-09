@@ -11,6 +11,11 @@ import 'elarni_widgets.dart';
 import 'tunnel_channel.dart';
 import 'strings.dart';
 
+/// The rule inside "children:<rule>", which also takes the programs that its
+/// program starts; else the rule itself.
+String innerRule(String rule) =>
+    rule.startsWith('children:') ? rule.substring(9) : rule;
+
 /// A routing-only exchange format. Runtime settings and credentials never enter it.
 final class PerAppProfile {
   const PerAppProfile(
@@ -53,17 +58,20 @@ final class PerAppProfile {
     ).validPerApp) {
       return l10n.perAppInvalidProfile;
     }
+    // A "children:" rule is checked as the rule it wraps.
+    final rules = processes.map(innerRule).toList();
     // Flatpak and AppImage rules name Linux apps, service rules Windows services.
     if (platform != 'linux' &&
-        processes.any(
+        rules.any(
           (rule) => rule.startsWith('flatpak:') || rule.startsWith('appimage:'),
         )) {
       return l10n.perAppLinuxRulesElsewhere(platformName);
     }
     if (platform != 'windows' &&
-        processes.any((rule) => rule.startsWith('service:'))) {
+        rules.any((rule) => rule.startsWith('service:'))) {
       return l10n.perAppServiceRulesElsewhere(platformName);
     }
+    // Android routes by package; its apps' processes share the package's user ID.
     if (platform == 'android' &&
         processes.any(
           (package) => !RegExp(
@@ -75,21 +83,19 @@ final class PerAppProfile {
     // Names can be shared deliberately; absolute paths belong to their OS.
     final windowsPath = RegExp(r'^[A-Za-z]:[\\/]');
     if (platform != 'windows' &&
-        processes.any(
+        rules.any(
           (path) => windowsPath.hasMatch(path) || path.startsWith(r'\\'),
         )) {
       return l10n.perAppWindowsPathsElsewhere(platformName);
     }
     if (platform == 'linux' &&
-        processes.any(
+        rules.any(
           (path) => path.split('/').any((part) => part.endsWith('.app')),
         )) {
       return l10n.perAppMacBundlesOnLinux;
     }
     if (platform == 'windows' &&
-        processes.any(
-          (path) => path.startsWith('/') && !path.startsWith('//'),
-        )) {
+        rules.any((path) => path.startsWith('/') && !path.startsWith('//'))) {
       return l10n.perAppUnixPathsOnWindows;
     }
     return null;
@@ -436,14 +442,26 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
             (a.process == unknownOwnerRule ? 1 : 0)
       : a.name.toLowerCase().compareTo(b.name.toLowerCase());
 
-  _RoutingApp _app(String process) =>
-      apps
-          .where((app) => identity(app.process) == identity(process))
-          .firstOrNull ??
-      _RoutingApp(_name(process), process);
+  // A "children:" rule is its program's app, with that app's name and icon.
+  _RoutingApp _app(String process) {
+    final inner = innerRule(process);
+    final hosted = apps
+        .where((app) => identity(app.process) == identity(inner))
+        .firstOrNull;
+    if (hosted == null) return _RoutingApp(_name(process), process);
+    if (inner == process) return hosted;
+    final suggested = hosted.suggested;
+    return _RoutingApp(
+      hosted.name,
+      process,
+      hosted.icon,
+      suggested == null ? null : 'children:$suggested',
+    );
+  }
 
   String _name(String process) {
     if (process == unknownOwnerRule) return l10n.perAppUnknownOwner;
+    if (process != innerRule(process)) return _name(innerRule(process));
     for (final kind in ['flatpak:', 'service:']) {
       if (process.startsWith(kind)) return process.substring(kind.length);
     }
@@ -471,7 +489,9 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
   }
 
   /// What kind of app a rule names, when its path does not.
-  String? _kind(String process) => process.startsWith('flatpak:')
+  String? _kind(String rule) => _innerKind(innerRule(rule));
+
+  String? _innerKind(String process) => process.startsWith('flatpak:')
       ? 'Flatpak'
       : process.startsWith('appimage:')
       ? 'AppImage'
@@ -479,7 +499,11 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
       ? l10n.perAppKindService
       : null;
 
-  String _ruleKind(String process) => process.startsWith('flatpak:')
+  String _ruleKind(String rule) => rule == innerRule(rule)
+      ? _innerRuleKind(rule)
+      : '${_innerRuleKind(innerRule(rule))} · ${l10n.perAppWithChildren}';
+
+  String _innerRuleKind(String process) => process.startsWith('flatpak:')
       ? l10n.perAppFlatpakRule
       : process.startsWith('appimage:')
       ? l10n.perAppAppImageRule
@@ -496,7 +520,11 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
     final raw = await DesktopIntegration.channel.invokeListMethod<Object?>(
       method,
       method == 'routingApplications'
-          ? {'processes': processes ?? selections}
+          // Hosts know programs: a "children:" rule is asked as its program's.
+          ? {
+              'processes':
+                  processes ?? selections.map(innerRule).toSet().toList(),
+            }
           : null,
     );
     final result = <_RoutingApp>[];
@@ -845,7 +873,8 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
   // Whether a listed rule already names the program: its app's rule, its
   // path, a folder holding it, or its file name. The core's own matcher
   // decides routing.
-  bool _covers(String rule, RecentConnection connection) {
+  bool _covers(String listed, RecentConnection connection) {
+    final rule = innerRule(listed);
     final app = connection.app;
     if (app.isNotEmpty) {
       if (identity(rule) == identity(app)) return true;
@@ -857,7 +886,10 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
         return true;
       }
     }
-    final path = connection.path;
+    return _coversPath(rule, connection.path);
+  }
+
+  bool _coversPath(String rule, String path) {
     if (path.isEmpty) return false;
     final windows = widget.windows;
     String normal(String value) =>
@@ -873,6 +905,15 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
     );
     return file == named || windows && file == '$named.exe';
   }
+
+  // The listed app whose program started a connection's program.
+  String _startedBy(String via) =>
+      selections
+          .map(_app)
+          .where((app) => _coversPath(innerRule(app.process), via))
+          .firstOrNull
+          ?.name ??
+      _name(via);
 
   String _connectionRoute(RecentConnection connection) =>
       switch (connection.kind) {
@@ -923,6 +964,11 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
                 ].join(' · '),
                 style: subtle,
               ),
+              if (connection.via.isNotEmpty)
+                Text(
+                  l10n.perAppConnectionStartedBy(_startedBy(connection.via)),
+                  style: subtle,
+                ),
               if (connection.path.isNotEmpty)
                 Text(
                   connection.path,
@@ -1280,6 +1326,37 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
                     ? l10n.macBundleRuleHelp
                     : l10n.macRulesCaseSensitive,
               ),
+              if (app.process != unknownOwnerRule) ...[
+                const SizedBox(height: 12),
+                StatefulBuilder(
+                  builder: (context, update) {
+                    final current = selections.firstWhere(
+                      (rule) =>
+                          identity(innerRule(rule)) ==
+                          identity(innerRule(app.process)),
+                      orElse: () => app.process,
+                    );
+                    final included = current != innerRule(current);
+                    return SwitchListTile(
+                      key: const Key('per-app-include-children'),
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(l10n.perAppIncludeChildren),
+                      subtitle: Text(l10n.perAppIncludeChildrenHelp),
+                      value: included,
+                      onChanged: enabled
+                          ? (value) {
+                              final inner = innerRule(current);
+                              _replaceRule(
+                                current,
+                                value ? 'children:$inner' : inner,
+                              );
+                              update(() {});
+                            }
+                          : null,
+                    );
+                  },
+                ),
+              ],
             ],
           ),
         ),

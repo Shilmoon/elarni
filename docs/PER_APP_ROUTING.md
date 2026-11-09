@@ -57,6 +57,22 @@ and the app list gives them these rules:
   services share one, they are routed together. The app list shows running services by
   their display names.
 
+## Programs an app starts
+
+On Windows, macOS and Linux, an app's details have **Include programs it starts**. Its rule
+becomes `children:<rule>`, such as `children:C:\Program Files\Example\example.exe`, and it
+also matches every program that app starts, and the programs those start: helpers,
+updaters, a terminal's shells and command-line tools, a game launcher's games. A connection
+it takes shows **Started by** with the listed app in **Recent connections**.
+
+- A program listed on its own keeps its own target, whatever started it.
+- A program started through the system is not the app's: an app the macOS app opens with
+  **Open**, or a browser that was already running when the app opened a link. A browser the
+  app starts on Windows or Linux is included.
+- A program whose starter has exited is no longer included, nor is one started by a
+  program that did.
+- Android routes by package, so it has no such option.
+
 ## Checking rules
 
 On desktop, each listed rule shows how many running programs it matches now, counted

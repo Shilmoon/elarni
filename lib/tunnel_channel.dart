@@ -790,6 +790,7 @@ final class RecentConnection {
     this.name = '',
     this.path = '',
     this.app = '',
+    this.via = '',
   });
 
   static RecentConnection? fromMap(Object? value) {
@@ -817,6 +818,7 @@ final class RecentConnection {
       name: text('name'),
       path: text('path'),
       app: text('app'),
+      via: text('via'),
     );
   }
 
@@ -827,6 +829,10 @@ final class RecentConnection {
   /// The rule for the app when its path does not name it: "flatpak:<app id>",
   /// "appimage:<file>" or "service:<name>"; else empty.
   final String app;
+
+  /// The listed program that started this one, when its "children:" rule
+  /// took the connection; else empty.
+  final String via;
 
   /// direct, block, proxy, dns, or routing while it waits for its next decision.
   final String kind;
@@ -1089,7 +1095,12 @@ final class TunnelSettings {
             name.isNotEmpty &&
             utf8.encode(name).length <= 1024 &&
             name == name.trim() &&
-            !RegExp(r'[\x00-\x1f\x7f-\x9f]').hasMatch(name),
+            !RegExp(r'[\x00-\x1f\x7f-\x9f]').hasMatch(name) &&
+            // "children:" wraps one rule of a program.
+            !(name.startsWith('children:') &&
+                (name.length == 9 ||
+                    name == 'children:-1' ||
+                    name.startsWith('children:children:'))),
       ) &&
       perAppTargets.entries.every(
         (entry) =>

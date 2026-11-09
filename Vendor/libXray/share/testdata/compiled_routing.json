@@ -535,6 +535,18 @@
           ],
           "network": "tcp,udp",
           "outboundTag": "elarni-direct",
+          "process": [
+            "children:/opt/direct"
+          ],
+          "ruleTag": "elarni-per-app-listed-3",
+          "type": "field"
+        },
+        {
+          "inboundTag": [
+            "elarni-tun"
+          ],
+          "network": "tcp,udp",
+          "outboundTag": "elarni-direct",
           "ruleTag": "elarni-per-app-other",
           "type": "field"
         },
