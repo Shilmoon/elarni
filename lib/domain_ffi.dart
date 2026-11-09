@@ -73,7 +73,5 @@ final class ElarniDomainFfi {
     }
   }
 
-  void cancel() => _bindings.elarni_cancel(_handle);
-
   void dispose() => _bindings.elarni_handle_free(_handle);
 }

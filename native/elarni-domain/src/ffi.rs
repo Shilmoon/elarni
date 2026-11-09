@@ -1,7 +1,6 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
 use std::slice;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -27,7 +26,6 @@ pub const ELARNI_STATUS_INVALID_ARGUMENT: ElarniStatus = 1;
 pub const ELARNI_STATUS_UNSUPPORTED_VERSION: ElarniStatus = 2;
 pub const ELARNI_STATUS_REQUEST_TOO_LARGE: ElarniStatus = 3;
 pub const ELARNI_STATUS_RESPONSE_TOO_LARGE: ElarniStatus = 4;
-pub const ELARNI_STATUS_CANCELLED: ElarniStatus = 5;
 pub const ELARNI_STATUS_PARSE_ERROR: ElarniStatus = 6;
 pub const ELARNI_STATUS_COMPILE_ERROR: ElarniStatus = 7;
 pub const ELARNI_STATUS_PANIC: ElarniStatus = 255;
@@ -49,9 +47,8 @@ impl Default for ElarniBuffer {
     }
 }
 
-pub struct ElarniHandle {
-    cancelled: AtomicBool,
-}
+/// Owns nothing yet: every request is independent.
+pub struct ElarniHandle;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -133,9 +130,7 @@ pub extern "C" fn elarni_schema_max() -> u32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn elarni_handle_new() -> *mut ElarniHandle {
-    Box::into_raw(Box::new(ElarniHandle {
-        cancelled: AtomicBool::new(false),
-    }))
+    Box::into_raw(Box::new(ElarniHandle))
 }
 
 /// # Safety
@@ -145,17 +140,6 @@ pub unsafe extern "C" fn elarni_handle_free(handle: *mut ElarniHandle) {
     if !handle.is_null() {
         drop(unsafe { Box::from_raw(handle) });
     }
-}
-
-/// # Safety
-/// `handle` must point to a live Elarni handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn elarni_cancel(handle: *mut ElarniHandle) -> ElarniStatus {
-    let Some(handle) = (unsafe { handle.as_ref() }) else {
-        return ELARNI_STATUS_INVALID_ARGUMENT;
-    };
-    handle.cancelled.store(true, Ordering::Release);
-    ELARNI_STATUS_OK
 }
 
 /// # Safety
@@ -177,9 +161,9 @@ pub unsafe extern "C" fn elarni_request(
     request_len: usize,
     output: *mut ElarniBuffer,
 ) -> ElarniStatus {
-    let Some(handle) = (unsafe { handle.as_ref() }) else {
+    if handle.is_null() {
         return ELARNI_STATUS_INVALID_ARGUMENT;
-    };
+    }
     let Some(output) = (unsafe { output.as_mut() }) else {
         return ELARNI_STATUS_INVALID_ARGUMENT;
     };
@@ -189,9 +173,6 @@ pub unsafe extern "C" fn elarni_request(
     }
     if request_len > MAX_REQUEST_BYTES {
         return ELARNI_STATUS_REQUEST_TOO_LARGE;
-    }
-    if handle.cancelled.swap(false, Ordering::AcqRel) {
-        return ELARNI_STATUS_CANCELLED;
     }
 
     let request = unsafe { slice::from_raw_parts(request, request_len) };

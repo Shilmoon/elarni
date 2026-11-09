@@ -1171,13 +1171,9 @@ fn base64_text_decodes_every_alphabet_and_padding_alike() {
 }
 
 #[test]
-fn ffi_cancellation_is_consumed_once_and_size_errors_have_no_owned_buffer() {
+fn ffi_size_and_pointer_errors_have_no_owned_buffer() {
     let handle = FfiHandle::new();
     let valid = br#"{"schemaVersion":1,"operation":"decodeRouting","payload":{"content":"happ://routing/off"}}"#;
-    unsafe {
-        assert_eq!(elarni_cancel(handle.0), ELARNI_STATUS_OK);
-    }
-    assert_eq!(handle.request(valid), (ELARNI_STATUS_CANCELLED, None));
     assert_eq!(handle.request(valid).0, ELARNI_STATUS_OK);
     let mut bytes = vec![b' '; crate::ffi::MAX_REQUEST_BYTES];
     assert_eq!(handle.request(&bytes).0, ELARNI_STATUS_INVALID_ARGUMENT);

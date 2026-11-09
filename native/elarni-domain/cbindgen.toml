@@ -17,7 +17,6 @@ include = [
   "ELARNI_STATUS_UNSUPPORTED_VERSION",
   "ELARNI_STATUS_REQUEST_TOO_LARGE",
   "ELARNI_STATUS_RESPONSE_TOO_LARGE",
-  "ELARNI_STATUS_CANCELLED",
   "ELARNI_STATUS_PARSE_ERROR",
   "ELARNI_STATUS_COMPILE_ERROR",
   "ELARNI_STATUS_PANIC",
@@ -26,7 +25,6 @@ include = [
   "elarni_schema_max",
   "elarni_handle_new",
   "elarni_handle_free",
-  "elarni_cancel",
   "elarni_buffer_free",
   "elarni_request",
 ]

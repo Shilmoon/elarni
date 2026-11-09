@@ -41,8 +41,6 @@ typedef struct ElarniBuffer {
 
 #define ELARNI_STATUS_RESPONSE_TOO_LARGE 4
 
-#define ELARNI_STATUS_CANCELLED 5
-
 #define ELARNI_STATUS_PARSE_ERROR 6
 
 #define ELARNI_STATUS_COMPILE_ERROR 7
@@ -62,12 +60,6 @@ struct ElarniHandle *elarni_handle_new(void);
  * `handle` must be null or a pointer returned by `elarni_handle_new` that has not been freed.
  */
 void elarni_handle_free(struct ElarniHandle *handle);
-
-/**
- * # Safety
- * `handle` must point to a live Elarni handle.
- */
-ElarniStatus elarni_cancel(struct ElarniHandle *handle);
 
 /**
  * # Safety
