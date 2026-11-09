@@ -182,6 +182,11 @@ extension _ProxyCatalog on DesktopProxy {
     });
   }
 
+  // Xray reads a leading ! on an IP rule like one before the code.
+  static final _geodataSelector = RegExp(
+    r'^!*(geoip:|geosite:|ext:|ext-ip:|ext-site:|ext-domain:)',
+  );
+
   // Direct and Block rules and domestic DNS domains may name codes the geofiles
   // lack, which the core then skips; Proxy rules and servers need their codes.
   CatalogMap _assetSelectors(DesktopCatalog catalog, CatalogMap route) {
@@ -193,12 +198,7 @@ extension _ProxyCatalog on DesktopProxy {
       if (value is List) {
         for (final item in value) collect(item, into);
       }
-      // Xray reads a leading ! on an IP rule like one before the code.
-      if (value is String &&
-          RegExp(
-            r'^!*(geoip:|geosite:|ext:|ext-ip:|ext-site:|ext-domain:)',
-          ).hasMatch(value))
-        into.add(value);
+      if (value is String && _geodataSelector.hasMatch(value)) into.add(value);
     }
 
     final model = catalogMap(route['routeModel'] ?? <String, Object?>{});
@@ -285,22 +285,16 @@ extension _ProxyCatalog on DesktopProxy {
       candidate.validate();
       _validateSettings(candidate.settings);
       // Bind health to the final compiled configuration and prepared assets.
-      final oldNodes = {
-        for (final node in catalogList(beforeSemantics['nodes']))
-          node['id']: node,
-      };
       final candidateSemantics = await _semantics(candidate);
-      for (final node in catalogList(candidateSemantics['nodes'])) {
-        final old = oldNodes[node['id']];
+      for (final MapEntry(key: id, value: node) in candidateSemantics.entries) {
+        final old = beforeSemantics[id];
         if (old != null &&
-            (old['assetRevision'] != node['assetRevision'] ||
-                DesktopCatalog.identity(old['config']) !=
-                    DesktopCatalog.identity(node['config']) ||
-                DesktopCatalog.identity(old['identity']) !=
-                    DesktopCatalog.identity(node['identity']))) {
-          candidate.updateNode(node['id']! as String, {
-            'configurationRevision': desktopID(),
-          });
+            (old.assetRevision != node.assetRevision ||
+                old.compiled != node.compiled ||
+                old.key != node.key &&
+                    DesktopCatalog.identity(old.config) !=
+                        DesktopCatalog.identity(node.config))) {
+          candidate.updateNode(id, {'configurationRevision': desktopID()});
         }
       }
       _checkGeneration(generation);
@@ -319,8 +313,12 @@ extension _ProxyCatalog on DesktopProxy {
                   jsonEncode(DesktopProxy._runtimeAssets(before)) ||
               jsonEncode(_runtimeSettings(candidate.settings)) !=
                   jsonEncode(_runtimeSettings(before.settings)) ||
-              DesktopProxy._compiled(candidateSemantics, candidate.selected!) !=
-                  DesktopProxy._compiled(beforeSemantics, before.selected!))) {
+              await _selectedConfigChanged(
+                before,
+                beforeSemantics[before.selected!]!,
+                candidate,
+                candidateSemantics[candidate.selected!]!,
+              ))) {
         Future<void> stop() async {
           runtimeChanged = true;
           // The exit of a deliberately stopped core is not a connection failure.
@@ -374,9 +372,6 @@ extension _ProxyCatalog on DesktopProxy {
       await _save({'version': 1, 'committed': candidate.data});
       _checkGeneration(generation);
       _catalog = candidate;
-      // Revision and success bookkeeping written since compiling are not
-      // semantic inputs, so the result also describes the committed data.
-      _rememberSemantics(jsonEncode(candidate.data), candidateSemantics);
       // A failure stays reported until Connect, Disconnect or Repair: a dead
       // TUN helper leaves its fail-closed DNS guard.
       if (!wasConnected && !runtimeChanged && previousState != 'failed')
@@ -447,25 +442,60 @@ extension _ProxyCatalog on DesktopProxy {
     if (result.containsKey('profiles')) ...catalog.routingSnapshot(),
   };
 
-  Future<CatalogMap> _semantics(DesktopCatalog catalog) async {
-    final key = jsonEncode(catalog.data);
-    final known = _semanticsMemo[key];
-    if (known != null) return known;
-    final semantics = await DesktopProxy._semanticsOff(
-      domainPath,
-      catalog.data,
-    );
-    _rememberSemantics(key, semantics);
-    return semantics;
+  // By server ID. Compiles, on a worker, only what no earlier pass compiled
+  // from the same inputs.
+  Future<Map<String, _Semantics>> _semantics(DesktopCatalog catalog) async {
+    final pass = ++_semanticsPass;
+    final shared = Map<CatalogMap, String>.identity();
+    final nodes = <String, _Semantics>{}, missing = <String>{};
+    for (final input in DesktopProxy._compileInputs(catalog)) {
+      final id = input.node['id']! as String;
+      final node = nodes[id] = _Semantics(
+        input.node['config'],
+        jsonEncode(input.node['config']),
+        input.context == null
+            ? ''
+            : shared[input.context!] ??= jsonEncode(input.context),
+        input.assetRevision,
+      )..compiled = input.error;
+      if (input.context == null) continue;
+      final known = (_compiledMemo[node.shared] ??= {})[node.key];
+      known?.pass = pass;
+      node.compiled = known?.digest;
+      if (known == null) missing.add(id);
+    }
+    if (missing.isNotEmpty) {
+      final digests = await DesktopProxy._digestsOff(
+        domainPath,
+        catalog.data,
+        missing,
+      );
+      for (final MapEntry(key: id, value: digest) in digests.entries) {
+        final node = nodes[id]!..compiled = digest;
+        (_compiledMemo[node.shared] ??= {})[node.key] = _Compiled(digest, pass);
+      }
+    }
+    // An edit compares the catalog before it with the one after it.
+    _compiledMemo.removeWhere((_, entries) {
+      entries.removeWhere((_, entry) => entry.pass < pass - 1);
+      return entries.isEmpty;
+    });
+    return nodes;
   }
 
-  void _rememberSemantics(String key, CatalogMap semantics) {
-    _semanticsMemo
-      ..remove(key)
-      ..[key] = semantics;
-    while (_semanticsMemo.length > 2) {
-      _semanticsMemo.remove(_semanticsMemo.keys.first);
-    }
+  // Whether the selected server now compiles to another config. A digest
+  // leaves display names out, so equal ones need the configs themselves.
+  Future<bool> _selectedConfigChanged(
+    DesktopCatalog before,
+    _Semantics old,
+    DesktopCatalog candidate,
+    _Semantics node,
+  ) async {
+    if (old.shared == node.shared && old.key == node.key) return false;
+    if (old.compiled != node.compiled || node.compiled == null) return true;
+    if (old.shared.isEmpty) return false;
+    return await _compile(before, before.node(before.selected!)) !=
+        await _compile(candidate, candidate.node(candidate.selected!));
   }
 
   CatalogMap _runtimeSettings(TunnelSettings settings) => settings.toMap()
