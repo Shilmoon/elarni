@@ -143,6 +143,14 @@ final class DesktopProxy {
   // catalog edit compiles only the servers whose inputs it changed.
   final _compiledMemo = <String, Map<String, _Compiled>>{};
   var _semanticsPass = 0;
+  final _probeTargets =
+      <
+        String,
+        ({
+          Object revision,
+          Future<({CatalogMap endpoint, Future<Map?> mapping})> target,
+        })
+      >{};
   final _refreshBackoff = <String, ({DateTime until, int failures})>{};
   Future<void>? _initializing, _stopping;
   Future<CatalogMap>? _disconnecting;

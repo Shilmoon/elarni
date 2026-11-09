@@ -1177,6 +1177,47 @@ rules:
     expect(await revision(), isNot(second));
   });
 
+  // What a direct test dials is kept for a configuration revision.
+  test('a direct TCP test follows an edit of the server port', () async {
+    await prepare();
+    final node = (await backend.control.subscriptions())
+        .subscriptions
+        .single
+        .nodes
+        .single;
+    Future<PingResult> direct() => backend.control.pingNode(
+      node.id,
+      protocol: 'tcp',
+      method: 'GET',
+      mode: 'default',
+      timeout: 5,
+      url: '',
+    );
+    expect((await direct()).status, 'success');
+    final text = await backend.control.nodeConfig(node.id);
+    final unused = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final closed = unused.port;
+    await unused.close();
+    final port = Uri.parse(profile).port;
+    expect(text, contains('$port'));
+    await backend.control.updateNodeConfig(
+      node.id,
+      text.replaceAll('$port', '$closed'),
+    );
+    await expectLater(
+      direct(),
+      throwsA(
+        isA<PlatformException>().having(
+          (error) => error.code,
+          'code',
+          'ping_failed',
+        ),
+      ),
+    );
+    await backend.control.updateNodeConfig(node.id, text);
+    expect((await direct()).status, 'success');
+  });
+
   test(
     'a server config edit validates, applies live and stays hidden where the provider hides it',
     () async {
