@@ -181,6 +181,7 @@
         "Vendor/Xray-core/transport/internet/splithttp/loaded_latency_test.go",
         "Vendor/Xray-core/transport/internet/splithttp/mux.go",
         "Vendor/Xray-core/transport/internet/splithttp/mux_test.go",
+        "Vendor/Xray-core/transport/internet/splithttp/probe_close_linux_test.go",
         "Vendor/Xray-core/transport/internet/splithttp/realtime_test.go",
         "Vendor/Xray-core/transport/internet/splithttp/redirect_test.go",
         "Vendor/Xray-core/transport/internet/splithttp/request_lifetime.go",

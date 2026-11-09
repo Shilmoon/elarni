@@ -25,6 +25,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   30 s startup wait and the app's 120 s connect wait counted the time asleep, so both ran out
   at resume, the helper exited and the app started over, although the core was ready seconds
   later. Helper and app waits on Windows now count only the time the PC is awake.
+- A server test whose XHTTP connection was still connecting when the test ended no longer
+  holds its cleanup for up to 16 s. The app reported "An earlier server test is still
+  closing" meanwhile (iOS refused further tests until restarted), and macOS paused automatic
+  server switching. The XHTTP dial now ends with the test, and with the connection it served.
 
 ## 0.5.1 - 2026-11-08
 
