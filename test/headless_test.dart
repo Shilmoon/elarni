@@ -137,7 +137,9 @@ echo "/org/freedesktop/login1: org.freedesktop.login1.Manager.PrepareForSleep (f
     final changes = <bool>[];
     final monitor = await watchLinuxSleep(changes.add, gdbus: gdbus.path);
     expect(await monitor!.exitCode, 0);
-    await pumpEventQueue();
+    // The exit can arrive before the last stdout lines reach the listener.
+    for (var i = 0; changes.length < 2 && i < 250; i++)
+      await Future<void>.delayed(const Duration(milliseconds: 20));
     expect(changes, [true, false]);
     expect(
       await watchLinuxSleep((_) {}, gdbus: '${directory.path}/missing'),

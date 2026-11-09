@@ -58,15 +58,8 @@ func TestFindProcessChild(t *testing.T) {
 func TestFindProcessAttributesForeignTCPAndUDP(t *testing.T) {
 	for _, ip := range []string{"127.0.0.1", "::1"} {
 		t.Run(ip, func(t *testing.T) {
-			listener, err := net.Listen("tcp", net.JoinHostPort(ip, "0"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			listener, udp := tcpAndUDPOnOnePort(t, ip)
 			defer listener.Close()
-			udp, err := net.ListenPacket("udp", listener.Addr().String())
-			if err != nil {
-				t.Fatal(err)
-			}
 			defer udp.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -132,4 +125,25 @@ func TestFindProcessAttributesForeignTCPAndUDP(t *testing.T) {
 			}
 		})
 	}
+}
+
+// tcpAndUDPOnOnePort listens on one port number for both: the child dials both
+// at the listener's address. Another process may hold the UDP port of a free TCP
+// one (seen on macOS CI), so it takes the next free TCP port then.
+func tcpAndUDPOnOnePort(t *testing.T, ip string) (net.Listener, net.PacketConn) {
+	t.Helper()
+	var err error
+	for range 20 {
+		var listener net.Listener
+		if listener, err = net.Listen("tcp", net.JoinHostPort(ip, "0")); err != nil {
+			t.Fatal(err)
+		}
+		var udp net.PacketConn
+		if udp, err = net.ListenPacket("udp", listener.Addr().String()); err == nil {
+			return listener, udp
+		}
+		listener.Close() // address in use: try another port
+	}
+	t.Fatalf("no port number free for both TCP and UDP: %v", err)
+	return nil, nil
 }
