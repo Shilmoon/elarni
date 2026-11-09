@@ -37,22 +37,36 @@ class AndroidUIE2E {
         // after text input/recreation otherwise moves its touch coordinates.
         // Compose dialogs own a separate window, so the Activity token cannot
         // dismiss their IME. Native Back dismisses it without closing the dialog.
-        if (ui.onAllNodes(isDialog()).fetchSemanticsNodes().isNotEmpty() &&
-            ui.activity.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true) {
-            InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
-        }
+        fun imeVisible() = ui.activity.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true
         ui.runOnUiThread {
             val focus = ui.activity.currentFocus ?: ui.activity.window.decorView
             ui.activity.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
                 .hideSoftInputFromWindow(focus.windowToken, 0)
             focus.clearFocus()
         }
-        ui.waitUntil(5000) { ui.activity.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) != true }
+        // A dialog's IME can still be animating in when this starts, so Back goes out whenever it shows.
+        // Its hide animation is far shorter than a second; one Back per second never closes the dialog.
+        var back = 0L
+        ui.waitUntil(5000) {
+            val visible = imeVisible()
+            if (visible && android.os.SystemClock.uptimeMillis() - back >= 1000 && ui.onAllNodes(isDialog()).fetchSemanticsNodes().isNotEmpty()) {
+                back = android.os.SystemClock.uptimeMillis()
+                InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            }
+            !visible
+        }
     }
     private fun click(text: String) {
         dismissKeyboard()
         val match = hasText(text) and hasClickAction()
-        if (ui.onAllNodes(match).fetchSemanticsNodes().isEmpty()) ui.onNode(hasScrollToIndexAction()).performScrollToNode(match)
+        // A menu composes its items a frame or more after the click that opened it: look again before
+        // scrolling the list for a node that is not there yet.
+        try {
+            ui.waitUntil(5000) {
+                ui.onAllNodes(match).fetchSemanticsNodes().isNotEmpty() ||
+                    runCatching { ui.onNode(hasScrollToIndexAction()).performScrollToNode(match) }.isSuccess
+            }
+        } catch (error: ComposeTimeoutException) { throw AssertionError("No clickable \"$text\" on screen or in its list", error) }
         if (ui.onAllNodes(match and hasAnyAncestor(hasScrollAction())).fetchSemanticsNodes().isNotEmpty()) ui.onNode(match).performScrollTo()
         ui.waitForIdle()
         ui.onNode(match).assertIsDisplayed().performClick()
@@ -609,6 +623,8 @@ class AndroidUIE2E {
                             while (!input.readLine().isNullOrEmpty()) { }
                             if (request.contains("/stall")) {
                                 stalled.countDown()
+                                // Held past the arrival window below, so no stalled probe ends before Cancel.
+                                it.soTimeout = 20_000
                                 it.getInputStream().read()
                                 return@respond
                             }
@@ -653,10 +669,12 @@ class AndroidUIE2E {
                 capture("parallel-ping-light")
                 call("settings", obj("settings" to obj("theme" to "dark")))
                 capture("parallel-ping-dark")
-                call("settings", obj("settings" to obj("probeURL" to "http://127.0.0.1:${origin.localPort}/stall")))
+                call("settings", obj("settings" to obj("probeURL" to "http://127.0.0.1:${origin.localPort}/stall", "probeTimeout" to 15)))
                 val completed = repo.state.value.pings.mapValues { it.value.toString() }
                 ui.runOnUiThread { ui.activity.testServers(snapshot().nodes.map { it.string("id") }) }
-                assertTrue("All stalled probes must start together", stalled.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                // Stalled probes end only at their 15 s timeout, so all 26 arriving within 10 s proves they
+                // run together; the loaded CI emulator took over 3 s to start them.
+                assertTrue("All stalled probes must start together: ${26 - stalled.count} arrived", stalled.await(10, java.util.concurrent.TimeUnit.SECONDS))
                 val cancelledAt = System.nanoTime()
                 repo.cancel()
                 ui.waitUntil(2000) { !repo.state.value.busy }
