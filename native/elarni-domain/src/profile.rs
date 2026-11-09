@@ -848,7 +848,9 @@ fn is_physical_dependency(
 }
 
 pub fn profile_endpoints(config: &Value) -> Result<Vec<ProfileEndpoint>, CompileError> {
-    let mut migrated = config.clone();
+    // The migration rewrites outbounds only, so the routing rules are not copied.
+    let dns_hosts = &config["dns"]["hosts"];
+    let mut migrated = json!({"outbounds": config["outbounds"]});
     migrate_removed_keys(&mut migrated)?;
     let config = &migrated;
     let mut endpoints = Vec::new();
@@ -1000,7 +1002,7 @@ pub fn profile_endpoints(config: &Value) -> Result<Vec<ProfileEndpoint>, Compile
     }
     // First matching key wins, as in a linear search; built once for all endpoints.
     let mut hosts = BTreeMap::new();
-    for (key, value) in config["dns"]["hosts"].as_object().into_iter().flatten() {
+    for (key, value) in dns_hosts.as_object().into_iter().flatten() {
         hosts
             .entry(
                 key.strip_prefix("full:")
