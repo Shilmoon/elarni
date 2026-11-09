@@ -243,6 +243,19 @@ struct NativeControlChecks {
     guard rules[2] == nil, RoutingApplicationRule.versionsFolder(of: "/Applications/Claude.app") == nil else {
       throw Failure(message: "a version folder beside other folders widened the rule: \(rules)")
     }
+    // The App Sandbox refuses to list the user's Library (Cocoa error 257, seen on macOS 26),
+    // where Claude Code lives; the rule follows its versions there, and only there.
+    final class SandboxedLister: FileManager {
+      override func contentsOfDirectory(atPath path: String) throws -> [String] {
+        throw CocoaError(.fileReadNoPermission)
+      }
+    }
+    let home = "/Users/fixture", denied = SandboxedLister()
+    let library = home + "/Library/Application Support/Claude/claude-code"
+    guard RoutingApplicationRule.versionsFolder(of: library + "/2.1.317/91184d3d9ba3/claude.app",
+                                                fileManager: denied, home: home) == library + "/",
+          RoutingApplicationRule.versionsFolder(of: home + "/Tools/1.0/Tool.app", fileManager: denied, home: home) == nil
+    else { throw Failure(message: "a sandboxed listing did not keep the rule to the user's Library") }
     print("PASS apps in version folders, such as Claude Code, match every version")
   }
 
