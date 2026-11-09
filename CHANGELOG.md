@@ -29,6 +29,11 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   holds its cleanup for up to 16 s. The app reported "An earlier server test is still
   closing" meanwhile (iOS refused further tests until restarted), and macOS paused automatic
   server switching. The XHTTP dial now ends with the test, and with the connection it served.
+- Android now names the app of short-lived connections, so per-app rules match them. About
+  16% of QUIC flows to Vision servers and about 5% of TCP connections had no app, because the
+  app had closed its socket by the time routing asked Android who owned it. With per-app rules
+  on, the VPN now asks when the connection arrives and remembers a socket's app for 30 s after
+  it closes.
 
 ## 0.5.1 - 2026-11-08
 
