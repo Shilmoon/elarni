@@ -684,9 +684,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get loadingApps => 'Loading apps…';
 
   @override
-  String get runningApps => 'Running apps';
-
-  @override
   String get installedAndRunningApps => 'Installed and running apps';
 
   @override

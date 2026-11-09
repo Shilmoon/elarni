@@ -3,7 +3,9 @@
 #include <shellapi.h>
 #include <atomic>
 #include <cstdio>
+#include <exception>
 #include <stdexcept>
+#include <thread>
 #include <flutter/method_result_functions.h>
 #include "../runner/utils.h"
 
@@ -26,6 +28,13 @@ static DWORD_PTR CheckedFileInfo(LPCWSTR, DWORD, SHFILEINFOW*, UINT, UINT) {
 
 void Require(bool value, const char* message) {
   if (!value) throw std::runtime_error(message);
+}
+
+bool MakeShortcut(const std::wstring& shortcut, const std::wstring& target) {
+  Microsoft::WRL::ComPtr<IShellLinkW> link;
+  Microsoft::WRL::ComPtr<IPersistFile> file;
+  return SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) &&
+      SUCCEEDED(link->SetPath(target.c_str())) && SUCCEEDED(link.As(&file)) && SUCCEEDED(file->Save(shortcut.c_str(), TRUE));
 }
 
 int main() {
@@ -165,6 +174,62 @@ int main() {
     Require(rpc && services > 1, "running services were not listed by their rules");
     std::puts("PASS svchost services are listed by their own rules");
 
+    // Start menu shortcuts list installed apps by their executables and the shortcuts' names;
+    // uninstallers and shortcuts whose file is gone are left out, as are rules already listed.
+    {
+      wchar_t temp[MAX_PATH]{};
+      Require(GetTempPathW(MAX_PATH, temp) > 0, "no temporary folder");
+      const std::wstring root = std::wstring(temp) + L"elarni-shortcuts-" + std::to_wstring(GetCurrentProcessId());
+      const std::wstring programs = root + L"\\Programs", menu = programs + L"\\Example", install = root + L"\\Example";
+      wchar_t self[MAX_PATH]{};
+      GetModuleFileNameW(nullptr, self, MAX_PATH);
+      const auto app = install + L"\\example.exe", uninstaller = install + L"\\unins000.exe";
+      const bool made = SHCreateDirectoryExW(nullptr, menu.c_str(), nullptr) == ERROR_SUCCESS &&
+          SHCreateDirectoryExW(nullptr, install.c_str(), nullptr) == ERROR_SUCCESS &&
+          CopyFileW(self, app.c_str(), FALSE) && CopyFileW(self, uninstaller.c_str(), FALSE) &&
+          MakeShortcut(menu + L"\\Example App.lnk", app) && MakeShortcut(menu + L"\\Uninstall Example.lnk", uninstaller) &&
+          CopyFileW(self, (install + L"\\removed.exe").c_str(), FALSE) &&
+          MakeShortcut(menu + L"\\Removed.lnk", install + L"\\removed.exe") &&
+          DeleteFileW((install + L"\\removed.exe").c_str()) && MakeShortcut(programs + L"\\Helper.lnk", uninstaller);
+      std::set<std::wstring> seen;
+      const auto found = made ? ShortcutApplications({programs}, seen) : flutter::EncodableList{};
+      std::set<std::wstring> listed{Lowered(app)};
+      const auto again = made ? ShortcutApplications({programs}, listed) : flutter::EncodableList{};
+      for (const auto* file : {L"\\Programs\\Example\\Example App.lnk", L"\\Programs\\Example\\Uninstall Example.lnk",
+               L"\\Programs\\Example\\Removed.lnk", L"\\Programs\\Helper.lnk", L"\\Example\\example.exe",
+               L"\\Example\\unins000.exe"}) DeleteFileW((root + file).c_str());
+      for (const auto* folder : {L"\\Programs\\Example", L"\\Programs", L"\\Example", L""}) RemoveDirectoryW((root + folder).c_str());
+      Require(made, "could not create the Start menu fixture");
+      Require(found.size() == 1, "the Start menu fixture did not list exactly its one app");
+      const auto& entry = std::get<flutter::EncodableMap>(found.front());
+      Require(std::get<std::string>(entry.at(EncodableValue("name"))) == "Example App" &&
+              std::get<std::string>(entry.at(EncodableValue("process"))) == RoutingUTF8(app.c_str()),
+              "a Start menu app was not listed by its shortcut's name and executable");
+      Require(again.empty(), "a Start menu app already listed was listed again");
+    }
+    std::puts("PASS Start menu shortcuts list installed apps, without uninstallers or removed files");
+
+    // Installed Store apps are listed by package family; the list runs off the window thread.
+    size_t packaged = 0;
+    bool families = true;
+    std::exception_ptr packages_failed;
+    std::thread([&] {
+      winrt::init_apartment(winrt::apartment_type::multi_threaded);
+      try {
+        std::set<std::wstring> seen;
+        for (const auto& app : PackagedApplications(seen)) {
+          const auto& map = std::get<flutter::EncodableMap>(app);
+          const auto rule = std::wstring(winrt::to_hstring(std::get<std::string>(map.at(EncodableValue("process")))));
+          families = families && !PackageAppName(rule).empty() && !std::get<std::string>(map.at(EncodableValue("name"))).empty();
+          ++packaged;
+        }
+      } catch (...) { packages_failed = std::current_exception(); }
+      winrt::uninit_apartment();
+    }).join();
+    if (packages_failed) std::rethrow_exception(packages_failed);
+    Require(families, "a Store app was not listed by its package family and name");
+    std::printf("PASS installed Microsoft Store apps are listed by package family (%zu here)\n", packaged);
+
     auto lookup = std::make_shared<RoutingApplicationLookup>();
     bool complete = false, failed = false;
     DWORD reply_thread = 0;
@@ -255,7 +320,7 @@ int main() {
         !IsLaunchCommand(L"C:\\Program Files\\Elarni\\elarni.exe", L"C:\\Program Files\\Elarni\\elarni.exe"),
         "launch at login compares the Run value with the wrong case rule");
     std::puts("PASS launch at login matches its Run value in any letter case");
-    std::puts("12 native routing metadata checks passed");
+    std::puts("14 native routing metadata checks passed");
   } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL %s\n", error.what()); return 1;
   } catch (...) { std::fputs("FAIL native routing metadata check\n", stderr); return 1; }

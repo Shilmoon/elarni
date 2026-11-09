@@ -11,6 +11,13 @@
 #include <csignal>
 #include <cassert>
 
+// The list as the app receives it, made on the main thread as the host makes it.
+static FlValue* app_values(const AppList& apps) {
+  auto* list = fl_value_new_list();
+  for (const auto& app : apps) fl_value_append_take(list, app_value(app));
+  return list;
+}
+
 // Runs as the installed copy. dpkg unpacks the next release beside the running
 // binary and renames it over the path; /proc/self/exe then reads "<path> (deleted)".
 static int autostart_after_upgrade(const std::string& installed) {
@@ -55,17 +62,15 @@ int main(int argc, char** argv) {
   assert(g_file_set_contents(binary.c_str(), "fixture", -1, nullptr));
   assert(g_chmod(binary.c_str(), 0700) == 0);
   assert(symlink(binary.c_str(), alias.c_str()) == 0);
-  g_autoptr(FlValue) apps = fl_value_new_list();
+  AppList apps;
   std::set<std::string> seen;
   add_app(apps, seen, "Selected app", alias.c_str());
-  assert(fl_value_get_length(apps) == 1);
-  auto* app = fl_value_get_list_value(apps, 0);
-  assert(fl_value_get_string(fl_value_lookup_string(app, "process")) == binary);
+  assert(apps.size() == 1 && apps[0].process == binary);
   add_app(apps, seen, "Running app", binary.c_str());
-  assert(fl_value_get_length(apps) == 1);
+  assert(apps.size() == 1);
   assert(g_unlink(binary.c_str()) == 0);
   add_app(apps, seen, "Broken link", alias.c_str());
-  assert(fl_value_get_length(apps) == 1);
+  assert(apps.size() == 1);
   assert(g_unlink(alias.c_str()) == 0);
 
   // Snap apps run from /snap/<name>/<revision>/, which each refresh replaces.
@@ -84,25 +89,18 @@ int main(int argc, char** argv) {
   rule_name.clear();
   assert(application_rule(versions + "/2.1.314", rule_name) == versions + "/" && rule_name == "claude");
   assert(application_rule(tools + "/1.0/tool", rule_name) == tools + "/1.0/tool");
-  g_autoptr(FlValue) versioned = fl_value_new_list();
+  AppList versioned;
   std::set<std::string> versioned_seen;
   add_app(versioned, versioned_seen, nullptr, (versions + "/2.1.300").c_str(), nullptr, true);
   add_app(versioned, versioned_seen, nullptr, (versions + "/2.1.314").c_str(), nullptr, true);
-  assert(fl_value_get_length(versioned) == 1);
-  auto* claude_code = fl_value_get_list_value(versioned, 0);
-  assert(fl_value_get_string(fl_value_lookup_string(claude_code, "process")) == versions + "/");
-  assert(strcmp(fl_value_get_string(fl_value_lookup_string(claude_code, "name")), "claude") == 0);
+  assert(versioned.size() == 1);
+  assert(versioned[0].process == versions + "/" && versioned[0].name == "claude");
   // A saved rule is listed as saved.
   add_app(versioned, versioned_seen, nullptr, (versions + "/2.1.314").c_str());
-  assert(fl_value_get_length(versioned) == 2);
+  assert(versioned.size() == 2);
   // A rule saved for one version, here one an update removed, is offered the folder of versions.
   {
-    g_autoptr(FlValue) saved = fl_value_new_map();
-    g_autoptr(FlValue) rules = fl_value_new_list();
-    for (const std::string& rule : {versions + "/2.1.200", tools + "/1.0/tool"})
-      fl_value_append_take(rules, fl_value_new_string(rule.c_str()));
-    fl_value_set_string(saved, "processes", rules);
-    g_autoptr(FlValue) listed_saved = applications(saved);
+    g_autoptr(FlValue) listed_saved = app_values(applications({versions + "/2.1.200", tools + "/1.0/tool"}));
     bool offered = false, exact = false;
     for (size_t index = 0; index < fl_value_get_length(listed_saved); ++index) {
       auto* app = fl_value_get_list_value(listed_saved, index);
@@ -169,8 +167,7 @@ int main(int argc, char** argv) {
   assert(g_file_set_contents((entries + "/appimage.desktop").c_str(), appimage_entry.c_str(), -1, nullptr));
   g_autofree char* real_appimage = realpath(appimage_file_path.c_str(), nullptr);
   assert(real_appimage);
-  g_autoptr(FlValue) none = fl_value_new_map();
-  g_autoptr(FlValue) listed = applications(none);
+  g_autoptr(FlValue) listed = app_values(applications({}));
   bool wrapped_listed = false, direct_listed = false, flatpak_listed = false, bad_listed = false, appimage_listed = false;
   for (size_t index = 0; index < fl_value_get_length(listed); ++index) {
     auto* app = fl_value_get_list_value(listed, index);
@@ -185,13 +182,12 @@ int main(int argc, char** argv) {
   assert(direct_listed && !wrapped_listed && flatpak_listed && !bad_listed && appimage_listed);
   // A chosen AppImage gets the same rule.
   {
-    g_autoptr(FlValue) chosen_apps = fl_value_new_list();
+    AppList chosen_apps;
     std::set<std::string> chosen_seen;
     assert(!chosen_application_error(appimage_file_path.c_str()));
     add_app(chosen_apps, chosen_seen, nullptr, appimage_file_path.c_str(), nullptr, true);
-    auto* chosen_app = fl_value_get_list_value(chosen_apps, 0);
-    assert(fl_value_get_string(fl_value_lookup_string(chosen_app, "process")) == std::string("appimage:") + real_appimage);
-    assert(strcmp(fl_value_get_string(fl_value_lookup_string(chosen_app, "name")), "Fixture-1.0") == 0);
+    assert(chosen_apps.size() == 1 && chosen_apps[0].process == std::string("appimage:") + real_appimage);
+    assert(chosen_apps[0].name == "Fixture-1.0");
   }
   // A running AppImage's programs carry its file (APPIMAGE) and run from its mount (APPDIR).
   {
@@ -226,7 +222,7 @@ int main(int argc, char** argv) {
     const std::string pid = std::to_string(running);
     assert(running_appimage(pid.c_str(), program) == running_image);
     assert(running_appimage(pid.c_str(), "/usr/bin/fixture").empty());
-    g_autoptr(FlValue) running_apps = applications(none);
+    g_autoptr(FlValue) running_apps = app_values(applications({}));
     bool running_listed = false;
     for (size_t index = 0; index < fl_value_get_length(running_apps); ++index) {
       auto* app = fl_value_get_list_value(running_apps, index);

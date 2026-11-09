@@ -1606,7 +1606,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
         ),
         const SizedBox(height: 16),
         Text(
-          widget.windows ? l10n.runningApps : l10n.installedAndRunningApps,
+          l10n.installedAndRunningApps,
           style: Theme.of(context).textTheme.labelLarge,
         ),
         const SizedBox(height: 8),

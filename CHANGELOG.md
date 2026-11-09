@@ -30,6 +30,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   per-app routing: on Windows (IPv4) and Linux, Elarni closes them when the tunnel starts, so
   the app reconnects through it. Where the system does not allow that (IPv6 on Windows,
   macOS), **Recent connections** lists them and asks you to restart the app.
+- The Windows app list also offers the Start menu's apps and installed Microsoft Store apps,
+  such as Claude, when they are not running. On Linux the list loads without freezing the
+  window.
 
 ### Changed
 

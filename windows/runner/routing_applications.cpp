@@ -1,9 +1,18 @@
 #include "routing_applications.h"
 #include <windows.h>
 #include <shellapi.h>
+#include <shlobj.h>
+#include <shobjidl.h>
 #include <tlhelp32.h>
 #include <wrl/client.h>
 #include <wincodec.h>
+#include <winrt/Windows.ApplicationModel.h>
+#include <winrt/Windows.ApplicationModel.Core.h>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Management.Deployment.h>
+#include <winrt/Windows.Storage.h>
+#include <winrt/Windows.Storage.Streams.h>
 #include <algorithm>
 #include <map>
 #include <set>
@@ -280,6 +289,139 @@ flutter::EncodableList RunningApplications() {
   return apps;
 }
 
+namespace {
+std::wstring Lowered(std::wstring text) {
+  CharLowerBuffW(text.data(), static_cast<DWORD>(text.size()));
+  return text;
+}
+
+bool EndsWith(const std::wstring& text, const wchar_t* suffix) {
+  const size_t length = wcslen(suffix);
+  return text.size() > length && _wcsicmp(text.c_str() + text.size() - length, suffix) == 0;
+}
+
+// Uninstallers and setups in the Start menu make no app's connections.
+bool InstallerName(const std::wstring& name) {
+  const auto lower = Lowered(name);
+  for (const wchar_t* word : {L"unins", L"setup", L"installer"}) {
+    if (lower.find(word) != std::wstring::npos) return true;
+  }
+  return false;
+}
+
+// The file a shortcut starts, as saved: Resolve could search disks or the network for a moved
+// target. An advertised (MSI) shortcut names no file.
+std::wstring ShortcutTarget(const std::wstring& shortcut) {
+  Microsoft::WRL::ComPtr<IShellLinkW> link;
+  Microsoft::WRL::ComPtr<IPersistFile> file;
+  wchar_t target[MAX_PATH]{};
+  if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) ||
+      FAILED(link.As(&file)) || FAILED(file->Load(shortcut.c_str(), STGM_READ)) ||
+      link->GetPath(target, MAX_PATH, nullptr, 0) != S_OK) return {};
+  return target;
+}
+
+constexpr size_t kShortcutLimit = 2000;
+
+void FindShortcuts(const std::wstring& folder, int depth, std::vector<std::wstring>& found) {
+  WIN32_FIND_DATAW data{};
+  const HANDLE search = FindFirstFileExW((folder + L"\\*").c_str(), FindExInfoBasic, &data, FindExSearchNameMatch,
+      nullptr, FIND_FIRST_EX_LARGE_FETCH);
+  if (search == INVALID_HANDLE_VALUE) return;
+  do {
+    const std::wstring name = data.cFileName;
+    if (name == L"." || name == L".." || (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) continue;
+    const auto path = folder + L"\\" + name;
+    if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+      if (depth < 4) FindShortcuts(path, depth + 1, found);
+    } else if (EndsWith(name, L".lnk")) {
+      found.push_back(path);
+    }
+  } while (found.size() < kShortcutLimit && FindNextFileW(search, &data));
+  FindClose(search);
+}
+
+std::wstring KnownFolder(REFKNOWNFOLDERID id) {
+  PWSTR path = nullptr;
+  std::wstring folder;
+  if (SUCCEEDED(SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, nullptr, &path))) folder = path;
+  CoTaskMemFree(path);
+  return folder;
+}
+
+std::vector<uint8_t> PackageLogo(const winrt::Windows::ApplicationModel::Core::AppListEntry& entry) {
+  using namespace winrt::Windows::Storage::Streams;
+  const auto stream = entry.DisplayInfo().GetLogo({64, 64}).OpenReadAsync().get();
+  if (stream.ContentType() != L"image/png" || stream.Size() == 0 || stream.Size() > 65536) return {};
+  DataReader reader(stream);
+  const auto size = reader.LoadAsync(static_cast<uint32_t>(stream.Size())).get();
+  std::vector<uint8_t> png(size);
+  reader.ReadBytes(png);
+  return png;
+}
+}
+
+flutter::EncodableList ShortcutApplications(const std::vector<std::wstring>& folders, std::set<std::wstring>& seen) {
+  using flutter::EncodableValue;
+  flutter::EncodableList apps;
+  std::vector<std::wstring> shortcuts;
+  for (const auto& folder : folders) {
+    if (!folder.empty() && shortcuts.size() < kShortcutLimit) FindShortcuts(folder, 0, shortcuts);
+  }
+  for (const auto& shortcut : shortcuts) {
+    const auto start = shortcut.find_last_of(L"\\/") + 1;
+    const auto name = shortcut.substr(start, shortcut.size() - start - 4);
+    const auto target = ShortcutTarget(shortcut);
+    if (InstallerName(name) || !EndsWith(target, L".exe") || !LocalApplicationPath(target) ||
+        InstallerName(target.substr(target.find_last_of(L"\\/") + 1)) || RoutingUTF8(target.c_str()).size() > 1024) continue;
+    const auto attributes = GetFileAttributesW(target.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+    const auto rule = ExecutableRule(target);
+    if (!seen.insert(Lowered(rule)).second) continue;
+    auto app = RoutingApplication(target, true, rule);
+    app[EncodableValue("name")] = EncodableValue(RoutingUTF8(name.c_str()));  // as the Start menu names it
+    apps.emplace_back(std::move(app));
+  }
+  return apps;
+}
+
+flutter::EncodableList StartMenuApplications(std::set<std::wstring>& seen) {
+  return ShortcutApplications({KnownFolder(FOLDERID_Programs), KnownFolder(FOLDERID_CommonPrograms)}, seen);
+}
+
+flutter::EncodableList PackagedApplications(std::set<std::wstring>& seen) {
+  using flutter::EncodableValue;
+  using namespace winrt::Windows::ApplicationModel;
+  using namespace winrt::Windows::Management::Deployment;
+  flutter::EncodableList apps;
+  winrt::Windows::Foundation::Collections::IIterable<Package> packages{nullptr};
+  try {
+    packages = PackageManager().FindPackagesForUserWithPackageTypes(L"", PackageTypes::Main);
+  } catch (...) {
+    return apps;  // the list keeps its other apps
+  }
+  for (const auto& package : packages) {
+    try {
+      if (package.IsFramework() || package.IsResourcePackage() || package.SignatureKind() == PackageSignatureKind::System) continue;
+      const auto rule = PackageRule(std::wstring(package.InstalledLocation().Path()) + L"\\");
+      if (rule.empty() || RoutingUTF8(rule.c_str()).size() > 1024) continue;
+      const auto entries = package.GetAppListEntriesAsync().get();
+      if (entries.Size() == 0 || !seen.insert(Lowered(rule)).second) continue;
+      std::wstring name(entries.GetAt(0).DisplayInfo().DisplayName());
+      if (name.empty()) name = package.DisplayName();
+      if (name.empty()) name = PackageAppName(rule);
+      flutter::EncodableMap app = {{EncodableValue("name"), EncodableValue(RoutingUTF8(name.c_str()))},
+          {EncodableValue("process"), EncodableValue(RoutingUTF8(rule.c_str()))}};
+      try {
+        auto logo = PackageLogo(entries.GetAt(0));
+        if (!logo.empty()) app[EncodableValue("iconPng")] = EncodableValue(std::move(logo));
+      } catch (...) {}
+      apps.emplace_back(std::move(app));
+    } catch (...) {}  // A package being installed or removed is left out.
+  }
+  return apps;
+}
+
 winrt::fire_and_forget RoutingApplicationLookup::Load(flutter::EncodableList selected,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   const auto lifetime = shared_from_this();
@@ -311,6 +453,13 @@ winrt::fire_and_forget RoutingApplicationLookup::Load(flutter::EncodableList sel
       auto key = std::wstring(winrt::to_hstring(std::get<std::string>(map.at(EncodableValue("process")))));
       CharLowerBuffW(key.data(), static_cast<DWORD>(key.size()));
       seen.insert(key);
+    }
+    // Apps that are not running: the Start menu's, and Microsoft Store apps, which it lists
+    // without a shortcut file.
+    auto shortcuts = StartMenuApplications(seen);
+    auto packaged = PackagedApplications(seen);
+    for (auto* installed : {&shortcuts, &packaged}) {
+      for (auto& app : *installed) apps.emplace_back(std::move(app));
     }
     for (const auto& value : selected) {
       const auto* path = std::get_if<std::string>(&value);

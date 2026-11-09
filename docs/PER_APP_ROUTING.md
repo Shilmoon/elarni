@@ -30,6 +30,10 @@ This is routing, not a firewall or kill switch.
 A bare name matches in any folder, and a path ending in `/` matches everything
 below it.
 
+The app list shows running programs and installed apps: on Windows the Start menu's
+programs and installed Microsoft Store apps, such as Claude, on macOS the Applications
+folders, and on Linux the apps with a desktop entry. **Choose app file** adds any other program.
+
 Apps picked from the list get a rule that still matches after the app updates. On
 desktop platforms an app that keeps each version in its own folder beside the
 previous one matches that folder of versions, when it holds nothing else. Claude
