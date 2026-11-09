@@ -37,6 +37,11 @@ func Invoke(requestJSON string) string {
 	if err := json.Unmarshal([]byte(requestJSON), &request); err != nil {
 		return encodeInvokeResponse(nil, err)
 	}
+	return InvokeRequest(request)
+}
+
+// InvokeRequest runs a request its caller parsed, within Invoke's size limit.
+func InvokeRequest(request LibXrayInvokeRequest) string {
 	if err := validateAPIVersion(request.APIVersion); err != nil {
 		return encodeInvokeResponse(nil, err)
 	}
