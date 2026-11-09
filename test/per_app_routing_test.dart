@@ -1236,6 +1236,99 @@ void main() {
     expect(find.text('Windows service'), findsNWidgets(2));
   });
 
+  // A listed app that was running before the tunnel keeps connections that
+  // skip per-app routing; the core closes them where the system lets it.
+  testWidgets('connections opened before connecting ask for a restart', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      DesktopIntegration.channel,
+      (call) async => call.method == 'routingApplications' ? [] : null,
+    );
+    addTearDown(
+      () =>
+          messenger.setMockMethodCallHandler(DesktopIntegration.channel, null),
+    );
+    Map<String, Object?> opened(int key, String path, String before) => {
+      'key': key,
+      'seq': key,
+      'time': DateTime(2026, 11, 9, 12, 0, key).millisecondsSinceEpoch,
+      'network': 'tcp',
+      'host': '203.0.113.$key',
+      'port': 443,
+      'outbound': '',
+      'kind': '',
+      'owner': 'found',
+      'pid': 100 + key,
+      'path': path,
+      'before': before,
+    };
+    final list = [
+      opened(
+        1,
+        r'C:/Users/u/AppData/Local/Discord/app-1.0.9/Discord.exe',
+        'kept',
+      ),
+      opened(2, r'C:/Program Files/Telegram/Telegram.exe', 'reset'),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: PerAppRoutingEditor(
+              settings: const TunnelSettings(
+                xrayTunEnabled: true,
+                perAppMode: 'proxyOnly',
+                perAppProcesses: [
+                  r'C:\Users\u\AppData\Local\Discord\',
+                  r'C:\Program Files\Telegram\Telegram.exe',
+                ],
+              ),
+              windows: true,
+              readConnections: ({int epoch = 0, int after = 0}) async =>
+                  RecentConnections.fromMap({
+                    'epoch': 3,
+                    'seq': list.length,
+                    'connections': list,
+                  }),
+              onSave: (_) async {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('per-app-connections')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'Open before Elarni connected · Skips per-app routing until the app '
+        'reconnects',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'Open before Elarni connected · Closed, so the app reconnects through '
+        'per-app routing',
+      ),
+      findsOneWidget,
+    );
+    // Only the app whose connection stayed open is asked to restart.
+    final restart = tester.widget<Text>(
+      find.byKey(const Key('per-app-connections-restart')),
+    );
+    expect(restart.data, startsWith('Restart Discord: '));
+    for (final key in [1, 2]) {
+      expect(find.byKey(Key('per-app-add-connection-$key')), findsNothing);
+    }
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('recent connections ask for a tunnel when none answers', (
     tester,
   ) async {

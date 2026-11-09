@@ -18,6 +18,9 @@ protocol XrayCore: AnyObject, Sendable {
   /// Tells the running core its network moved, so it checks pooled connections and dials new ones on the
   /// current path. False when the core cannot take the signal.
   func socketPathChanged() async -> Bool
+  /// Lists the listed apps' connections that were open before the tunnel started and still run
+  /// outside it, for the connections view; macOS lets no program reset another's connections.
+  func moveOpenedConnections() async
   #if DEBUG
   func injectExit()
   #endif

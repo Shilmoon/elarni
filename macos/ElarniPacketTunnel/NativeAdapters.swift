@@ -553,6 +553,13 @@ final class NativeXrayCore: XrayCore, @unchecked Sendable {
     }) != nil
   }
 
+  func moveOpenedConnections() async {
+    guard lock.withLock({ running }) else { return }
+    _ = try? await ProviderLifecycleRuntime.runBlocking {
+      try Self.invokeObject(method: "moveOpenedConnections", payload: ["tunnel": TunnelSettingsFactory.tunnelPrefixes])
+    }
+  }
+
   #if DEBUG
   func injectExit() { _ = try? invoke(method: "stopXray", payload: [:]) }
   #endif

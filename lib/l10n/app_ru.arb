@@ -869,5 +869,8 @@
   "perAppConnectionListed": "Правило приложения",
   "perAppConnectionNotListed": "Не в списке",
   "perAppConnectionAdd": "Добавить в список",
-  "perAppConnectionAdded": "{name} добавлено. Сохраните изменения, чтобы применить."
+  "perAppConnectionAdded": "{name} добавлено. Сохраните изменения, чтобы применить.",
+  "perAppConnectionOpenedReset": "Открыто до подключения Elarni · Закрыто, приложение переподключится по правилам приложений",
+  "perAppConnectionOpenedKept": "Открыто до подключения Elarni · Идёт мимо правил приложений, пока приложение не переподключится",
+  "perAppConnectionsRestart": "Перезапустите {apps}: их подключения, открытые до подключения Elarni, идут мимо правил приложений, пока они не переподключатся."
 }

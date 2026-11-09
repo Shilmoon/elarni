@@ -41,6 +41,10 @@ type RecentConnection struct {
 	App string `json:"app,omitempty"`
 	// The program that started this one, when its "children:" rule took the connection.
 	Via string `json:"via,omitempty"`
+	// A listed app's connection that was open before this core started, which no routing
+	// decision saw: "reset" when the core reset it, so the app reconnects through the tunnel,
+	// "kept" when this system did not let it.
+	Before string `json:"before,omitempty"`
 }
 
 const recentCapacity = 500
@@ -137,21 +141,44 @@ func (r *recentConnections) record(id uint32, link *routing_session.Context, des
 		entry.Rules = []string{rule}
 	}
 	owner(&entry, link)
-	if len(r.entries) < recentCapacity {
-		r.entries = append(r.entries, entry)
-	} else {
-		if old := r.entries[r.next]; old.Kind == "routing" {
-			for id, key := range r.reentered {
-				if key == old.Key {
-					delete(r.reentered, id)
-				}
-			}
-		}
-		r.entries[r.next] = entry
-		r.next = (r.next + 1) % recentCapacity
-	}
+	r.add(entry)
 	if kind == "routing" && id != 0 {
 		r.reentered[id] = entry.Key
+	}
+}
+
+// add puts an entry in the ring, over the oldest once full.
+func (r *recentConnections) add(entry RecentConnection) {
+	if len(r.entries) < recentCapacity {
+		r.entries = append(r.entries, entry)
+		return
+	}
+	if old := r.entries[r.next]; old.Kind == "routing" {
+		for id, key := range r.reentered {
+			if key == old.Key {
+				delete(r.reentered, id)
+			}
+		}
+	}
+	r.entries[r.next] = entry
+	r.next = (r.next + 1) % recentCapacity
+}
+
+// NoteOpenedBefore lists connections that were open before this core started (Elarni); each
+// entry's Before says what became of it.
+func (d *DefaultDispatcher) NoteOpenedBefore(entries []RecentConnection) {
+	r := &d.recent
+	r.Lock()
+	defer r.Unlock()
+	if r.kinds == nil {
+		return // before Start or after Close
+	}
+	now := time.Now().UnixMilli()
+	for _, entry := range entries {
+		r.seq++
+		r.key++
+		entry.Key, entry.Seq, entry.Time = r.key, r.seq, now
+		r.add(entry)
 	}
 }
 

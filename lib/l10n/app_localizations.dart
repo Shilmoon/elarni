@@ -5317,6 +5317,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{name} added. Save changes to apply.'**
   String perAppConnectionAdded(String name);
+
+  /// No description provided for @perAppConnectionOpenedReset.
+  ///
+  /// In en, this message translates to:
+  /// **'Open before Elarni connected · Closed, so the app reconnects through per-app routing'**
+  String get perAppConnectionOpenedReset;
+
+  /// No description provided for @perAppConnectionOpenedKept.
+  ///
+  /// In en, this message translates to:
+  /// **'Open before Elarni connected · Skips per-app routing until the app reconnects'**
+  String get perAppConnectionOpenedKept;
+
+  /// No description provided for @perAppConnectionsRestart.
+  ///
+  /// In en, this message translates to:
+  /// **'Restart {apps}: their connections opened before Elarni connected skip per-app routing until they reconnect.'**
+  String perAppConnectionsRestart(String apps);
 }
 
 class _AppLocalizationsDelegate

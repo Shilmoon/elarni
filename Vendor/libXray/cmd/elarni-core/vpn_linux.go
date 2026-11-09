@@ -857,6 +857,8 @@ func linuxWorker(ctx context.Context, input io.Reader, output io.Writer) (code i
 	if linuxWriteFrame(output, linuxReply{Ready: true}) != nil {
 		return 1
 	}
+	// A listed app's connections opened before the tunnel are not routed per app.
+	go moveOpenedConnections()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	var gate metricsGate

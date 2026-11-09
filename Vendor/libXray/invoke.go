@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -181,6 +182,21 @@ func Invoke(requestJSON string) string {
 			return encodeInvokeResponse(nil, err)
 		}
 		return encodeInvokeResponse(&connections, nil)
+	case LibXrayMethodMoveOpenedConnections:
+		request, err := decodePayload[MoveOpenedConnectionsRequest](request.Payload)
+		if err != nil {
+			return encodeInvokeResponse(nil, err)
+		}
+		tunnel := make([]netip.Prefix, 0, len(request.Tunnel))
+		for _, text := range request.Tunnel {
+			prefix, err := netip.ParsePrefix(text)
+			if err != nil {
+				return encodeInvokeResponse(nil, err)
+			}
+			tunnel = append(tunnel, prefix.Masked())
+		}
+		reset, kept := xray.MoveOpenedConnections(tunnel)
+		return encodeInvokeResponse(&MoveOpenedConnectionsResponse{Reset: reset, Kept: kept}, nil)
 	case LibXrayMethodSocketPathChanged:
 		// The Apple path monitor: sockets would now leave through another interface.
 		internet.SocketPathChanged()

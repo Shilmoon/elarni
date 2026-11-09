@@ -3112,4 +3112,17 @@ class AppLocalizationsRu extends AppLocalizations {
   String perAppConnectionAdded(String name) {
     return '$name добавлено. Сохраните изменения, чтобы применить.';
   }
+
+  @override
+  String get perAppConnectionOpenedReset =>
+      'Открыто до подключения Elarni · Закрыто, приложение переподключится по правилам приложений';
+
+  @override
+  String get perAppConnectionOpenedKept =>
+      'Открыто до подключения Elarni · Идёт мимо правил приложений, пока приложение не переподключится';
+
+  @override
+  String perAppConnectionsRestart(String apps) {
+    return 'Перезапустите $apps: их подключения, открытые до подключения Elarni, идут мимо правил приложений, пока они не переподключатся.';
+  }
 }
