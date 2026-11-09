@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import 'desktop_integration.dart';
 import 'elarni_widgets.dart';
+import 'per_app_presets.dart';
 import 'tunnel_channel.dart';
 import 'strings.dart';
 
@@ -380,6 +381,9 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
   int _connectionsEpoch = 0, _connectionsSeq = 0;
   bool _connectionsRead = false, _readingConnections = false;
   Timer? _connectionsTimer;
+  // The open preset and the rules chosen from it.
+  String? _preset;
+  Set<String>? _presetChosen;
   bool get toolsExpanded => draft.toolsExpanded;
   set toolsExpanded(bool value) => draft.toolsExpanded = value;
 
@@ -1646,6 +1650,8 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
                   },
                 ),
         ),
+        const SizedBox(height: 16),
+        _presets(),
         ExpansionTile(
           key: const Key('per-app-tools'),
           title: Text(l10n.profileAndExecutableTools),
@@ -1709,6 +1715,110 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
             child: Text(l10n.done),
           ),
         ]),
+      ],
+    );
+  }
+
+  String _presetName(String id) => switch (id) {
+    'steam' => l10n.perAppPresetSteam,
+    'browsers' => l10n.perAppPresetBrowsers,
+    _ => appPresets.firstWhere((preset) => preset.id == id).apps.first.name,
+  };
+
+  // A preset offers the apps of its group that the app list has, with the
+  // list's rules; an app the list lacks is shown as not found.
+  Widget _presets() {
+    final listed = selections.map((rule) => identity(innerRule(rule))).toSet();
+    final hosted = [
+      for (final app in apps)
+        if (app.process != unknownOwnerRule)
+          (name: app.name, process: app.process),
+    ];
+    final open = appPresets.where((preset) => preset.id == _preset).firstOrNull;
+    final found = open?.find(hosted) ?? const [];
+    final candidates = {
+      for (final entry in found)
+        for (final rule in entry.rules)
+          if (!listed.contains(identity(innerRule(rule)))) rule,
+    };
+    final chosen = (_presetChosen ?? candidates).intersection(candidates);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(l10n.perAppPresets, style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            for (final preset in appPresets)
+              FilterChip(
+                key: Key('per-app-preset:${preset.id}'),
+                label: Text(_presetName(preset.id)),
+                selected: preset.id == _preset,
+                onSelected: enabled && !loading
+                    ? (on) => setState(() {
+                        _preset = on ? preset.id : null;
+                        _presetChosen = null;
+                      })
+                    : null,
+              ),
+          ],
+        ),
+        if (open != null) ...[
+          const SizedBox(height: 8),
+          for (final (:app, :rules) in found)
+            if (rules.isEmpty)
+              ListTile(
+                key: Key('per-app-preset-missing:${app.name}'),
+                enabled: false,
+                title: Text(app.name),
+                trailing: Text(l10n.perAppPresetNotFound),
+              )
+            else
+              for (final rule in rules)
+                CheckboxListTile(
+                  key: Key('per-app-preset-app:$rule'),
+                  secondary: _icon(_app(rule)),
+                  title: Text(_app(rule).name),
+                  subtitle: listed.contains(identity(innerRule(rule)))
+                      ? Text(l10n.perAppPresetAdded)
+                      : rule != innerRule(rule)
+                      ? Text(l10n.perAppPresetWithChildren)
+                      : null,
+                  controlAffinity: ListTileControlAffinity.trailing,
+                  value: !candidates.contains(rule) || chosen.contains(rule),
+                  onChanged: enabled && candidates.contains(rule)
+                      ? (checked) => setState(
+                          () => _presetChosen = checked == true
+                              ? {...chosen, rule}
+                              : ({...chosen}..remove(rule)),
+                        )
+                      : null,
+                ),
+          const SizedBox(height: 8),
+          Text(
+            l10n.perAppPresetsHelp,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton(
+              key: const Key('per-app-preset-add'),
+              onPressed: enabled && chosen.isNotEmpty
+                  ? () => setState(() {
+                      selections = [
+                        ...selections,
+                        ...candidates.where(chosen.contains),
+                      ];
+                      _preset = null;
+                      _presetChosen = null;
+                    })
+                  : null,
+              child: Text(l10n.perAppAddPresetApps(chosen.length)),
+            ),
+          ),
+        ],
       ],
     );
   }

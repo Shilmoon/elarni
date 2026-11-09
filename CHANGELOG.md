@@ -33,6 +33,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - The Windows app list also offers the Start menu's apps and installed Microsoft Store apps,
   such as Claude, when they are not running. On Linux the list loads without freezing the
   window.
+- **Presets** in the desktop per-app app list add Discord, Telegram, Claude with Claude Code,
+  Steam with its games, or browsers at once, each with the rule the app list gives it.
 
 ### Changed
 

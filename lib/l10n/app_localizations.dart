@@ -1556,6 +1556,54 @@ abstract class AppLocalizations {
   /// **'with the programs it starts'**
   String get perAppWithChildren;
 
+  /// No description provided for @perAppPresets.
+  ///
+  /// In en, this message translates to:
+  /// **'Presets'**
+  String get perAppPresets;
+
+  /// No description provided for @perAppPresetSteam.
+  ///
+  /// In en, this message translates to:
+  /// **'Steam and games'**
+  String get perAppPresetSteam;
+
+  /// No description provided for @perAppPresetBrowsers.
+  ///
+  /// In en, this message translates to:
+  /// **'Browsers'**
+  String get perAppPresetBrowsers;
+
+  /// No description provided for @perAppPresetAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'Added'**
+  String get perAppPresetAdded;
+
+  /// No description provided for @perAppPresetNotFound.
+  ///
+  /// In en, this message translates to:
+  /// **'Not found'**
+  String get perAppPresetNotFound;
+
+  /// No description provided for @perAppPresetWithChildren.
+  ///
+  /// In en, this message translates to:
+  /// **'With the programs it starts'**
+  String get perAppPresetWithChildren;
+
+  /// No description provided for @perAppPresetsHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'A preset offers the apps the app list found, each with the rule this computer gives it. For an app it does not find, use Choose app file.'**
+  String get perAppPresetsHelp;
+
+  /// No description provided for @perAppAddPresetApps.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Add 1 app} other{Add {count} apps}}'**
+  String perAppAddPresetApps(int count);
+
   /// No description provided for @perAppConnectionStartedBy.
   ///
   /// In en, this message translates to:

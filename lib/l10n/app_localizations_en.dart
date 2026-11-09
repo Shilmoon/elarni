@@ -876,6 +876,39 @@ class AppLocalizationsEn extends AppLocalizations {
   String get perAppWithChildren => 'with the programs it starts';
 
   @override
+  String get perAppPresets => 'Presets';
+
+  @override
+  String get perAppPresetSteam => 'Steam and games';
+
+  @override
+  String get perAppPresetBrowsers => 'Browsers';
+
+  @override
+  String get perAppPresetAdded => 'Added';
+
+  @override
+  String get perAppPresetNotFound => 'Not found';
+
+  @override
+  String get perAppPresetWithChildren => 'With the programs it starts';
+
+  @override
+  String get perAppPresetsHelp =>
+      'A preset offers the apps the app list found, each with the rule this computer gives it. For an app it does not find, use Choose app file.';
+
+  @override
+  String perAppAddPresetApps(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Add $count apps',
+      one: 'Add 1 app',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String perAppConnectionStartedBy(String name) {
     return 'Started by $name';
   }
