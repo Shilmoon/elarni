@@ -60,6 +60,15 @@ void main() {
     await tester.tap(find.text('Debug').last);
     await tester.pumpAndSettle();
     expect(control.settings.logLevel, 'debug');
+    expect(
+      tester
+          .widget<DropdownButton<String>>(
+            find.byKey(const ValueKey('logLevel')),
+          )
+          .onChanged,
+      isNotNull,
+      reason: 'the level can be changed again on every platform',
+    );
 
     await tester.tap(find.text('Copy'));
     await tester.pump();
