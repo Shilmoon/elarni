@@ -16,10 +16,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ### Fixed
 
-- On iPhone and iPad, apps' UDP traffic now reaches the server. The packet bridge's relay
-  socket to the core was not bound to loopback, and iOS failed every send on it, so each UDP
-  session ended at its first datagram: games such as Brawl Stars fell back to TCP and lagged in
-  battles, and QUIC fell back to TCP.
+- On iPhone, iPad and Mac, apps' UDP traffic now reaches the server. The packet bridge's relay
+  socket to the core was not bound to loopback, and iOS and macOS dropped every datagram sent
+  on it, so each UDP session ended at its first datagram: games such as Brawl Stars fell back
+  to TCP and lagged in battles, and QUIC fell back to TCP.
 - Traffic to the VPN adapter's own subnet, other than DNS, now ends at once instead of
   following routing rules for private ranges. On Android, each connect set off 2,000-4,000
   Private DNS connections (port 853 on the VPN's resolver) in about 3 s, and the check hung
