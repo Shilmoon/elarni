@@ -70,6 +70,8 @@ func dispatch(raw string) (result response) {
 		code = "invalid_target"
 	case "sealCatalogBackup", "openCatalogBackup", "validateCatalogBackup":
 		code = "invalid_backup"
+	case libxray.LibXrayMethodCheckProcessRules:
+		code = "invalid_rules"
 	case libxray.LibXrayMethodRunXrayFromJson:
 		code = "connection_failed"
 		var limits struct {

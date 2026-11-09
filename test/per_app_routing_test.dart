@@ -672,6 +672,105 @@ void main() {
     expect(saved!.perAppTargets, {'-1': 'direct'});
   });
 
+  // A rule that matches nothing used to look like any other. Each rule shows how many
+  // running programs it matches and why it may match none, with a fix where one exists.
+  testWidgets('rules show running programs, warnings and suggested fixes', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    const versions = '/home/u/.local/share/claude/versions/';
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      DesktopIntegration.channel,
+      (call) async => call.method == 'routingApplications'
+          ? [
+              {
+                'name': '2.1.300',
+                'process': '${versions}2.1.300',
+                'suggested': versions,
+              },
+            ]
+          : null,
+    );
+    addTearDown(
+      () =>
+          messenger.setMockMethodCallHandler(DesktopIntegration.channel, null),
+    );
+    final asked = <List<String>>[];
+    TunnelSettings? saved;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: PerAppRoutingEditor(
+              settings: const TunnelSettings(
+                xrayTunEnabled: true,
+                perAppMode: 'bypass',
+                perAppProcesses: [
+                  '/usr/bin/curl',
+                  '/opt/tools',
+                  '${versions}2.1.300',
+                  '-1',
+                ],
+                perAppTargets: {'/opt/tools': 'block'},
+              ),
+              windows: false,
+              linux: true,
+              checkRules: (rules) async {
+                asked.add(rules);
+                return ProcessRuleChecks({
+                  '/usr/bin/curl': const ProcessRuleCheck(
+                    '/usr/bin/curl',
+                    2,
+                    [],
+                  ),
+                  '/opt/tools': const ProcessRuleCheck('/opt/tools', 0, [
+                    ('folder', '/opt/tools/'),
+                  ]),
+                  '/opt/tools/': const ProcessRuleCheck('/opt/tools/', 3, []),
+                });
+              },
+              onSave: (value) async => saved = value,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // "-1" is no program to look for.
+    expect(asked.first, ['/usr/bin/curl', '/opt/tools', '${versions}2.1.300']);
+    expect(find.textContaining('2 programs running'), findsOneWidget);
+    expect(find.textContaining('Not running now'), findsOneWidget);
+    expect(
+      find.byKey(const Key('per-app-warning:/opt/tools:folder')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(Key('per-app-warning:${versions}2.1.300:versioned')),
+      findsOneWidget,
+    );
+    expect(find.text('Suggested rule: /opt/tools/'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('per-app-use:/opt/tools:folder')));
+    await tester.pumpAndSettle();
+    // The fixed rule keeps its place and target, and is checked again.
+    expect(asked.last, ['/usr/bin/curl', '/opt/tools/', '${versions}2.1.300']);
+    expect(find.textContaining('3 programs running'), findsOneWidget);
+    await tester.tap(
+      find.byKey(Key('per-app-use:${versions}2.1.300:versioned')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+    expect(saved!.perAppProcesses, [
+      '/usr/bin/curl',
+      '/opt/tools/',
+      versions,
+      '-1',
+    ]);
+    expect(saved!.perAppTargets, {'/opt/tools/': 'block'});
+  });
+
   // A Snap or script launcher's rule would name /usr/bin/snap or /bin/sh.
   testWidgets('a launcher chosen on Linux explains why it is refused', (
     tester,

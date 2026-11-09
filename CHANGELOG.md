@@ -4,6 +4,15 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Added
+
+- The per-app rule list shows, on Windows, macOS and Linux, how many running programs each rule
+  matches, and warns when a rule may match nothing: a missing file, a folder without its
+  trailing separator, a script, link or launcher, the wrong letter case, or a rule for one
+  version of an app. **Use suggested rule** fixes it where it can, including rules for one
+  Squirrel or Claude Code version saved before. On Android, listed apps that are not installed
+  are shown and can be removed.
+
 ### Fixed
 
 - Per-app rules for the Claude app on Windows, and for other Microsoft Store apps, stopped

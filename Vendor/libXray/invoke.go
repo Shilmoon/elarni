@@ -50,6 +50,8 @@ func Invoke(requestJSON string) string {
 		return encodeInvokeResponse(result, err)
 	case LibXrayMethodGetFreePorts:
 		return invokeGetFreePorts(request.Payload)
+	case LibXrayMethodCheckProcessRules:
+		return invokeCheckProcessRules(request.Payload)
 	case LibXrayMethodConvertShareLinksToXrayJson:
 		return invokeConvertShareLinksToXrayJson(request.Payload)
 	case LibXrayMethodImportClientProfiles:

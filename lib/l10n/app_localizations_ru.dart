@@ -2954,4 +2954,70 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get perAppUnknownOwner => 'Неопознанный трафик';
+
+  @override
+  String get perAppUnknownOwnerHelp =>
+      'Трафик без приложения: WSL, виртуальные машины, закрытые соединения';
+
+  @override
+  String perAppRunningNow(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'запущено $count программы',
+      many: 'запущено $count программ',
+      few: 'запущено $count программы',
+      one: 'запущена 1 программа',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get perAppNotRunning => 'Сейчас не запущено';
+
+  @override
+  String get perAppWarningMissing => 'Не найдено на этом компьютере.';
+
+  @override
+  String get perAppWarningFolder =>
+      'Это папка. Правило для папки заканчивается разделителем и охватывает программы внутри.';
+
+  @override
+  String get perAppWarningNotFolder => 'Это файл, а не папка.';
+
+  @override
+  String get perAppWarningScript =>
+      'Скрипт: запускается его интерпретатор, а не сам скрипт. Добавьте программу, которую он запускает.';
+
+  @override
+  String get perAppWarningSymlink =>
+      'Ссылка: программа запускается как файл, на который она указывает.';
+
+  @override
+  String get perAppWarningCase =>
+      'Регистр букв отличается от файла на диске, а правила его учитывают.';
+
+  @override
+  String get perAppWarningLauncher =>
+      'Ярлык или загрузчик: он запускает другую программу, которой это правило не соответствует.';
+
+  @override
+  String get perAppWarningBundleName =>
+      'Имя без пути соответствует файлу программы, а не пакету приложения. Выберите приложение из списка.';
+
+  @override
+  String get perAppWarningVersioned =>
+      'Указывает одну версию приложения и перестанет срабатывать после следующего обновления.';
+
+  @override
+  String get perAppWarningUnknown =>
+      'Это правило может не соответствовать ни одной программе.';
+
+  @override
+  String perAppSuggestedRule(String rule) {
+    return 'Предлагаемое правило: $rule';
+  }
+
+  @override
+  String get perAppUseSuggested => 'Использовать';
 }

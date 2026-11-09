@@ -5071,6 +5071,96 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Unidentified traffic'**
   String get perAppUnknownOwner;
+
+  /// No description provided for @perAppUnknownOwnerHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Traffic without an app: WSL, virtual machines, closed connections'**
+  String get perAppUnknownOwnerHelp;
+
+  /// No description provided for @perAppRunningNow.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 program running} other{{count} programs running}}'**
+  String perAppRunningNow(int count);
+
+  /// No description provided for @perAppNotRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Not running now'**
+  String get perAppNotRunning;
+
+  /// No description provided for @perAppWarningMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'Not found on this computer.'**
+  String get perAppWarningMissing;
+
+  /// No description provided for @perAppWarningFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'This is a folder. A folder rule ends with a separator and matches the programs inside.'**
+  String get perAppWarningFolder;
+
+  /// No description provided for @perAppWarningNotFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'This is a file, not a folder.'**
+  String get perAppWarningNotFolder;
+
+  /// No description provided for @perAppWarningScript.
+  ///
+  /// In en, this message translates to:
+  /// **'A script: its interpreter runs, not the script. Add the program it starts.'**
+  String get perAppWarningScript;
+
+  /// No description provided for @perAppWarningSymlink.
+  ///
+  /// In en, this message translates to:
+  /// **'A link: the program runs as the file it points to.'**
+  String get perAppWarningSymlink;
+
+  /// No description provided for @perAppWarningCase.
+  ///
+  /// In en, this message translates to:
+  /// **'The letter case differs from the file on disk, and rules compare it.'**
+  String get perAppWarningCase;
+
+  /// No description provided for @perAppWarningLauncher.
+  ///
+  /// In en, this message translates to:
+  /// **'A launcher: it starts another program, which this rule does not match.'**
+  String get perAppWarningLauncher;
+
+  /// No description provided for @perAppWarningBundleName.
+  ///
+  /// In en, this message translates to:
+  /// **'A bare name matches a program file, not an app bundle. Pick the app from the list.'**
+  String get perAppWarningBundleName;
+
+  /// No description provided for @perAppWarningVersioned.
+  ///
+  /// In en, this message translates to:
+  /// **'Names one version of the app, so it stops matching after the next update.'**
+  String get perAppWarningVersioned;
+
+  /// No description provided for @perAppWarningUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'This rule may not match any program.'**
+  String get perAppWarningUnknown;
+
+  /// No description provided for @perAppSuggestedRule.
+  ///
+  /// In en, this message translates to:
+  /// **'Suggested rule: {rule}'**
+  String perAppSuggestedRule(String rule);
+
+  /// No description provided for @perAppUseSuggested.
+  ///
+  /// In en, this message translates to:
+  /// **'Use suggested rule'**
+  String get perAppUseSuggested;
 }
 
 class _AppLocalizationsDelegate

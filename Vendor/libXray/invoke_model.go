@@ -11,6 +11,7 @@ type LibXrayMethod string
 
 const (
 	LibXrayMethodGetFreePorts                LibXrayMethod = "getFreePorts"
+	LibXrayMethodCheckProcessRules           LibXrayMethod = "checkProcessRules"
 	LibXrayMethodConvertShareLinksToXrayJson LibXrayMethod = "convertShareLinksToXrayJson"
 	LibXrayMethodImportClientProfiles        LibXrayMethod = "importClientProfiles"
 	LibXrayMethodNormalizeClientInput        LibXrayMethod = "normalizeClientInput"

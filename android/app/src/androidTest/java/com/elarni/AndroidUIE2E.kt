@@ -713,6 +713,24 @@ class AndroidUIE2E {
         assertEquals("proxyOnly", snapshot().settings.string("perAppMode"))
     }
 
+    // A listed package that is not installed matched nothing and was hidden; it is listed so it can be removed.
+    @Test fun perAppListsSavedPackagesThatAreNotInstalled() {
+        val installed = call("apps").objects("apps").first().string("package")
+        val missing = "com.example.elarni.notinstalled"
+        call("settings", obj("settings" to obj("perAppMode" to "bypass", "perAppProcesses" to JSONArray(listOf(installed, missing)), "xrayTunEnabled" to true)))
+        ui.onNode(hasText("Settings") and hasClickAction()).performClick()
+        click("Apps & routes")
+        click("Per-app routing")
+        val list = ui.onNodeWithTag("per-app-list")
+        ui.waitUntil(10_000) { ui.onAllNodesWithText("Selected apps · 2").fetchSemanticsNodes().isNotEmpty() }
+        list.performScrollToNode(hasTestTag("per-app-missing-$missing"))
+        ui.onNodeWithText("Not installed on this device, so this rule matches nothing.").assertIsDisplayed()
+        ui.onNodeWithTag("per-app-missing-$missing").performClick()
+        ui.waitUntil(10_000) { ui.onAllNodesWithText("Selected apps · 1").fetchSemanticsNodes().isNotEmpty() }
+        click("Save changes")
+        ui.waitUntil(10_000) { snapshot().settings.strings("perAppProcesses") == listOf(installed) }
+    }
+
     @Test fun perAppEachAppTakesItsOwnTargetAndOtherAppsKeepTheMode() {
         call("import", obj("text" to "vless://00000000-0000-4000-8000-000000000001@127.0.0.1:18080?encryption=none#Target%20server"))
         val (first, second) = call("apps").objects("apps").distinctBy { it.getInt("uid") }.take(2).map { it.string("package") }

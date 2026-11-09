@@ -5355,6 +5355,23 @@ for line in sys.stdin:
     }
   });
 
+  // The per-app editor asks the core which rules match running programs: the
+  // core that answers is one, and a rule for a missing file says so.
+  test('per-app rule checks count running programs with the core', () async {
+    final missing =
+        '${Directory.systemTemp.path}${Platform.pathSeparator}elarni-never-running';
+    final checks = await backend.control.checkProcessRules([corePath, missing]);
+    expect(checks.listed, isTrue);
+    expect(checks.rules[corePath]!.running, greaterThan(0));
+    expect(checks.rules[corePath]!.warnings, isEmpty);
+    expect(checks.rules[missing]!.running, 0);
+    expect(checks.rules[missing]!.warnings.single.$1, 'missing');
+    await expectLater(
+      backend.control.checkProcessRules(['']),
+      throwsA(isA<PlatformException>()),
+    );
+  });
+
   test(
     'the device ID shown is the one the provider gets, and a reset changes only that subscription',
     () async {

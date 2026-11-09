@@ -2913,4 +2913,67 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get perAppUnknownOwner => 'Unidentified traffic';
+
+  @override
+  String get perAppUnknownOwnerHelp =>
+      'Traffic without an app: WSL, virtual machines, closed connections';
+
+  @override
+  String perAppRunningNow(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count programs running',
+      one: '1 program running',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get perAppNotRunning => 'Not running now';
+
+  @override
+  String get perAppWarningMissing => 'Not found on this computer.';
+
+  @override
+  String get perAppWarningFolder =>
+      'This is a folder. A folder rule ends with a separator and matches the programs inside.';
+
+  @override
+  String get perAppWarningNotFolder => 'This is a file, not a folder.';
+
+  @override
+  String get perAppWarningScript =>
+      'A script: its interpreter runs, not the script. Add the program it starts.';
+
+  @override
+  String get perAppWarningSymlink =>
+      'A link: the program runs as the file it points to.';
+
+  @override
+  String get perAppWarningCase =>
+      'The letter case differs from the file on disk, and rules compare it.';
+
+  @override
+  String get perAppWarningLauncher =>
+      'A launcher: it starts another program, which this rule does not match.';
+
+  @override
+  String get perAppWarningBundleName =>
+      'A bare name matches a program file, not an app bundle. Pick the app from the list.';
+
+  @override
+  String get perAppWarningVersioned =>
+      'Names one version of the app, so it stops matching after the next update.';
+
+  @override
+  String get perAppWarningUnknown => 'This rule may not match any program.';
+
+  @override
+  String perAppSuggestedRule(String rule) {
+    return 'Suggested rule: $rule';
+  }
+
+  @override
+  String get perAppUseSuggested => 'Use suggested rule';
 }

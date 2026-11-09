@@ -466,10 +466,14 @@ func (m *ProcessNameMatcher) Apply(ctx routing.Context) (matched bool) {
 		return m.MatchUnknown
 	}
 	code = "not_matched"
-	if m.MatchXraySelf {
-		if pid == os.Getpid() {
-			return true
-		}
+	return m.MatchesProcess(pid, name, absPath)
+}
+
+// MatchesProcess reports whether the rule names a process, as FindProcess describes it.
+// Elarni: the per-app editor counts running programs with it, as routing would match them.
+func (m *ProcessNameMatcher) MatchesProcess(pid int, name, absPath string) bool {
+	if m.MatchXraySelf && pid == os.Getpid() {
+		return true
 	}
 	if runtime.GOOS == "windows" {
 		name = strings.TrimSuffix(strings.ToLower(name), ".exe")
