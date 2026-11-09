@@ -278,7 +278,13 @@ class Catalog(val data: JSONObject) {
             assignRouting(target, null, byUser = provider == null); return null
         }
         val profile = parsed.getJSONObject("profile")
-        val title = display(profile.string("Name")) ?: "Routing profile"
+        var title = display(profile.string("Name")) ?: "Routing profile"
+        if (forceNew) {
+            // A new profile takes a name of its own; the same name is how a repeated import finds the profile to replace.
+            val base = title; var suffix = 2
+            while (routes.any { it.string("name") == title }) title = "$base ${suffix++}"
+            profile.put("Name", title)
+        }
         val previous = if (forceNew) null else if (update != null) route(update) else routes.firstOrNull {
             if (provider == null) it.string("providerSubscriptionId").isEmpty() && it.string("name") == title else it.string("providerSubscriptionId") == provider
         }

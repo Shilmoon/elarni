@@ -629,13 +629,11 @@ class Repository(private val app: ElarniApplication) {
                 val value = Settings.perAppProfile(args.getString("text"))
                 candidate.data.put("settings", Settings.normalize(candidate.settings.put("perAppMode", value.getString("mode")).put("perAppProcesses", value.getJSONArray("processes")).put("perAppTargets", value.optJSONObject("targets") ?: JSONObject()).put("xrayTunEnabled", true), candidate.data.optJSONObject("inboundCredentials")))
             }
-            "saveRouting" -> { candidate.importRouting(args.getString("text"), update = id.takeIf(String::isNotEmpty)) }
+            // The editor's "New profile" starts every draft under one name, so a new profile never replaces another.
+            "saveRouting" -> { candidate.importRouting(args.getString("text"), update = id.takeIf(String::isNotEmpty), forceNew = id.isEmpty()) }
             "duplicateRouting" -> {
                 val profile = candidate.route(id).getJSONObject("profile").copy()
-                val base = profile.string("Name", "Routing profile") + " copy"
-                var title = base; var suffix = 2
-                while (candidate.routes.any { it.string("name") == title }) title = "$base ${suffix++}"
-                candidate.importRouting(profile.put("Name", title).toString(), forceNew = true)
+                candidate.importRouting(profile.put("Name", profile.string("Name", "Routing profile") + " copy").toString(), forceNew = true)
             }
             "assignRouting" -> {
                 val route = args.string("routeId")
