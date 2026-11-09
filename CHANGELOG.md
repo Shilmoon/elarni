@@ -21,6 +21,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   Private DNS connections (port 853 on the VPN's resolver) in about 3 s, and the check hung
   for 16 s or more before it fell back to plain DNS; Windows sent subnet broadcasts (NetBIOS,
   Spotify device discovery) out the direct route.
+- A Windows connect that the PC slept through no longer fails when it wakes. The helper's
+  30 s startup wait and the app's 120 s connect wait counted the time asleep, so both ran out
+  at resume, the helper exited and the app started over, although the core was ready seconds
+  later. Helper and app waits on Windows now count only the time the PC is awake.
 
 ## 0.5.1 - 2026-11-08
 

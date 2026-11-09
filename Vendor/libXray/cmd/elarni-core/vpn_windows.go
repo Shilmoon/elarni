@@ -277,7 +277,7 @@ func stopVPN() (any, error) {
 		if ok && reply.Ready {
 			return map[string]any{}, nil
 		}
-	case <-time.After(8 * time.Second):
+	case <-awakeAfter(8 * time.Second):
 	}
 	platformStop()
 	return nil, errors.New("vpn_failed")
@@ -359,7 +359,7 @@ func connectVPN() error {
 	}
 	select {
 	case err = <-connected:
-	case <-time.After(15 * time.Second):
+	case <-awakeAfter(15 * time.Second):
 		err = errors.New("vpn_peer_rejected")
 	}
 	if err != nil {
@@ -825,7 +825,7 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 			}
 		// Below the broker's 8 s stop wait. Hundreds of flows and the Wintun close can
 		// pass 2 s, which then ended the elevated owner on a server switch.
-		case <-time.After(6 * time.Second):
+		case <-awakeAfter(6 * time.Second):
 			fatal = true // Never reuse globals while a previous runtime is stopping.
 		}
 	}()
@@ -833,7 +833,7 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 	case err = <-started:
 	case <-closed:
 		return 1, false, true
-	case <-time.After(30 * time.Second):
+	case <-awakeAfter(30 * time.Second):
 		if flightrecorder.Enabled() {
 			flightrecorder.Record(flightrecorder.Event{Name: "windows_vpn_failure", Code: "startup_timeout"})
 		}
