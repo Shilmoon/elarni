@@ -116,12 +116,19 @@ extension _ProxyCommands on DesktopProxy {
         } on Object {
           // The page is still useful without the core's version.
         }
-        Object? vpnService;
-        if (Platform.isWindows) {
+        // The UI reloads on every backend event, so this one is asked again
+        // only after half a minute.
+        final known = _vpnService;
+        if (Platform.isWindows &&
+            (known == null || _clock.elapsedMilliseconds - known.at >= 30000)) {
           try {
-            vpnService = (await _native('vpnServiceStatus', {}))['enabled'];
+            _vpnService = (
+              enabled: (await _native('vpnServiceStatus', {}))['enabled'],
+              at: _clock.elapsedMilliseconds,
+            );
           } on Object {
             // The row then reads as off.
+            _vpnService = null;
           }
         }
         return {
@@ -129,14 +136,19 @@ extension _ProxyCommands on DesktopProxy {
           'os': Platform.operatingSystemVersion,
           'appVersion': ?desktopAppVersion,
           'coreVersion': ?_coreVersion,
-          'vpnService': ?vpnService,
+          'vpnService': ?_vpnService?.enabled,
         };
       case 'setVPNService':
         if (!Platform.isWindows) throw desktopError('unsupported_method');
+        _vpnService = null;
         // The consent prompt waits for the user.
         final service = await _native('setVPNService', {
           'enabled': args['enabled'] == true,
         }, timeout: const Duration(seconds: 90));
+        _vpnService = (
+          enabled: service['enabled'],
+          at: _clock.elapsedMilliseconds,
+        );
         return {'vpnService': service['enabled']};
       // Settings replace their system info with this reply.
       case 'setLaunchAtLogin':

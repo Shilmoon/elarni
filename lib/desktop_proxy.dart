@@ -166,6 +166,7 @@ final class DesktopProxy {
   int _manualProbes = 0;
   bool _interruptingProbes = false;
   String? _coreVersion;
+  ({Object? enabled, int at})? _vpnService;
   Timer? _timer, _initRetry;
   void Function(String?)? _listener;
   bool _disposed = false, _storageLost = false;
