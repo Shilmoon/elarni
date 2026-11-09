@@ -29,8 +29,8 @@ final class RoutingStore {
   static let maxRouteModelBytes = 8 * 1024 * 1024
 #endif
   // The core reads each geofile whole; a downloaded original may be up to libXray's geo.MaxSourceBytes.
-  static let maxGeofileBytes = 64 * 1024 * 1024
-  static let maxOriginalGeofileBytes = 256 * 1024 * 1024
+  nonisolated static let maxGeofileBytes = 64 * 1024 * 1024
+  nonisolated static let maxOriginalGeofileBytes = 256 * 1024 * 1024
   nonisolated static let geofileTooLargeMessage = "A geofile is over 64 MB, which the core cannot load whole. " +
     "Turn on Reduce routing-data size for this profile or use a smaller geofile."
   private var staging = false
@@ -683,7 +683,7 @@ final class RoutingStore {
             updated.geositeUpdatedAt = now(); updated.geositeDownloadedSource = source; updated.geositeValidators = download.validators
           }
         }
-        try validateGeofile(directory: staging, name: name, kind: kind)
+        try await Self.offMain { try Self.validateGeofile(directory: staging, name: name, kind: kind) }
       }
       guard let currentIndex = catalog.profiles.firstIndex(where: { $0.id == id }),
             catalog.profiles[currentIndex].publicationGeneration == previous.publicationGeneration else {
@@ -699,8 +699,10 @@ final class RoutingStore {
       updated.geoipValidators = downloadMetadata.geoipValidators
       updated.geositeValidators = downloadMetadata.geositeValidators
       let revision: String
-      if let retained = previous.originalAssetRevision ?? previous.assetRevision,
-         sameGeofiles(staging, assetsURL.appendingPathComponent(retained)) {
+      let assets = assetsURL
+      let retainedOriginal = previous.originalAssetRevision ?? previous.assetRevision
+      let unchanged = try await Self.offMain { retainedOriginal.map { Self.sameGeofiles(staging, assets.appendingPathComponent($0)) } ?? false }
+      if let retained = retainedOriginal, unchanged {
         revision = retained
         try FileManager.default.removeItem(at: staging)
       } else {
@@ -720,15 +722,21 @@ final class RoutingStore {
       updated.serverGeodata = servers
       do {
         // Complete files need a derived revision only to hold empty records for skipped codes.
-        if let derived = try reduceGeofiles(original: destination, routes: previous.routeModel, servers: servers, reduce: chunked) {
-          if let retained = previous.assetRevision,
-             sameGeofiles(assetsURL.appendingPathComponent(derived.revision), assetsURL.appendingPathComponent(retained)) {
-            try FileManager.default.removeItem(at: assetsURL.appendingPathComponent(derived.revision))
-            updated.assetRevision = retained
-          } else {
-            updated.assetRevision = derived.revision
-            pendingAssetRevisions[id, default: []].insert(derived.revision)
-          }
+        // Named before its files exist, so that reclaimUnusedFiles leaves them while they are written off the main actor.
+        let derivedRevision = UUID().uuidString.lowercased()
+        pendingAssetRevisions[id, default: []].insert(derivedRevision)
+        let routeModel = previous.routeModel, retainedDerived = previous.assetRevision
+        let derived = try await Self.offMain { () -> (skipped: [String], kept: Bool)? in
+          guard let skipped = try Self.reduceGeofiles(assets: assets, revision: derivedRevision, original: destination,
+            routes: routeModel, servers: servers, reduce: chunked) else { return nil }
+          let kept = retainedDerived.map {
+            Self.sameGeofiles(assets.appendingPathComponent(derivedRevision), assets.appendingPathComponent($0))
+          } ?? false
+          if kept { try FileManager.default.removeItem(at: assets.appendingPathComponent(derivedRevision)) }
+          return (skipped, kept)
+        }
+        if let derived {
+          updated.assetRevision = derived.kept ? retainedDerived : derivedRevision
           updated.skippedGeodata = derived.skipped
         }
         if chunked { updated.reductionStatus = "reduced" }
@@ -769,7 +777,12 @@ final class RoutingStore {
     }
   }
 
-  private func sameGeofiles(_ first: URL, _ second: URL) -> Bool {
+  /// Reading, comparing and writing geofiles of tens of megabytes runs off the main actor, which draws the window.
+  private nonisolated static func offMain<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+    try await Task.detached(priority: .userInitiated, operation: work).value
+  }
+
+  private nonisolated static func sameGeofiles(_ first: URL, _ second: URL) -> Bool {
     ["geoip.dat", "geosite.dat"].allSatisfy { name in
       let a = first.appendingPathComponent(name).path, b = second.appendingPathComponent(name).path
       let exists = FileManager.default.fileExists(atPath: a)
@@ -921,7 +934,9 @@ final class RoutingStore {
   // Returns nil when complete files serve unchanged. Direct and Block rules and domestic DNS
   // domains may name codes the geofiles lack: those get empty records, which Xray loads as
   // matching nothing. Every other reference needs its record.
-  private func reduceGeofiles(original: URL, routes: Data, servers: [String], reduce: Bool) throws -> (revision: String, skipped: [String])? {
+  // The reduced files go to the directory [revision] of [assets]; the result names the skipped codes.
+  private nonisolated static func reduceGeofiles(assets: URL, revision: String, original: URL, routes: Data, servers: [String],
+    reduce: Bool) throws -> [String]? {
     var references: [String: Set<String>] = ["geoip": [], "geosite": []]
     var optional: [String: Set<String>] = ["geoip": [], "geosite": []]
     func collect(_ value: Any, skippable: Bool = false) throws {
@@ -983,15 +998,14 @@ final class RoutingStore {
       outputs.append((name: name, kind: kind, data: data))
     }
     guard reduce || !skipped.isEmpty else { return nil }
-    let revision = UUID().uuidString.lowercased()
-    let derived = assetsURL.appendingPathComponent(revision, isDirectory: true)
+    let derived = assets.appendingPathComponent(revision, isDirectory: true)
     try FileManager.default.createDirectory(at: derived, withIntermediateDirectories: true)
     do {
       for (name, kind, data) in outputs {
         try data.write(to: derived.appendingPathComponent(name + ".dat"), options: [.atomic])
         try validateGeofile(directory: derived, name: name, kind: kind)
       }
-      return (revision, skipped)
+      return skipped
     } catch {
       try? FileManager.default.removeItem(at: derived)
       throw error
@@ -1000,7 +1014,7 @@ final class RoutingStore {
 
   // Keep complete protobuf records for `codes`, or every record with `keepAll`, including
   // attributes and unknown nested fields. Also returns the requested codes the data lacks.
-  static func retainGeodataRecords(_ data: Data, codes: Set<String>, keepAll: Bool = false) throws -> (data: Data, missing: Set<String>) {
+  nonisolated static func retainGeodataRecords(_ data: Data, codes: Set<String>, keepAll: Bool = false) throws -> (data: Data, missing: Set<String>) {
     guard data.count <= maxOriginalGeofileBytes else { throw RoutingStoreError.invalidImport }
     var offset = 0
     func varint(end: Int) throws -> Int {
@@ -1084,7 +1098,7 @@ final class RoutingStore {
     try encoder.encode(catalog).write(to: catalogURL, options: [.atomic])
   }
 
-  private func validateGeofile(directory: URL, name: String, kind: String) throws {
+  private nonisolated static func validateGeofile(directory: URL, name: String, kind: String) throws {
     let request: [String: Any] = [
       "apiVersion": 1,
       "method": "countGeoData",
