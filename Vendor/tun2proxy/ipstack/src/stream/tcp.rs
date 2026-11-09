@@ -24,7 +24,6 @@ use tokio::io::{AsyncRead, AsyncWrite};
 /// 2 * MSL (Maximum Segment Lifetime) is the maximum time a TCP connection can be in the TIME_WAIT state.
 const TWO_MSL: Duration = Duration::from_secs(2);
 
-const CLOSE_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 const LAST_ACK_MAX_RETRIES: usize = 3;
 const LAST_ACK_TIMEOUT: Duration = Duration::from_millis(500);
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -37,8 +36,6 @@ pub struct TcpConfig {
     pub last_ack_max_retries: usize,
     /// Timeout for the last ACK in the LAST_ACK state. Default is 500ms.
     pub last_ack_timeout: Duration,
-    /// Timeout for the CLOSE_WAIT state. Default is 5 seconds.
-    pub close_wait_timeout: Duration,
     /// Timeout for TCP connections. Default is 60 seconds.
     pub timeout: Duration,
     /// Timeout for the TIME_WAIT state. Default is 2 seconds.
@@ -71,7 +68,6 @@ impl Default for TcpConfig {
         TcpConfig {
             last_ack_max_retries: LAST_ACK_MAX_RETRIES,
             last_ack_timeout: LAST_ACK_TIMEOUT,
-            close_wait_timeout: CLOSE_WAIT_TIMEOUT,
             timeout: TIMEOUT,
             two_msl: TWO_MSL,
             max_unacked_bytes: MAX_UNACK,

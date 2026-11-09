@@ -83,3 +83,5 @@ stack reading its input, which the bridge then dropped. While that write waits, 
 ICMP packets beyond 1024 queued are dropped like a full TUN queue drops them,
 since their senders never wait and a tunnel that stopped reading grew the queue
 without bound; TCP packets stay queued, bounded by each connection's window.
+
+`TcpConfig.close_wait_timeout` is removed: nothing read it.
