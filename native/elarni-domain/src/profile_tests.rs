@@ -144,7 +144,7 @@ fn per_app_policy_gates_tun_then_preserves_provider_and_app_routing() {
         // The connections view names the per-app rule that took a connection.
         for (rule, tag) in rules.iter().zip([
             "elarni-per-app-dns",
-            "elarni-per-app-listed",
+            "elarni-per-app-listed-0",
             "elarni-per-app-other",
         ]) {
             assert_eq!(rule["ruleTag"], tag);
@@ -251,6 +251,13 @@ fn per_app_targets_send_each_listed_app_to_its_own_outbound() {
     };
     assert_eq!(outbound(&target("game.exe"))["protocol"], "blackhole");
     assert_eq!(target("steam"), reentry);
+    // Xray refuses two rules with one tag.
+    let tags: Vec<&str> = rules
+        .iter()
+        .filter_map(|rule| rule["ruleTag"].as_str())
+        .collect();
+    let unique: std::collections::HashSet<&&str> = tags.iter().collect();
+    assert_eq!(unique.len(), tags.len(), "{tags:?}");
     // Unlisted targets keep the mode's: bypass sends them directly.
     assert_eq!(target("curl"), "elarni-direct");
     let nl = outbound(&target("telegram"));

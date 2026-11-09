@@ -831,9 +831,9 @@ void main() {
         2,
         path: '/usr/bin/curl',
         kind: 'direct',
-        rules: ['elarni-per-app-listed'],
+        rules: ['elarni-per-app-listed-0'],
       ),
-      entry(3, 3, owner: 'unknown', rules: ['elarni-per-app-listed']),
+      entry(3, 3, owner: 'unknown', rules: ['elarni-per-app-listed-1']),
       entry(4, 4, owner: ''),
     ];
     final reads = <(int, int)>[];

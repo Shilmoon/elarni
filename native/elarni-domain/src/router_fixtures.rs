@@ -76,10 +76,28 @@ fn compiled_fixtures() -> Value {
         },
     )
     .unwrap();
+    // Per-app routing with several targets: each target's apps share a rule of their own.
+    let per_app = compile_profile(
+        json!({"outbounds": [client("proxy"),
+            {"tag": "direct", "protocol": "freedom", "settings": {}}]}),
+        None,
+        10890,
+        PacketBackend::XrayTun,
+        1500,
+        &serde_json::from_value::<RuntimeOptions>(json!({
+            "perAppMode": "proxyOnly",
+            "perAppProcesses": ["/opt/listed", "/opt/blocked", "/opt/direct"],
+            "perAppTargets": [{"process": "/opt/blocked", "target": "block"},
+                {"process": "/opt/direct", "target": "direct"}]}))
+        .unwrap(),
+        None,
+    )
+    .unwrap();
     json!({
         "outbound": serde_json::from_slice::<Value>(&outbound).unwrap(),
         "profile": serde_json::from_slice::<Value>(&profile.config).unwrap(),
         "automatic-ip": serde_json::from_slice::<Value>(&automatic_ip).unwrap(),
+        "per-app": serde_json::from_slice::<Value>(&per_app.config).unwrap(),
     })
 }
 

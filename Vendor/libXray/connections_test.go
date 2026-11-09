@@ -64,7 +64,7 @@ func TestReadConnectionsNamesTheAppAndTheRoute(t *testing.T) {
 		},
 		"routing": map[string]any{"rules": []any{
 			map[string]any{"type": "field", "inboundTag": []string{"elarni-tun"}, "process": []string{executable},
-				"outboundTag": "elarni-apps-0", "ruleTag": "elarni-per-app-listed"},
+				"outboundTag": "elarni-apps-0", "ruleTag": "elarni-per-app-listed-0"},
 			map[string]any{"type": "field", "inboundTag": []string{"elarni-tun"}, "outboundTag": "elarni-block", "ruleTag": "elarni-per-app-other"},
 			map[string]any{"type": "field", "inboundTag": []string{"elarni-apps-0"}, "outboundTag": "elarni-direct"},
 		}},
@@ -112,7 +112,7 @@ func TestReadConnectionsNamesTheAppAndTheRoute(t *testing.T) {
 	}
 	entry := result.Connections[0]
 	if entry.Network != "tcp" || entry.Host != "127.0.0.1" || int(entry.Port) != inbound || entry.Inbound != "elarni-tun" ||
-		entry.Outbound != "elarni-direct" || entry.Kind != "direct" || len(entry.Rules) != 1 || entry.Rules[0] != "elarni-per-app-listed" {
+		entry.Outbound != "elarni-direct" || entry.Kind != "direct" || len(entry.Rules) != 1 || entry.Rules[0] != "elarni-per-app-listed-0" {
 		t.Fatalf("entry %+v", entry)
 	}
 	path := entry.Path

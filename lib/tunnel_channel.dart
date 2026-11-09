@@ -832,8 +832,10 @@ final class RecentConnection {
   /// when no per-app rule asked.
   final String owner;
 
-  /// A per-app rule for a listed app (or unidentified traffic) took it.
-  bool get listed => rules.contains('elarni-per-app-listed');
+  /// A per-app rule for a listed app (or unidentified traffic) took it; each
+  /// target's rule is numbered: elarni-per-app-listed-0, -1, ...
+  bool get listed =>
+      rules.any((rule) => rule.startsWith('elarni-per-app-listed'));
 
   /// The per-app rules passed it on: not listed.
   bool get unlisted => rules.contains('elarni-per-app-other');

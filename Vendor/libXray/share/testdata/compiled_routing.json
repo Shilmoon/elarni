@@ -329,6 +329,236 @@
     },
     "stats": {}
   },
+  "per-app": {
+    "dns": {
+      "disableFallbackIfMatch": false,
+      "hosts": {},
+      "queryStrategy": "UseIP",
+      "serveExpiredTTL": 3600,
+      "serveStale": true,
+      "servers": [
+        "1.1.1.1"
+      ],
+      "tag": "elarni-dns-client",
+      "useSystemHosts": false
+    },
+    "inbounds": [
+      {
+        "port": 0,
+        "protocol": "tun",
+        "settings": {
+          "mtu": 1500,
+          "name": "elarni-tun"
+        },
+        "sniffing": {
+          "destOverride": [
+            "http",
+            "tls",
+            "quic"
+          ],
+          "enabled": true,
+          "routeOnly": true
+        },
+        "tag": "elarni-tun"
+      },
+      {
+        "listen": "127.0.0.1",
+        "port": 10890,
+        "protocol": "socks",
+        "settings": {
+          "auth": "noauth",
+          "udp": true
+        },
+        "sniffing": {
+          "destOverride": [
+            "http",
+            "tls",
+            "quic"
+          ],
+          "enabled": true,
+          "routeOnly": true
+        },
+        "tag": "elarni-socks"
+      }
+    ],
+    "log": {
+      "access": "none",
+      "error": "none",
+      "loglevel": "none"
+    },
+    "outbounds": [
+      {
+        "protocol": "vless",
+        "settings": {
+          "address": "127.0.0.1",
+          "encryption": "none",
+          "id": "00000000-0000-4000-8000-000000000001",
+          "port": 1
+        },
+        "tag": "proxy"
+      },
+      {
+        "protocol": "freedom",
+        "settings": {},
+        "tag": "direct"
+      },
+      {
+        "protocol": "freedom",
+        "settings": {
+          "domainStrategy": "AsIs"
+        },
+        "tag": "elarni-direct",
+        "targetStrategy": "AsIs"
+      },
+      {
+        "protocol": "blackhole",
+        "settings": {
+          "response": {
+            "type": "none"
+          }
+        },
+        "tag": "elarni-block"
+      },
+      {
+        "protocol": "loopback",
+        "settings": {
+          "inboundTag": "elarni-dns-client"
+        },
+        "tag": "elarni-dns-forward"
+      },
+      {
+        "protocol": "dns",
+        "settings": {
+          "address": "1.1.1.1",
+          "network": "",
+          "port": 53,
+          "rules": [
+            {
+              "action": "hijack",
+              "qType": "1,28"
+            },
+            {
+              "action": "return",
+              "qType": "64,65"
+            },
+            {
+              "action": "direct"
+            }
+          ]
+        },
+        "streamSettings": {
+          "sockopt": {
+            "dialerProxy": "elarni-dns-forward"
+          }
+        },
+        "tag": "elarni-dns"
+      },
+      {
+        "protocol": "loopback",
+        "settings": {
+          "inboundTag": "elarni-provider"
+        },
+        "tag": "elarni-proxy"
+      },
+      {
+        "protocol": "loopback",
+        "settings": {
+          "inboundTag": "elarni-apps-0"
+        },
+        "tag": "elarni-apps-0"
+      }
+    ],
+    "policy": {
+      "levels": {
+        "0": {
+          "connIdle": 300,
+          "downlinkOnly": 0
+        }
+      },
+      "system": {
+        "statsInboundDownlink": true,
+        "statsInboundUplink": true
+      }
+    },
+    "routing": {
+      "rules": [
+        {
+          "inboundTag": [
+            "elarni-tun"
+          ],
+          "network": "tcp,udp",
+          "outboundTag": "elarni-apps-0",
+          "port": 53,
+          "ruleTag": "elarni-per-app-dns",
+          "type": "field"
+        },
+        {
+          "inboundTag": [
+            "elarni-tun"
+          ],
+          "network": "tcp,udp",
+          "outboundTag": "elarni-block",
+          "process": [
+            "/opt/blocked"
+          ],
+          "ruleTag": "elarni-per-app-listed-0",
+          "type": "field"
+        },
+        {
+          "inboundTag": [
+            "elarni-tun"
+          ],
+          "network": "tcp,udp",
+          "outboundTag": "elarni-direct",
+          "process": [
+            "/opt/direct"
+          ],
+          "ruleTag": "elarni-per-app-listed-1",
+          "type": "field"
+        },
+        {
+          "inboundTag": [
+            "elarni-tun"
+          ],
+          "network": "tcp,udp",
+          "outboundTag": "elarni-apps-0",
+          "process": [
+            "/opt/listed",
+            "-1"
+          ],
+          "ruleTag": "elarni-per-app-listed-2",
+          "type": "field"
+        },
+        {
+          "inboundTag": [
+            "elarni-tun"
+          ],
+          "network": "tcp,udp",
+          "outboundTag": "elarni-direct",
+          "ruleTag": "elarni-per-app-other",
+          "type": "field"
+        },
+        {
+          "inboundTag": [
+            "elarni-socks",
+            "elarni-http",
+            "elarni-apps-0"
+          ],
+          "network": "tcp,udp",
+          "outboundTag": "elarni-dns",
+          "port": 53,
+          "type": "field"
+        },
+        {
+          "inboundTag": null,
+          "network": "tcp,udp",
+          "outboundTag": "proxy",
+          "type": "field"
+        }
+      ]
+    },
+    "stats": {}
+  },
   "profile": {
     "dns": {
       "hosts": {
