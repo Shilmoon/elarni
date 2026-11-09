@@ -790,7 +790,11 @@ extension TunnelMethodChannel {
         automation.reject(node: candidate.nodeID, transient: !permanent, now: automationNow())
       }
       // A provider-level failed switch may already have restored its retained core.
-      if !startingDisconnected, !activated, !(error is RunnerTunnelError) { throw error }
+      if !startingDisconnected, !activated, !(error is RunnerTunnelError) {
+        // The previous plan is still running and saved, so nothing is left to reconcile.
+        if Self.keptPreviousPlan(error) { try store.finishRuntimeReconciliation() }
+        throw error
+      }
       do {
         if (try await loadManager()).connection.status == .disconnected {
           try await persistPlan(previous.plan)

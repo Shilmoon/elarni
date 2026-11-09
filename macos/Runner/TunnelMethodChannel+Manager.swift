@@ -400,7 +400,8 @@ extension TunnelMethodChannel {
     let responseData: Data?
     do {
       responseData = try await withTaskCancellationHandler {
-        try await sendProviderMessage(request, session: session)
+        // The provider bounds a switch at 15 s and then says whether the old core still runs.
+        try await sendProviderMessage(request, session: session, timeout: 20)
       } onCancel: {
         Task { @MainActor in try? session.sendProviderMessage(cancellation) { _ in } }
       }
@@ -434,7 +435,7 @@ extension TunnelMethodChannel {
     }
   }
   /// The provider refused the candidate in these switch failures and still runs the previous plan.
-  private static func keptPreviousPlan(_ error: Error) -> Bool {
+  static func keptPreviousPlan(_ error: Error) -> Bool {
     if case RunnerTunnelError.nodeSwitchFailedRestored = error { return true }
     guard let failure = error as? AutomationFailure else { return false }
     return [.missingCredentials, .invalidConfiguration, .indeterminate].contains(failure)
@@ -603,11 +604,12 @@ extension TunnelMethodChannel {
   }
   func sendProviderMessage(
     _ message: Data,
-    session: NETunnelProviderSession
+    session: NETunnelProviderSession,
+    timeout: Double = 15
   ) async throws -> Data? {
     let reply = ProviderMessageReply()
     let deadline = Task {
-      do { try await automationSleep(15) }
+      do { try await automationSleep(timeout) }
       catch { return }
       reply.finish(.failure(AutomationFailure.deadline))
     }
