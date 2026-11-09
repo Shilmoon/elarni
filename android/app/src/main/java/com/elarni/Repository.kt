@@ -473,6 +473,7 @@ class Repository(private val app: ElarniApplication) {
                 // TSPU freezes an SNI after more than 3 near-simultaneous handshakes, so at most two probes share one at a time.
                 val queues = LinkedHashMap<String, ArrayDeque<String>>()
                 val scoped = scope.associateBy { it.getString("id") }
+                val epoch = edits
                 ids.forEach { queues.getOrPut(Catalog.probeKey(scoped.getValue(it)) ?: it) { ArrayDeque() }.add(it) }
                 val busy = mutableMapOf<String, Int>(); val keys = mutableMapOf<String, String>()
                 var running = 0
@@ -484,7 +485,7 @@ class Repository(private val app: ElarniApplication) {
                         busy[key] = (busy[key] ?: 0) + 1; keys[nodeID] = key; running++
                         completed.submit(java.util.concurrent.Callable {
                             check(generation)
-                            val result = try { engine.probe(catalog, nodeID, options) }
+                            val result = try { engine.probe(catalog, nodeID, options, epoch) }
                                 catch (error: Exception) { obj("nodeId" to nodeID, "status" to "failed", "error" to code(error), "timestamp" to now()) }
                             result.put("protocol", options.string("protocol", "proxy")).put("configurationRevision", catalog.node(nodeID).string("configurationRevision", nodeID))
                         })
