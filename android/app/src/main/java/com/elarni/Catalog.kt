@@ -9,18 +9,24 @@ import java.net.URI
 
 class ResourceReview(val catalog: Catalog, val routeID: String, val url: String, val warning: JSONObject) : Exception()
 
-/** Value catalog: every editor works on a copy; only Repository publishes it. */
-class Catalog(val data: JSONObject) {
-    val sources get() = data.objects("subscriptions")
-    val routes get() = data.objects("profiles")
+/** Value catalog: every editor works on a copy; only Repository publishes it.
+ *  A [snapshot] is a published copy that nothing edits, such as the one the screens read many times in a frame:
+ *  it reads its lists and settings once. */
+class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
+    private val read = if (snapshot) java.util.concurrent.ConcurrentHashMap<String, Any>() else null
+    @Suppress("UNCHECKED_CAST")
+    private fun <T : Any> once(name: String, value: () -> T): T = if (read == null) value() else read.getOrPut(name, value) as T
+    val sources get() = once("sources") { data.objects("subscriptions") }
+    val routes get() = once("routes") { data.objects("profiles") }
     val assignments get() = data.mapObject("assignments")
-    val settings get() = Settings.defaults().merge(data.mapObject("settings"))
+    val settings get() = once("settings") { Settings.defaults().merge(data.mapObject("settings")) }
     val selected get() = data.string("selectedNodeId")
-    val nodes get() = sources.flatMap { it.objects("nodes") }
+    val nodes get() = once("nodes") { sources.flatMap { it.objects("nodes") } }
     val selectedName get() = nodes.firstOrNull { it.string("id") == selected }?.string("name")
     fun copy() = Catalog(data.copy())
     fun source(id: String) = sources.firstOrNull { it.string("id") == id } ?: throw AppFailure("not_found")
-    fun node(id: String) = nodes.firstOrNull { it.string("id") == id } ?: throw AppFailure("not_found")
+    fun nodeOrNull(id: String): JSONObject? = if (read != null) once("nodeIndex") { nodes.associateBy { it.string("id") } }[id] else nodes.firstOrNull { it.string("id") == id }
+    fun node(id: String) = nodeOrNull(id) ?: throw AppFailure("not_found")
     fun route(id: String) = routes.firstOrNull { it.string("id") == id } ?: throw AppFailure("not_found")
     fun sourceFor(id: String) = sources.firstOrNull { it.objects("nodes").any { node -> node.string("id") == id } } ?: throw AppFailure("not_found")
     fun routeFor(id: String): JSONObject? {

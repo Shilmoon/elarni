@@ -71,6 +71,17 @@ class CatalogTest {
         assertFalse(Catalog.isRoutingLink("https://routing/"))
     }
 
+    @Test fun onlyAPublishedCopyKeepsWhatItRead() {
+        fun data() = obj("subscriptions" to JSONArray(listOf(obj("id" to "s", "nodes" to JSONArray(listOf(obj("id" to "a")))))))
+        val working = Catalog(data()); val published = Catalog(data(), snapshot = true)
+        working.putSource(obj("id" to "t", "nodes" to JSONArray(listOf(obj("id" to "b")))))
+        assertEquals("An editor's copy shows each edit", listOf("a", "b"), working.nodes.map { it.getString("id") })
+        assertEquals("b", working.node("b").getString("id"))
+        assertSame("A published copy reads its servers once", published.nodes, published.nodes)
+        assertEquals("a", published.node("a").getString("id"))
+        assertNull(published.nodeOrNull("b"))
+    }
+
     @Test fun probeKeyNamesTheHandshakeSNI() {
         fun node(security: String, serverName: String? = null, address: String = "1.2.3.4") = obj("config" to obj("outbounds" to JSONArray(listOf(obj(
             "protocol" to "vless", "settings" to obj("vnext" to JSONArray(listOf(obj("address" to address, "port" to 443)))),

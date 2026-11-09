@@ -36,7 +36,12 @@ class ServerLocations(context: Context) {
     fun fromName(name: String): ServerLocation? = codes(name).singleOrNull()?.let(locations::get)
     /** A Russian label anywhere, a chain's entry included. */
     fun russianEntry(name: String) = "RU" in codes(name)
-    private fun codes(name: String): Set<String> {
+    // Rows ask for the same names on every recomposition; the patterns run once per name.
+    private val known = object : LinkedHashMap<String, Set<String>>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Set<String>>) = size > 8192
+    }
+    private fun codes(name: String): Set<String> = synchronized(known) { known.getOrPut(name) { read(name) } }
+    private fun read(name: String): Set<String> {
         val codes = mutableSetOf<String>()
         flags.findAll(name).forEach { flag ->
             val code = flag.value.codePoints().toArray().map { (it - 0x1f1e6 + 'A'.code).toChar() }.joinToString("")
