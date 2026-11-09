@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:ffi';
-import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
@@ -33,7 +32,7 @@ final class ElarniDomainFfi {
   }
 
   Map<String, Object?> request(Map<String, Object?> envelope) {
-    final request = Uint8List.fromList(utf8.encode(jsonEncode(envelope)));
+    final request = JsonUtf8Encoder().convert(envelope);
     // Matches MAX_REQUEST_BYTES in native/elarni-domain/src/ffi.rs.
     if (request.length > 64 * 1024 * 1024) {
       throw const FormatException('Native request exceeds 64 MiB.');
