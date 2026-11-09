@@ -805,7 +805,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get perAppLauncherRule =>
-      'Snap, Flatpak and script launchers start another program, so their rules match nothing. Start the app, then choose it from the app list.';
+      'Snap, Flatpak and script launchers start another program, so their rules match nothing. Choose the app from the app list; start a Snap or script app first.';
 
   @override
   String get useProxy => 'Use proxy';
@@ -843,6 +843,30 @@ class AppLocalizationsEn extends AppLocalizations {
   String perAppWindowsPathsElsewhere(Object platform) {
     return 'Windows executable paths cannot be used in a $platform profile. Select the apps on this device.';
   }
+
+  @override
+  String perAppLinuxRulesElsewhere(Object platform) {
+    return 'Flatpak and AppImage rules name Linux apps and cannot be used in a $platform profile.';
+  }
+
+  @override
+  String perAppServiceRulesElsewhere(Object platform) {
+    return 'Service rules name Windows services and cannot be used in a $platform profile.';
+  }
+
+  @override
+  String get perAppFlatpakRule =>
+      'Flatpak app: also its other programs in the sandbox';
+
+  @override
+  String get perAppAppImageRule => 'AppImage: the programs in that image file';
+
+  @override
+  String get perAppServiceRule =>
+      'Windows service: also the services that share its process';
+
+  @override
+  String get perAppKindService => 'Windows service';
 
   @override
   String get perAppAndroidPackages =>

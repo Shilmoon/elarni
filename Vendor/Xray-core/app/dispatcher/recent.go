@@ -36,6 +36,9 @@ type RecentConnection struct {
 	PID   int    `json:"pid,omitempty"`
 	Name  string `json:"name,omitempty"`
 	Path  string `json:"path,omitempty"`
+	// The rule for the app when its path does not name it (a Flatpak, an AppImage, a service);
+	// the reader sets it.
+	App string `json:"app,omitempty"`
 }
 
 const recentCapacity = 500

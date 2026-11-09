@@ -123,6 +123,75 @@ func TestProcessRuleChecksExplainRulesThatMatchNothing(t *testing.T) {
 	}
 }
 
+// Flatpak and AppImage rules are checked on Linux, service rules on Windows: an app that is
+// not installed, an image that is gone or a folder without its separator. Suggestions keep the
+// rule's kind.
+func TestProcessRuleChecksOfTypedRules(t *testing.T) {
+	root := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	want := map[string][]string{}
+	switch runtime.GOOS {
+	case "linux":
+		images := filepath.Join(root, "Applications")
+		image := filepath.Join(images, "Cursor.AppImage")
+		if err := os.MkdirAll(images, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(image, []byte("\x7fELF"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(root, "cursor")
+		if err := os.Symlink(image, link); err != nil {
+			t.Fatal(err)
+		}
+		installed := filepath.Join(root, "flatpak", "app", "org.example.Installed")
+		if err := os.MkdirAll(installed, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		previous := flatpakInstallations
+		flatpakInstallations = func() []string { return []string{filepath.Join(root, "missing"), filepath.Join(root, "flatpak")} }
+		t.Cleanup(func() { flatpakInstallations = previous })
+		want["appimage:"+image] = nil
+		want["appimage:"+images+"/"] = nil
+		want["appimage:"+images] = []string{"folder=appimage:" + images + "/"}
+		want["appimage:"+filepath.Join(images, "Gone.AppImage")] = []string{"missing="}
+		want["appimage:"+link] = []string{"symlink=appimage:" + image}
+		want["appimage:"+filepath.Join(root, "applications", "Cursor.AppImage")] = []string{"case=appimage:" + image}
+		want["flatpak:org.example.Installed"] = nil
+		want["flatpak:org.example.Gone"] = []string{"missing="}
+		want["flatpak:not an id"] = []string{"missing="}
+		want["service:wuauserv"] = nil
+	case "windows":
+		// The RPC service runs on every Windows.
+		want["service:RpcSs"] = nil
+		want["service:rpcss"] = nil
+		want["service:ElarniNoSuchService"] = []string{"missing="}
+		want["flatpak:org.example.Gone"] = nil
+		want[`appimage:C:\Gone.AppImage`] = nil
+	default:
+		want["flatpak:org.example.Gone"] = nil
+		want["service:wuauserv"] = nil
+	}
+	var rules []string
+	for rule := range want {
+		rules = append(rules, rule)
+	}
+	slices.Sort(rules)
+	for i, check := range checkProcessRules(rules).Rules {
+		if check.Rule != rules[i] {
+			t.Fatalf("result %d is for %q, want %q", i, check.Rule, rules[i])
+		}
+		if got := warningCodes(check); !slices.Equal(got, want[check.Rule]) {
+			t.Errorf("%q: warnings %v, want %v", check.Rule, got, want[check.Rule])
+		}
+		if runtime.GOOS == "windows" && strings.EqualFold(check.Rule, "service:RpcSs") && check.Running != 1 {
+			t.Errorf("%q: %d running", check.Rule, check.Running)
+		}
+	}
+}
+
 // The count uses the core's own matcher, so it agrees with what routing will do.
 func TestProcessRuleChecksCountRunningPrograms(t *testing.T) {
 	executable, err := os.Executable()

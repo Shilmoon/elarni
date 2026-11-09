@@ -54,7 +54,7 @@ set_property(TARGET elarni_routing_checks PROPERTY
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/checks")
 target_compile_definitions(elarni_routing_checks PRIVATE "NOMINMAX")
 target_link_libraries(elarni_routing_checks PRIVATE flutter_wrapper_app
-  "windowsapp.lib" "windowscodecs.lib" "shell32.lib")
+  "advapi32.lib" "windowsapp.lib" "windowscodecs.lib" "shell32.lib")
 add_custom_command(TARGET elarni_routing_checks POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FLUTTER_LIBRARY}"
     "$<TARGET_FILE_DIR:elarni_routing_checks>"

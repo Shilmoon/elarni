@@ -353,7 +353,7 @@
     }
   },
   "perAppOperationFailed": "The operation failed. Try again; your draft is kept.",
-  "perAppLauncherRule": "Snap, Flatpak and script launchers start another program, so their rules match nothing. Start the app, then choose it from the app list.",
+  "perAppLauncherRule": "Snap, Flatpak and script launchers start another program, so their rules match nothing. Choose the app from the app list; start a Snap or script app first.",
   "useProxy": "Use proxy",
   "proxyAddress": "Proxy address",
   "localProxyHelp": "Another app's SOCKS5 or HTTP proxy, such as ByeByeDPI.",
@@ -381,6 +381,26 @@
       }
     }
   },
+  "perAppLinuxRulesElsewhere": "Flatpak and AppImage rules name Linux apps and cannot be used in a {platform} profile.",
+  "@perAppLinuxRulesElsewhere": {
+    "placeholders": {
+      "platform": {
+        "type": "Object"
+      }
+    }
+  },
+  "perAppServiceRulesElsewhere": "Service rules name Windows services and cannot be used in a {platform} profile.",
+  "@perAppServiceRulesElsewhere": {
+    "placeholders": {
+      "platform": {
+        "type": "Object"
+      }
+    }
+  },
+  "perAppFlatpakRule": "Flatpak app: also its other programs in the sandbox",
+  "perAppAppImageRule": "AppImage: the programs in that image file",
+  "perAppServiceRule": "Windows service: also the services that share its process",
+  "perAppKindService": "Windows service",
   "perAppAndroidPackages": "Use Android package names such as com.example.app. Select the apps on this device.",
   "perAppInvalidProfile": "Use a supported mode and up to 256 names or paths, each at most 1024 bytes without control characters, with targets only for listed apps. An active mode needs at least one app.",
   "perAppUnsupportedPlatform": "Unsupported profile platform.",

@@ -18,6 +18,9 @@ std::wstring ExecutableRule(const std::wstring& path);
 // For a saved rule that names one version of a local app, the rule that matches every
 // version; otherwise empty. Store paths need none: the core matches them by package.
 std::wstring UpdateProofRule(const std::wstring& path);
+// Running programs by their rules; svchost processes also by the services they run
+// ("service:<name>", named by the service's display name).
+flutter::EncodableList RunningApplications();
 
 class RoutingApplicationLookup : public std::enable_shared_from_this<RoutingApplicationLookup> {
  public:

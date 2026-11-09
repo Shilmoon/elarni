@@ -1,0 +1,132 @@
+//go:build linux && !android
+
+package libXray
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/xtls/libxray/xray"
+)
+
+// An identity test starts the test binary as another program, which connects here and stays.
+func TestHelperDialsThroughTheCore(t *testing.T) {
+	address := os.Getenv("ELARNI_DIAL_HELPER")
+	if address == "" {
+		return
+	}
+	connection, err := net.DialTimeout("tcp", address, 5*time.Second)
+	if err == nil {
+		_ = connection.SetDeadline(time.Now().Add(5 * time.Second))
+		_, err = connection.Write([]byte("ping"))
+	}
+	reply := make([]byte, 4)
+	if err == nil {
+		_, err = io.ReadFull(connection, reply)
+	}
+	fmt.Printf("%s %v\n", reply, err)
+	time.Sleep(30 * time.Second)
+}
+
+// An AppImage runs from a mount that changes each start, so its rule names the image file. A
+// connection from a program in its mount takes that rule, and the connections view offers it.
+func TestAppImageRuleRoutesItsProgramsThroughTheCore(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+	mount := filepath.Join(dir, ".mount_FixtureXy12")
+	program := filepath.Join(mount, "usr", "bin", "fixture")
+	image := filepath.Join(dir, "Fixture-1.2.3-x86_64.AppImage")
+	if err := os.MkdirAll(filepath.Dir(program), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(program, binary, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	echo, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		for {
+			connection, err := echo.Accept()
+			if err != nil {
+				return
+			}
+			go func() { defer connection.Close(); _, _ = io.Copy(connection, connection) }()
+		}
+	}()
+	inbound := freeTCPPort(t)
+	config := map[string]any{
+		"inbounds": []any{map[string]any{"tag": "elarni-tun", "listen": "127.0.0.1", "port": inbound, "protocol": "dokodemo-door",
+			"settings": map[string]any{"network": "tcp"}}},
+		"outbounds": []any{
+			map[string]any{"tag": "elarni-direct", "protocol": "freedom",
+				"settings": map[string]any{"redirect": echo.Addr().String()}},
+			map[string]any{"tag": "elarni-apps-0", "protocol": "loopback", "settings": map[string]any{"inboundTag": "elarni-apps-0"}},
+			map[string]any{"tag": "elarni-block", "protocol": "blackhole"},
+		},
+		"routing": map[string]any{"rules": []any{
+			map[string]any{"type": "field", "inboundTag": []string{"elarni-tun"}, "process": []string{"appimage:" + image},
+				"outboundTag": "elarni-apps-0", "ruleTag": "elarni-per-app-listed-0"},
+			map[string]any{"type": "field", "inboundTag": []string{"elarni-tun"}, "outboundTag": "elarni-block", "ruleTag": "elarni-per-app-other"},
+			map[string]any{"type": "field", "inboundTag": []string{"elarni-apps-0"}, "outboundTag": "elarni-direct"},
+		}},
+	}
+	raw, _ := json.Marshal(config)
+	if err := xray.RunXrayFromJSON(string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	defer xray.StopXray()
+	before, err := xray.ReadConnections(0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command(program, "-test.run=^TestHelperDialsThroughTheCore$")
+	command.Env = append(os.Environ(), "ELARNI_DIAL_HELPER=127.0.0.1:"+strconv.Itoa(inbound), "APPIMAGE="+image, "APPDIR="+mount)
+	output, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = command.Process.Kill(); _ = command.Wait() }()
+	// The block rule would close the connection unanswered.
+	if line, err := bufio.NewReader(output).ReadString('\n'); err != nil || line != "ping <nil>\n" {
+		t.Fatalf("the AppImage's program was not routed by its rule: %q %v", line, err)
+	}
+	result, err := xray.ReadConnections(before.Epoch, before.Seq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Connections) != 1 {
+		t.Fatalf("connections %+v", result)
+	}
+	entry := result.Connections[0]
+	if entry.Owner != "found" || entry.PID != command.Process.Pid || entry.Path != program || entry.Kind != "direct" ||
+		len(entry.Rules) != 1 || entry.Rules[0] != "elarni-per-app-listed-0" || entry.App != "appimage:"+image {
+		t.Fatalf("entry %+v", entry)
+	}
+}

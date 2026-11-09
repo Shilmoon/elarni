@@ -16,6 +16,12 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   connections apps opened while connected: which program made each one, its address, and
   whether a per-app rule took it and where it went. **Add to list** adds a program that is not
   listed, such as an app's helper or updater. The list stays in memory until you disconnect.
+- Per-app rules for Flatpak apps and AppImages on Linux, and for services on Windows. A Flatpak
+  app matches by its app ID, with every program in its sandbox; an AppImage by its image file,
+  although each start mounts it at a new path; a service by name, in the svchost process that
+  runs it, so Delivery Optimization or Windows Update can take a target of its own. The app list
+  offers them and **Recent connections** adds them. Before, a running AppImage was listed by its
+  mount path, which the next start changes, and Flatpak apps could not be listed until running.
 
 ### Fixed
 

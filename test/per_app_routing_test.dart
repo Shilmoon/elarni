@@ -240,15 +240,27 @@ void main() {
           r'C:\Apps\Browser.exe',
           'c:/Apps/Browser.exe',
           r'\\server\Apps\Browser.exe',
+          'flatpak:org.mozilla.firefox',
+          'appimage:/Apps/Cursor.AppImage',
+          'service:BITS',
         ],
       ),
-      ('windows', ['/Applications/Browser.app/', '/usr/bin/curl']),
+      (
+        'windows',
+        [
+          '/Applications/Browser.app/',
+          '/usr/bin/curl',
+          'flatpak:org.mozilla.firefox',
+          'appimage:/Apps/Cursor.AppImage',
+        ],
+      ),
       (
         'linux',
         [
           r'C:\Apps\Browser.exe',
           r'\\server\Apps\Browser.exe',
           '/Applications/Browser.app/',
+          'service:BITS',
         ],
       ),
       (
@@ -300,8 +312,28 @@ void main() {
         'C:/Apps/Browser.exe',
         r'\\server\Apps\Browser.exe',
         '//server/Apps/',
+        'service:BITS',
       ]).valid,
       isTrue,
+    );
+    // Flatpak and AppImage rules belong to Linux, service rules to Windows.
+    expect(
+      PerAppProfile('linux', 'bypass', [
+        'flatpak:org.mozilla.firefox',
+        'appimage:/home/u/Applications/Cursor.AppImage',
+        'appimage:/home/u/Applications/',
+      ]).valid,
+      isTrue,
+    );
+    expect(
+      PerAppProfile('linux', 'bypass', ['service:BITS']).validationError,
+      'Service rules name Windows services and cannot be used in a Linux profile.',
+    );
+    expect(
+      PerAppProfile('macos', 'bypass', [
+        'flatpak:org.mozilla.firefox',
+      ]).validationError,
+      'Flatpak and AppImage rules name Linux apps and cannot be used in a macOS profile.',
     );
     expect(PerAppProfile('android', 'off', []).valid, isTrue);
     expect(PerAppProfile.platformLabel('android'), 'Android');
@@ -916,6 +948,181 @@ void main() {
     await tester.tap(find.text('Save changes'));
     await tester.pumpAndSettle();
     expect(saved!.perAppProcesses, ['/usr/bin/curl', versions]);
+  });
+
+  testWidgets('Flatpak, AppImage and service rules name their apps', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 2000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(DesktopIntegration.channel, (
+      call,
+    ) async {
+      if (call.method != 'routingApplications') return null;
+      return [
+        {'name': 'Firefox', 'process': 'flatpak:org.mozilla.firefox'},
+        {'name': 'Cursor', 'process': 'appimage:/home/u/Apps/Cursor.AppImage'},
+      ];
+    });
+    addTearDown(
+      () =>
+          messenger.setMockMethodCallHandler(DesktopIntegration.channel, null),
+    );
+    Map<String, Object?> entry(
+      int key,
+      String path,
+      String app, {
+      bool listed = false,
+    }) => {
+      'key': key,
+      'seq': key,
+      'time': DateTime(2026, 11, 9, 12, 0, key).millisecondsSinceEpoch,
+      'network': 'tcp',
+      'host': '192.0.2.10',
+      'port': 443,
+      'outbound': 'elarni-direct',
+      'kind': 'direct',
+      'rules': [listed ? 'elarni-per-app-listed-0' : 'elarni-per-app-other'],
+      'owner': 'found',
+      'pid': 40 + key,
+      'name': path.split('/').last,
+      'path': path,
+      'app': app,
+    };
+    TunnelSettings? saved;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: PerAppRoutingEditor(
+              settings: const TunnelSettings(
+                xrayTunEnabled: true,
+                perAppMode: 'bypass',
+                perAppProcesses: [
+                  'flatpak:org.mozilla.firefox',
+                  'appimage:/home/u/Apps/Old-1.0.AppImage',
+                ],
+              ),
+              windows: false,
+              linux: true,
+              readConnections: ({int epoch = 0, int after = 0}) async =>
+                  RecentConnections.fromMap({
+                    'epoch': 3,
+                    'seq': 2,
+                    'connections': [
+                      entry(
+                        1,
+                        '/app/lib/firefox/firefox',
+                        'flatpak:org.mozilla.firefox',
+                        listed: true,
+                      ),
+                      entry(
+                        2,
+                        '/app/bin/telegram-desktop',
+                        'flatpak:org.telegram.desktop',
+                      ),
+                    ],
+                  }),
+              onSave: (value) async => saved = value,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // The host names listed apps; a saved image it does not offer is named after its file.
+    expect(find.text('Firefox'), findsWidgets);
+    expect(find.text('Old-1.0'), findsWidgets);
+    expect(
+      find.textContaining(
+        'Flatpak app: also its other programs in the sandbox',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('AppImage: the programs in that image file'),
+      findsOneWidget,
+    );
+    // The app list marks what kind of app a rule names.
+    await tester.tap(find.text('Add apps'));
+    await tester.pumpAndSettle();
+    expect(find.text('Flatpak'), findsOneWidget);
+    expect(find.text('AppImage'), findsNWidgets(2));
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('per-app-connections')));
+    await tester.pumpAndSettle();
+    // The sandbox's paths name no app; its app ID does, and Add saves that.
+    expect(find.text('org.telegram.desktop'), findsOneWidget);
+    expect(find.byKey(const Key('per-app-add-connection-1')), findsNothing);
+    await tester.tap(find.byKey(const Key('per-app-add-connection-2')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('org.telegram.desktop added. Save changes to apply.'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('per-app-add-connection-2')), findsNothing);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+    expect(saved!.perAppProcesses, [
+      'flatpak:org.mozilla.firefox',
+      'appimage:/home/u/Apps/Old-1.0.AppImage',
+      'flatpak:org.telegram.desktop',
+    ]);
+  });
+
+  testWidgets('a Windows service rule is labelled and needs no file', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(DesktopIntegration.channel, (
+      call,
+    ) async {
+      if (call.method != 'routingApplications') return null;
+      return [
+        {'name': 'Delivery Optimization', 'process': 'service:DoSvc'},
+      ];
+    });
+    addTearDown(
+      () =>
+          messenger.setMockMethodCallHandler(DesktopIntegration.channel, null),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: PerAppRoutingEditor(
+              settings: const TunnelSettings(
+                xrayTunEnabled: true,
+                perAppMode: 'bypass',
+                perAppProcesses: ['service:DoSvc', 'service:wuauserv'],
+              ),
+              windows: true,
+              onSave: (_) async {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Delivery Optimization'), findsWidgets);
+    // A service that is not running is named by its service name.
+    expect(find.text('wuauserv'), findsWidgets);
+    expect(
+      find.textContaining(
+        'Windows service: also the services that share its process',
+      ),
+      findsNWidgets(2),
+    );
+    await tester.tap(find.text('Add apps'));
+    await tester.pumpAndSettle();
+    expect(find.text('Windows service'), findsNWidgets(2));
   });
 
   testWidgets('recent connections ask for a tunnel when none answers', (
