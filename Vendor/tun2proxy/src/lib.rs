@@ -165,6 +165,10 @@ async fn create_udp_stream(socket_queue: &Option<Arc<SocketQueue>>, peer: Socket
     let socket = match &socket_queue {
         None => {
             let bind_addr = match peer {
+                // Elarni: in an iOS packet tunnel, a socket bound to the unspecified address and
+                // connected to a loopback relay fails every send with EADDRNOTAVAIL; one bound to
+                // loopback reaches it, as TCP to the same relay does.
+                _ if peer.ip().is_loopback() => SocketAddr::new(peer.ip(), 0),
                 SocketAddr::V4(_) => SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 0)),
                 SocketAddr::V6(_) => SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, 0)),
             };
