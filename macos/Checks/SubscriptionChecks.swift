@@ -248,22 +248,22 @@ struct SubscriptionChecks {
     }
 
     try check("plaintext subscription accepts companion metadata") {
-      let nodes = try store.parseFeed(Data(feed.utf8))
+      let nodes = try store.parseImport(Data(feed.utf8)).nodes
       try expect(nodes.map(\.protocolName) == ["VLESS", "Hysteria2"], "mixed feed node count/protocols")
     }
     try check("base64 subscription accepts companion metadata") {
-      let nodes = try store.parseFeed(Data(feed.utf8).base64EncodedData())
+      let nodes = try store.parseImport(Data(feed.utf8).base64EncodedData()).nodes
       try expect(nodes.map(\.protocolName) == ["VLESS", "Hysteria2"], "base64 mixed feed node count/protocols")
     }
     try check("INCY wrappers and crypt1 use the shared importer without exposing source URLs") {
       let wrapped = "incy://import/" + Data(vless.utf8).base64EncodedString()
-      try expect(store.parseFeed(Data(wrapped.utf8)).first?.name == "Test", "INCY wrapper profile")
+      try expect(store.parseImport(Data(wrapped.utf8)).nodes.first?.name == "Test", "INCY wrapper profile")
       let wire = "incy://crypt1/AAECAwQFBgcICQoLNyIQL3rDwRZqnyoD8pGKSLXP6o8NdSXQVSSALNbbUyIr__tWGFUexdIfKvvmDnuDGbmBvuppfNef6aKNZUwOm4c-Sg"
       let normalized = try store.normalizeClientInput(wire)
       try expect(normalized.text == "https://sub.example.com/test-vector" && normalized.shareLink == wire, "crypt1 source preservation")
     }
     try check("VLESS TLS conversion preserves endpoint and credentials") {
-      let node = try store.parseFeed(Data(vless.utf8))[0]
+      let node = try store.parseImport(Data(vless.utf8)).nodes[0]
       let profile = try JSONSerialization.jsonObject(with: node.outbound) as! [String: Any]
       try expect(node.format == "xrayProfile", "complete profile format")
       let outbound = (profile["outbounds"] as! [[String: Any]])[0]
@@ -281,7 +281,7 @@ struct SubscriptionChecks {
       for broken in ["vless://", "hysteria2://"] {
         let input = Data("\(feed)\(broken)\n".utf8).base64EncodedData()
         do {
-          _ = try store.parseFeed(input)
+          _ = try store.parseImport(input).nodes
           throw Failure(message: "malformed supported node was accepted")
         } catch SubscriptionError.incompatibleProfile(let message) {
           try expect(!message.contains("malformed") && message.contains("entire import"), "unsafe or unclear profile diagnostic")
@@ -290,14 +290,14 @@ struct SubscriptionChecks {
     }
     try check("unexpected non-metadata lines still reject partial conversion") {
       do {
-        _ = try store.parseFeed(Data("\(vless)\nunrecognized broken node\n".utf8))
+        _ = try store.parseImport(Data("\(vless)\nunrecognized broken node\n".utf8)).nodes
         throw Failure(message: "partial conversion was accepted")
       } catch SubscriptionError.incompatibleProfile { }
     }
     try check("refresh parses updated nodes without retaining stale outbounds") {
-      let original = try store.parseFeed(Data(feed.utf8).base64EncodedData())
+      let original = try store.parseImport(Data(feed.utf8).base64EncodedData()).nodes
       let updatedFeed = feed.replacingOccurrences(of: "192.0.2.1:443", with: "192.0.2.3:8443")
-      let updated = try store.parseFeed(Data(updatedFeed.utf8).base64EncodedData())
+      let updated = try store.parseImport(Data(updatedFeed.utf8).base64EncodedData()).nodes
       try expect(updated.count == original.count, "updated node count")
       try expect(updated[0].name == original[0].name, "refresh display identity")
       try expect(updated[0].outbound != original[0].outbound, "updated outbound did not change")
@@ -375,12 +375,10 @@ struct SubscriptionChecks {
           "Banner-Button-Text": "Open account", "Banner-Bg-Color": "#102030", "Banner-Button-Color": "red"])!)!
       try expect(banner.bannerText == "Free provider notice" && banner.bannerButtonText == "Open account", "public banner headers were lost")
     }
-    try check("device identity is stable per provider without hardware identifiers") {
-      let first = SubscriptionDeviceIdentity.headers(installationID: "fixture-install", url: URL(string: "https://provider.example/feed?token=a")!)
-      let same = SubscriptionDeviceIdentity.headers(installationID: "fixture-install", url: URL(string: "https://provider.example:443/json?token=b")!)
-      let other = SubscriptionDeviceIdentity.headers(installationID: "fixture-install", url: URL(string: "https://other.example/feed")!)
-      try expect(first["X-HWID"] == same["X-HWID"] && first["X-HWID"] != other["X-HWID"], "HWID origin scoping")
-      try expect(first["X-HWID"]?.count == 64 && first["X-Device-OS"] == "macOS", "device request contract")
+    try check("the device a feed request names is this platform") {
+      let agent = SubscriptionDeviceIdentity.userAgent
+      try expect(SubscriptionDeviceIdentity.operatingSystem == "macOS" && SubscriptionDeviceIdentity.model == "Mac" &&
+        agent.hasPrefix("Elarni/") && agent.hasSuffix(" (Xray; macOS)"), "device request contract")
     }
 
     passed += try safetyChecks()
@@ -416,7 +414,7 @@ struct SubscriptionChecks {
         routing: RoutingStore(directory: tuicRoot.appendingPathComponent("routing")), secretAccess: tuicSecrets.access())
       try expect(reopened.selectedNodeID() == tuicNodeID && reopened.selectedOutboundRef() == tuicRef, "TUIC selection did not survive relaunch")
       let shared = try reopened.sharingText(id: tuicNodeID, subscription: false)
-      let parsed = try reopened.parseFeed(Data(shared.utf8))
+      let parsed = try reopened.parseImport(Data(shared.utf8)).nodes
       try expect(parsed.count == 1 && parsed[0].name == "TUIC ✓", "TUIC share cannot be reimported")
       let sharedProfile = try JSONSerialization.jsonObject(with: Data(shared.utf8)) as! [String: Any]
       let sharedOutbound = (sharedProfile["outbounds"] as! [[String: Any]])[0]
@@ -453,7 +451,7 @@ struct SubscriptionChecks {
       let telegramFields = Dictionary(uniqueKeysWithValues: URLComponents(string: sharedTelegram)!.queryItems!.map { ($0.name, $0.value ?? "") })
       try expect(telegramFields == ["server": "proxy.example", "port": "443", "secret": "000102030405060708090a0b0c0d0e0f"], "Telegram sharing altered connection details")
       let shared = try localStore.sharingText(id: vpnID, subscription: false)
-      try expect(try localStore.parseFeed(Data(shared.utf8)).first?.name == "Test", "shared server cannot be imported")
+      try expect(try localStore.parseImport(Data(shared.utf8)).nodes.first?.name == "Test", "shared server cannot be imported")
       try expect(localStore.selectedNodeID() == vpnID, "Telegram action changed VPN selection")
       let reopened = try SubscriptionStore(directory: localDirectory,
         routing: RoutingStore(directory: localDirectory.appendingPathComponent("routing")), secretAccess: localSecrets.access())
@@ -500,7 +498,7 @@ struct SubscriptionChecks {
       try expect(localStore.linkableNodeIDs(subscriptionID: localID) == Set(ids.prefix(2)), "a profile with several outbounds was offered as a link")
       let links = try localStore.shareLinks(subscriptionID: localID, nodeIDs: [ids[1], ids[0]]).components(separatedBy: "\n")
       try expect(links.map { URL(string: $0)?.scheme } == ["vless", "tg"], "shared links lost their group order")
-      try expect(try localStore.parseFeed(Data(links[0].utf8)).first?.name == "Test", "a shared link lost its server name")
+      try expect(try localStore.parseImport(Data(links[0].utf8)).nodes.first?.name == "Test", "a shared link lost its server name")
       try rejects { _ = try localStore.shareLinks(subscriptionID: localID, nodeIDs: [ids[2]]) }
       try rejects { _ = try localStore.shareLinks(subscriptionID: hiddenID, nodeIDs: [ids[0]]) }
     }
@@ -644,7 +642,7 @@ struct SubscriptionChecks {
       for attempt in 1...2 {
         let (data, response) = try await session.data(from: url)
         try expect((response as? HTTPURLResponse)?.statusCode == 200 && data.count <= 4 * 1024 * 1024, "live feed response")
-        let nodes = try store.parseFeed(data)
+        let nodes = try store.parseImport(data).nodes
         try expect(!nodes.isEmpty, "live feed has no supported nodes")
         if let header = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "routing") {
           _ = try routing.stageProvider(header, subscriptionID: "live-check")

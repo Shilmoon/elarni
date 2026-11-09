@@ -1309,10 +1309,6 @@ final class SubscriptionStore {
     }
   }
 
-  func parseFeed(_ data: Data) throws -> [ParsedNode] {
-    try parseImport(data).nodes
-  }
-
   func normalizeClientInput(_ text: String) throws -> (text: String, name: String?, shareLink: String?) {
     guard text.utf8.count <= Self.maxFeedBytes else { throw SubscriptionError.feedTooLarge }
     let data = try JSONSerialization.data(withJSONObject: ["apiVersion": 1,
@@ -1332,7 +1328,7 @@ final class SubscriptionStore {
     return (content, value["name"] as? String, value["shareLink"] as? String)
   }
 
-  private func parseImport(_ data: Data, sourceURL: String? = nil, migrationHeaders: [String: String] = [:]) throws -> (nodes: [ParsedNode], directives: [String], hideURL: Bool, newSourceURL: String?, systemResolverDNS: Bool, fallbackURL: String?) {
+  func parseImport(_ data: Data, sourceURL: String? = nil, migrationHeaders: [String: String] = [:]) throws -> (nodes: [ParsedNode], directives: [String], hideURL: Bool, newSourceURL: String?, systemResolverDNS: Bool, fallbackURL: String?) {
     guard let text = String(data: data, encoding: .utf8) else {
       throw SubscriptionError.invalidFeed
     }

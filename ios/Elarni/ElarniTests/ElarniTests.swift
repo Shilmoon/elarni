@@ -82,9 +82,9 @@ final class ElarniTests: XCTestCase {
   }
 
   func testIOSIdentityDoesNotClaimMacOS() {
-    let headers = SubscriptionDeviceIdentity.headers(installationID: "fixture", url: URL(string: "https://example.com/feed")!)
-    XCTAssertEqual(headers["X-Device-OS"], "iOS")
-    XCTAssertEqual(headers["X-Device-Model"], "iPhone")
+    XCTAssertEqual(SubscriptionDeviceIdentity.operatingSystem, "iOS")
+    XCTAssertEqual(SubscriptionDeviceIdentity.model, "iPhone")
+    XCTAssertTrue(SubscriptionDeviceIdentity.userAgent.hasSuffix(" (Xray; iOS)"))
   }
 
   // Link-import UI fixtures have no quota metadata. They cannot catch missing
