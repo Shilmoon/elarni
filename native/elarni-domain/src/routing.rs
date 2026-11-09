@@ -362,14 +362,9 @@ pub fn decode_routing(input: &str) -> Result<RoutingImport, RoutingError> {
     if input.is_empty() {
         return Err(RoutingError::Empty);
     }
-    let command = [
-        "happ://routing/",
-        "incy://routing/",
-        "elarni://routing/",
-        "://routing/",
-    ]
-    .iter()
-    .find_map(|prefix| input.strip_prefix(prefix));
+    let command = ["happ://routing/", "incy://routing/", "elarni://routing/"]
+        .iter()
+        .find_map(|prefix| input.strip_prefix(prefix));
     if command == Some("off") {
         return Ok(RoutingImport::Off);
     }

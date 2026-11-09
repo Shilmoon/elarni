@@ -977,7 +977,6 @@ final class DesktopCatalog {
     'happ://routing/',
     'incy://routing/',
     'elarni://routing/',
-    '://routing/',
   ].any(value.startsWith);
 
   // Panels such as 3x-ui send their Happ routing to every client

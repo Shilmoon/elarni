@@ -156,7 +156,7 @@ func importClientProfiles(text string) (*ClientImport, error) {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			if strings.HasPrefix(line, "happ://routing/") || strings.HasPrefix(line, "incy://") || strings.HasPrefix(line, "elarni://routing/") || strings.HasPrefix(line, "://routing/") {
+			if strings.HasPrefix(line, "happ://routing/") || strings.HasPrefix(line, "incy://") || strings.HasPrefix(line, "elarni://routing/") {
 				result.Directives = append(result.Directives, line)
 				continue
 			}

@@ -1070,7 +1070,7 @@ enum RoutingDomainDecoder {
   }
 
   static func isRoutingLink(_ value: String) -> Bool {
-    ["happ://routing/", "incy://routing/", "elarni://routing/", "://routing/"].contains(where: value.hasPrefix)
+    ["happ://routing/", "incy://routing/", "elarni://routing/"].contains(where: value.hasPrefix)
   }
   struct Result {
     let action: String

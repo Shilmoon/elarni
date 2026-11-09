@@ -418,7 +418,6 @@ fn routing_import_formats_preserve_rules_and_explicit_activation() {
         (format!("incy://routing/onadd/{base64}"), true),
         (format!("elarni://routing/add/{base64}"), false),
         (format!("elarni://routing/onadd/{base64}"), true),
-        (format!("://routing/onadd/{base64}"), true),
     ] {
         let RoutingImport::Add {
             activate: actual,
