@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -192,7 +193,10 @@ func pauseTables(t *testing.T) (opens *atomic.Int32, paused <-chan struct{}, rel
 		return pausedTable{table, pausedSignal, released}, nil
 	}
 	release = sync.OnceFunc(func() { close(released) })
-	t.Cleanup(func() { openTable = original })
+	// TCP lookups find their socket without the table where the kernel answers by address.
+	keyed := findTCPSocketInode
+	findTCPSocketInode = func(netip.AddrPort, netip.AddrPort) (uint32, error) { return 0, nil }
+	t.Cleanup(func() { openTable, findTCPSocketInode = original, keyed })
 	t.Cleanup(release)
 	return opens, pausedSignal, release
 }
@@ -273,6 +277,23 @@ func socketChild(t *testing.T, address string) (pid, tcpPort, udpPort int) {
 // Lookups that queue behind a running batch share one read per table and one descriptor walk, each
 // socket still gets its own process, and a socket of a recent owner does not wait while the batch
 // walks every process for another app's socket.
+// newestDescriptor returns this process's highest descriptor, other than the one listing them.
+func newestDescriptor(t *testing.T) int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newest := -1
+	for _, entry := range entries {
+		fd, err := strconv.Atoi(entry.Name())
+		if link, _ := os.Readlink("/proc/self/fd/" + entry.Name()); err == nil && fd > newest && !strings.HasSuffix(link, "/fd") {
+			newest = fd
+		}
+	}
+	return newest
+}
+
 func TestLinuxBurstSharesOneScanPerBatch(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -298,9 +319,10 @@ func TestLinuxBurstSharesOneScanPerBatch(t *testing.T) {
 	var ownWalks atomic.Int32
 	childReached, childWalk := make(chan struct{}), make(chan struct{})
 	reachChild, unblockChild := sync.OnceFunc(func() { close(childReached) }), sync.OnceFunc(func() { close(childWalk) })
+	newest := "/proc/" + self + "/fd/" + strconv.Itoa(newestDescriptor(t))
 	readLink = func(path string) (string, error) {
-		if path == "/proc/"+self+"/fd/0" {
-			ownWalks.Add(1) // the first descriptor of every walk through this process
+		if path == newest {
+			ownWalks.Add(1) // walks read the newest descriptors first
 		}
 		if strings.HasPrefix(path, "/proc/"+child+"/fd/") {
 			reachChild()
@@ -371,75 +393,25 @@ func TestLinuxLookupAfterASnapshotSeesItsSocket(t *testing.T) {
 	awaitLookup(t, second, os.Getpid())
 }
 
-// loopbackConns opens n TCP connections owned by this process and returns their client ends.
-func loopbackConns(tb testing.TB, n int) []*net.TCPConn {
-	tb.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		tb.Fatal(err)
-	}
-	tb.Cleanup(func() { listener.Close() })
-	clients := make([]*net.TCPConn, n)
-	for i := range clients {
-		client, err := net.Dial("tcp", listener.Addr().String())
-		if err != nil {
-			tb.Fatal(err)
-		}
-		server, err := listener.Accept()
-		if err != nil {
-			tb.Fatal(err)
-		}
-		clients[i] = client.(*net.TCPConn)
-		clients[i].SetLinger(0) // no TIME_WAIT rows left behind to grow later runs' tables
-		tb.Cleanup(func() { client.Close(); server.Close() })
-	}
-	return clients
-}
-
-func lookupOwnConn(tb testing.TB, c *net.TCPConn) {
-	local, remote := c.LocalAddr().(*net.TCPAddr), c.RemoteAddr().(*net.TCPAddr)
-	pid, _, _, err := FindProcess("tcp", "127.0.0.1", uint16(local.Port), "127.0.0.1", uint16(remote.Port))
-	if err != nil || pid != os.Getpid() {
-		tb.Errorf("pid=%d err=%v", pid, err)
-	}
-}
-
-// A browser holds hundreds of sockets and opens dozens of new connections at once.
+// The misses forget the owners of recent connections, so each lookup walks the descriptors.
 func BenchmarkLinuxFindProcess(b *testing.B) {
-	loopbackConns(b, 500) // 1000 table rows and descriptors, as an idle browser holds
+	loopbackConns(b, 500)
 	targets := loopbackConns(b, 64)
 	forgetOwners := func() {
 		recentOwners.Lock()
 		recentOwners.pids = nil
 		recentOwners.Unlock()
 	}
-	burst := func(b *testing.B) {
-		var wg sync.WaitGroup
-		for _, c := range targets {
-			wg.Go(func() { lookupOwnConn(b, c) })
-		}
-		wg.Wait()
-	}
-	b.Run("single", func(b *testing.B) {
-		for b.Loop() {
-			lookupOwnConn(b, targets[0])
-		}
-	})
 	b.Run("single-miss", func(b *testing.B) {
 		for b.Loop() {
 			forgetOwners()
 			lookupOwnConn(b, targets[0])
 		}
 	})
-	b.Run("burst64", func(b *testing.B) {
-		for b.Loop() {
-			burst(b)
-		}
-	})
 	b.Run("burst64-miss", func(b *testing.B) {
 		for b.Loop() {
 			forgetOwners()
-			burst(b)
+			lookupBurst(b, targets)
 		}
 	})
 }
@@ -498,5 +470,20 @@ func TestLinuxProcessOfAReplacedExecutable(t *testing.T) {
 	pid, name, path, err := FindProcess("tcp", "127.0.0.1", uint16(source.Port), "127.0.0.1", uint16(port(listener.Addr())))
 	if err != nil || pid != cmd.Process.Pid || name != "upgraded-app" || path != app {
 		t.Fatalf("lookup pid=%d name=%q path=%q err=%v; want pid=%d %q", pid, name, path, err, cmd.Process.Pid, app)
+	}
+}
+
+// A new connection's socket has the highest descriptor number, so its lookup reads only the
+// newest descriptors, not every one the owner holds.
+func TestLinuxLookupReadsTheNewestDescriptorsFirst(t *testing.T) {
+	loopbackConns(t, 64)
+	newest := loopbackConns(t, 1)[0] // the client; its accepted end is newer still
+	setRecentOwners(t, strconv.Itoa(os.Getpid()))
+	var reads atomic.Int32
+	readLink = func(path string) (string, error) { reads.Add(1); return os.Readlink(path) }
+	t.Cleanup(func() { readLink = os.Readlink })
+	lookupOwnConn(t, newest)
+	if n := reads.Load(); n > 4 { // the accepted end, the client, and the exe link
+		t.Fatalf("the newest connection's lookup read %d links", n)
 	}
 }

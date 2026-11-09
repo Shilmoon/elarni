@@ -137,3 +137,23 @@ func TestWindowsTCPProcessLookupMatchesRemoteEndpoint(t *testing.T) {
 		})
 	}
 }
+
+// The keyed lookup names the owner of either end of a connection, and none for addresses that
+// no connection has, so FindProcess falls back to the table.
+func TestNSIFindsTheOwnerOfATCPConnection(t *testing.T) {
+	for _, network := range []struct{ name, address string }{{"tcp4", "127.0.0.1:0"}, {"tcp6", "[::1]:0"}} {
+		t.Run(network.name, func(t *testing.T) {
+			client, _ := loopbackPair(t, network.name, network.address)
+			local, remote := addrPort(client.LocalAddr()), addrPort(client.RemoteAddr())
+			if pid := nsiTCPOwner(local, remote); pid != uint32(os.Getpid()) {
+				t.Fatalf("client end owner %d, want %d", pid, os.Getpid())
+			}
+			if pid := nsiTCPOwner(remote, local); pid != uint32(os.Getpid()) {
+				t.Fatalf("server end owner %d, want %d", pid, os.Getpid())
+			}
+			if pid := nsiTCPOwner(local, netip.AddrPortFrom(remote.Addr(), remote.Port()+1)); pid != 0 {
+				t.Fatalf("owner %d of a connection that does not exist", pid)
+			}
+		})
+	}
+}

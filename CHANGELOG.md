@@ -31,6 +31,13 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   the app reconnects through it. Where the system does not allow that (IPv6 on Windows,
   macOS), **Recent connections** lists them and asks you to restart the app.
 
+### Changed
+
+- Per-app routing finds each new connection's app faster. Windows and Linux ask the system for
+  that one connection instead of reading every socket on the computer (Windows: 0.64 ms to
+  25 µs per connection), and macOS reads its socket table once for connections that open
+  together, as a browser's do (64 at once: 70 ms to 2.6 ms).
+
 ### Fixed
 
 - Per-app rules for the Claude app on Windows, and for other Microsoft Store apps, stopped
