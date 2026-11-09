@@ -30,6 +30,9 @@ final class TunnelMethodChannel {
   var automationRefreshPath = false
   var automationFailover = false
   var automationTimer: Task<Void, Never>?
+  // What the pending timers wait for: a call that changes nothing, such as a status poll, keeps the timer it found.
+  var automationTimerDue: (at: Double, epoch: UInt64)?
+  private var maintenanceTimerDue: Date?
   var automationWork: Task<Void, Never>?
   private var maintenanceTimer: Task<Void, Never>?
   private var maintenanceWork: Task<Void, Never>?
@@ -1189,11 +1192,16 @@ final class TunnelMethodChannel {
   @MainActor
   func scheduleMaintenance() {
     guard observesSystem else { return }
-    maintenanceTimer?.cancel(); maintenanceTimer = nil
     guard maintenanceWork == nil, !automation.sleeping, automation.online,
-          let store = try? subscriptionStore(), !store.runtimeReconciliationRequired else { return }
-    guard let due = [store.nextRefreshDate(), store.routing.nextManagedDate(), store.routing.nextGeofileDate()]
-      .compactMap({ $0 }).min() else { return }
+          let store = try? subscriptionStore(), !store.runtimeReconciliationRequired,
+          let due = [store.nextRefreshDate(), store.routing.nextManagedDate(), store.routing.nextGeofileDate()]
+            .compactMap({ $0 }).min() else {
+      maintenanceTimer?.cancel(); maintenanceTimer = nil
+      return
+    }
+    if let timer = maintenanceTimer, !timer.isCancelled, maintenanceTimerDue == due { return }
+    maintenanceTimer?.cancel()
+    maintenanceTimerDue = due
     let delay = max(0, due.timeIntervalSince(maintenanceNow()))
     let sleep = automationSleep
     maintenanceTimer = Task { @MainActor [weak self] in
