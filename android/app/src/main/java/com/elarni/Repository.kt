@@ -738,7 +738,8 @@ class Repository(private val app: ElarniApplication) {
             if (!catalog.settings.optBoolean("disconnectOnSleep")) return
             automation.sleeping = sleeping
             if (sleeping && engine.running) { try { engine.stop() } finally { state("paused") } }
-            if (!sleeping && automation.intent) { automation.rearm(Automation.clock()); automation.schedule(Automation.clock()) }
+            // A tunnel that a tile, boot or an external request started while the screen was off is already up.
+            if (!sleeping && automation.intent && !engine.running) { automation.rearm(Automation.clock()); automation.schedule(Automation.clock()) }
         }
     }
     suspend fun boot() {
