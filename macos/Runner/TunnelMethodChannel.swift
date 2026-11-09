@@ -161,7 +161,7 @@ final class TunnelMethodChannel {
           let concurrentProbe = call.method == "pingNode" &&
             (call.arguments as? [String: Any])?["protocol"] as? String != "icmp"
           let readOnly = ["state", "subscriptions", "routingProfiles", "tunnelSettings", "inboundCredentials",
-                          "automationStatus", "runtimeMetrics", "readLogs", "systemInfo", "routeTable"].contains(call.method)
+                          "automationStatus", "runtimeMetrics", "readLogs", "readConnections", "systemInfo", "routeTable"].contains(call.method)
           try await self.commands.perform(intent: intent, concurrent: concurrentProbe, readOnly: readOnly) {
             if !["disconnect", "restoreCatalogBackup", "repairTunnel"].contains(call.method) { try await self.reconcileDisconnectedIntent() }
             switch call.method {
@@ -515,6 +515,10 @@ final class TunnelMethodChannel {
             case "readLogs":
               let after = ((call.arguments as? [String: Any])?["after"] as? NSNumber)?.int64Value ?? 0
               result(try await self.readLogs(after: after))
+            case "readConnections":
+              let arguments = call.arguments as? [String: Any]
+              result(try await self.readConnections(epoch: (arguments?["epoch"] as? NSNumber)?.int64Value ?? 0,
+                                                    after: (arguments?["after"] as? NSNumber)?.int64Value ?? 0))
             case "saveLogs":
               try self.saveLogs((call.arguments as? [String: Any])?["content"] as? String)
               result([:])
@@ -755,6 +759,20 @@ final class TunnelMethodChannel {
     value["level"] = settingsStore.current.logLevel
     if value["entries"] == nil { value["entries"] = [[String: Any]]() }
     return value
+  }
+
+  // The running extension's recent connections; none without a tunnel.
+  func readConnections(epoch: Int64, after: Int64) async throws -> [String: Any] {
+    guard let selected = try? await loadManager(), let session = selected.connection as? NETunnelProviderSession,
+          [.connected, .reasserting].contains(selected.connection.status) else {
+      return ["epoch": 0, "seq": 0, "connections": [Any]()]
+    }
+    let request = try JSONSerialization.data(withJSONObject: ["operation": "connections", "epoch": epoch, "after": max(after, 0)])
+    guard let response = try await sendProviderMessage(request, session: session),
+          let object = try JSONSerialization.jsonObject(with: response) as? [String: Any] else {
+      throw RunnerTunnelError.invalidState
+    }
+    return object
   }
 
   @MainActor

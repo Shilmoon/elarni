@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/cupertino.dart';
@@ -228,7 +229,7 @@ final class _RoutingApp {
 /// machines and containers, and connections that closed before routing.
 const unknownOwnerRule = '-1';
 
-enum _AppView { selected, picker, rules, paste, help }
+enum _AppView { selected, picker, rules, paste, help, connections }
 
 // Owned by the settings screen, so switching pages does not discard edits.
 // Only this form's fields are merged into the latest saved settings.
@@ -311,6 +312,7 @@ class PerAppRoutingEditor extends StatefulWidget {
     this.onCancel,
     this.servers = const [],
     this.checkRules,
+    this.readConnections,
   });
 
   final TunnelSettings settings;
@@ -325,6 +327,10 @@ class PerAppRoutingEditor extends StatefulWidget {
 
   /// Counts running programs per rule and explains rules that match nothing.
   final Future<ProcessRuleChecks> Function(List<String>)? checkRules;
+
+  /// The running core's recent connections, for the connections view.
+  final Future<RecentConnections> Function({int epoch, int after})?
+  readConnections;
 
   @override
   State<PerAppRoutingEditor> createState() => _PerAppRoutingEditorState();
@@ -351,6 +357,12 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
   ProcessRuleChecks? checks;
   List<String>? _checkedRules;
   bool _checking = false;
+  // The connections view's list by key, in the order of their last change.
+  final _connections = <int, RecentConnection>{};
+  final connectionSearch = TextEditingController();
+  int _connectionsEpoch = 0, _connectionsSeq = 0;
+  bool _connectionsRead = false, _readingConnections = false;
+  Timer? _connectionsTimer;
   bool get toolsExpanded => draft.toolsExpanded;
   set toolsExpanded(bool value) => draft.toolsExpanded = value;
 
@@ -374,6 +386,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
     search.addListener(() => draft.search = search.text);
     input.addListener(() => draft.input = input.text);
     _loadApps();
+    if (view == _AppView.connections) _watchConnections();
   }
 
   @override
@@ -389,8 +402,10 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
 
   @override
   void dispose() {
+    _connectionsTimer?.cancel();
     search.dispose();
     input.dispose();
+    connectionSearch.dispose();
     super.dispose();
   }
 
@@ -429,10 +444,15 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
     return name.endsWith('.app') ? name.substring(0, name.length - 4) : name;
   }
 
-  Future<List<_RoutingApp>> _nativeApps(String method) async {
+  Future<List<_RoutingApp>> _nativeApps(
+    String method, {
+    List<String>? processes,
+  }) async {
     final raw = await DesktopIntegration.channel.invokeListMethod<Object?>(
       method,
-      method == 'routingApplications' ? {'processes': selections} : null,
+      method == 'routingApplications'
+          ? {'processes': processes ?? selections}
+          : null,
     );
     final result = <_RoutingApp>[];
     for (final item in raw ?? []) {
@@ -668,6 +688,286 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
       view = next;
       notice = null;
     });
+    if (next == _AppView.connections) {
+      _watchConnections();
+    } else {
+      _connectionsTimer?.cancel();
+      _connectionsTimer = null;
+    }
+  }
+
+  // The list follows the core once a second while it is shown.
+  void _watchConnections() {
+    _connectionsTimer?.cancel();
+    _readConnections();
+    _connectionsTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _readConnections(),
+    );
+  }
+
+  Future<void> _readConnections() async {
+    final read = widget.readConnections;
+    if (read == null || _readingConnections) return;
+    _readingConnections = true;
+    try {
+      final result = await read(
+        epoch: _connectionsEpoch,
+        after: _connectionsSeq,
+      );
+      if (!mounted) return;
+      setState(() {
+        if (result.epoch != _connectionsEpoch) _connections.clear();
+        _connectionsEpoch = result.epoch;
+        _connectionsSeq = result.seq;
+        for (final connection in result.connections) {
+          _connections.remove(connection.key);
+          _connections[connection.key] = connection;
+        }
+        while (_connections.length > 500) {
+          _connections.remove(_connections.keys.first);
+        }
+        _connectionsRead = true;
+      });
+    } on Object {
+      // No running tunnel answers on macOS and Android.
+      if (mounted) {
+        setState(() {
+          _connections.clear();
+          _connectionsEpoch = _connectionsSeq = 0;
+          _connectionsRead = true;
+        });
+      }
+    } finally {
+      _readingConnections = false;
+    }
+  }
+
+  String _connectionApp(RecentConnection connection) =>
+      switch (connection.owner) {
+        // A program in a folder of versions, such as Claude Code's
+        // .../claude/versions/2.1.300, is named after the folder's owner.
+        'found' when connection.path.isNotEmpty => _name(
+          RegExp(r'[\\/]versions[\\/][^\\/]+$').hasMatch(connection.path)
+              ? connection.path.substring(
+                  0,
+                  connection.path.lastIndexOf(RegExp(r'[\\/]')) + 1,
+                )
+              : connection.path,
+        ),
+        'found' => connection.name,
+        'unknown' => l10n.perAppUnknownOwner,
+        _ => l10n.perAppConnectionNoApp,
+      };
+
+  // The rule a connection's program gets: the host's update-proof rule, as
+  // for a picked app, else the program's bundle on macOS, else its path.
+  Future<String> _connectionRule(String path) async {
+    final rule = widget.windows ? path.replaceAll('/', r'\') : path;
+    try {
+      final hosted = await _nativeApps(
+        'routingApplications',
+        processes: [...selections, rule],
+      );
+      final suggested = hosted
+          .where((app) => identity(app.process) == identity(rule))
+          .firstOrNull
+          ?.suggested;
+      if (suggested != null) return suggested;
+    } on Object {
+      // The path still names the program.
+    }
+    if (platform == 'macos') {
+      final bundle = rule.indexOf('.app/');
+      if (bundle > 0) return rule.substring(0, bundle + 5);
+    }
+    return rule;
+  }
+
+  Future<void> _addConnectionApp(RecentConnection connection) =>
+      _operation(() async {
+        final rule = await _connectionRule(connection.path);
+        if (!mounted) return;
+        setState(() {
+          selections = _rules([...selections, rule].join('\n'));
+          if (!apps.any((app) => identity(app.process) == identity(rule))) {
+            apps = [...apps, _RoutingApp(_name(rule), rule)]..sort(_byName);
+          }
+        });
+        if (mounted) {
+          setState(() => notice = l10n.perAppConnectionAdded(_name(rule)));
+        }
+      });
+
+  // Whether a listed rule already names the program: its path, a folder
+  // holding it, or its file name. The core's own matcher decides routing.
+  bool _covers(String rule, String path) {
+    final windows = widget.windows;
+    String normal(String value) =>
+        identity(windows ? value.replaceAll('/', r'\') : value);
+    final program = normal(path), named = normal(rule);
+    if (named == program) return true;
+    if (named.endsWith('/') || named.endsWith(r'\')) {
+      return program.startsWith(named);
+    }
+    if (named.contains('/') || named.contains(r'\')) return false;
+    final file = program.substring(
+      program.lastIndexOf(windows ? r'\' : '/') + 1,
+    );
+    return file == named || windows && file == '$named.exe';
+  }
+
+  String _connectionRoute(RecentConnection connection) =>
+      switch (connection.kind) {
+        'direct' => l10n.perAppConnectionDirect,
+        'block' => l10n.perAppConnectionBlocked,
+        'dns' => l10n.perAppConnectionDns,
+        'routing' => l10n.perAppConnectionRouting,
+        _ => l10n.perAppConnectionProxy,
+      };
+
+  Widget _connectionRow(RecentConnection connection) {
+    final subtle = TextStyle(
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+    );
+    final time = connection.time;
+    String two(int value) => value.toString().padLeft(2, '0');
+    final canAdd =
+        connection.owner == 'found' &&
+        connection.path.isNotEmpty &&
+        !connection.listed &&
+        !selections.any((rule) => _covers(rule, connection.path));
+    final address = connection.host.contains(':')
+        ? '[${connection.host}]:${connection.port}'
+        : '${connection.host}:${connection.port}';
+    return Column(
+      children: [
+        ListTile(
+          key: Key('per-app-connection-${connection.key}'),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+          leading: Icon(switch (connection.owner) {
+            'found' => CupertinoIcons.app,
+            'unknown' => CupertinoIcons.question_square,
+            _ => CupertinoIcons.globe,
+          }, size: 22),
+          title: Text(_connectionApp(connection)),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$address · ${connection.network.toUpperCase()}',
+                style: subtle,
+              ),
+              Text(
+                [
+                  _connectionRoute(connection),
+                  if (connection.listed) l10n.perAppConnectionListed,
+                  if (connection.unlisted) l10n.perAppConnectionNotListed,
+                ].join(' · '),
+                style: subtle,
+              ),
+              if (connection.path.isNotEmpty)
+                Text(
+                  connection.path,
+                  style: subtle.copyWith(fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+            ],
+          ),
+          trailing: Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            children: [
+              Text(
+                '${two(time.hour)}:${two(time.minute)}:${two(time.second)}',
+                style: subtle,
+              ),
+              if (canAdd)
+                TextButton(
+                  key: Key('per-app-add-connection-${connection.key}'),
+                  onPressed: enabled
+                      ? () => _addConnectionApp(connection)
+                      : null,
+                  child: Text(l10n.perAppConnectionAdd),
+                ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+      ],
+    );
+  }
+
+  Widget _connectionsView() {
+    final query = connectionSearch.text.trim().toLowerCase();
+    final visible =
+        _connections.values
+            .where(
+              (connection) =>
+                  '${_connectionApp(connection)} ${connection.path} ${connection.host}'
+                      .toLowerCase()
+                      .contains(query),
+            )
+            .toList()
+          ..sort((a, b) => b.key.compareTo(a.key));
+    final subtle = TextStyle(
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _heading(l10n.perAppConnections),
+        const SizedBox(height: 8),
+        Text(l10n.perAppConnectionsHelp, style: subtle),
+        if (widget.settings.perAppMode == 'off') ...[
+          const SizedBox(height: 8),
+          Text(
+            l10n.perAppConnectionsOff,
+            key: const Key('per-app-connections-off'),
+            style: subtle,
+          ),
+        ],
+        const SizedBox(height: 12),
+        TextField(
+          key: const Key('per-app-connections-search'),
+          controller: connectionSearch,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            labelText: l10n.perAppConnectionsSearch,
+            prefixIcon: const Icon(CupertinoIcons.search),
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (!_connectionsRead)
+          const LinearProgressIndicator()
+        else if (_connectionsEpoch == 0)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Text(l10n.perAppConnectionsDisconnected, style: subtle),
+          )
+        else if (visible.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Text(l10n.perAppConnectionsEmpty, style: subtle),
+          )
+        else
+          SizedBox(
+            height: 420,
+            child: ListView(
+              children: [
+                for (final connection in visible.take(200))
+                  _connectionRow(connection),
+              ],
+            ),
+          ),
+        _footer([
+          FilledButton(
+            onPressed: () => _show(_AppView.selected),
+            child: Text(l10n.done),
+          ),
+        ]),
+      ],
+    );
   }
 
   Future<void> _chooseFile() => _operation(() async {
@@ -988,6 +1288,14 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
                 ),
               ),
             ),
+            if (widget.readConnections != null) ...[
+              TextButton(
+                key: const Key('per-app-connections'),
+                onPressed: enabled ? () => _show(_AppView.connections) : null,
+                child: Text(l10n.perAppConnections),
+              ),
+              const SizedBox(width: 8),
+            ],
             OutlinedButton(
               onPressed: enabled
                   ? () {
@@ -1351,6 +1659,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
         switch (view) {
           _AppView.selected => _selected(),
           _AppView.picker => _picker(),
+          _AppView.connections => _connectionsView(),
           _ => _tool(),
         },
         // The selected-apps view shows it next to Add apps.

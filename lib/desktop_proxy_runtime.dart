@@ -265,6 +265,7 @@ extension _ProxyRuntime on DesktopProxy {
         _metricsProcess = process;
         _latestMetrics = {};
         _metricsAt = null;
+        _connections.clear();
       }
       if (session) {
         // A session whose output ended answers nothing more; its exit clears it.
@@ -462,6 +463,7 @@ extension _ProxyRuntime on DesktopProxy {
             final event = value['event'];
             if (event != 'metrics' &&
                 event != 'logs' &&
+                event != 'connections' &&
                 event != 'stopped' &&
                 session) {
               final pending = _vpnReply;
@@ -486,6 +488,9 @@ extension _ProxyRuntime on DesktopProxy {
               }
             } else if (event == 'logs' && value['data'] is Map) {
               _appendLogs(catalogMap(value['data']));
+            } else if (event == 'connections' && value['data'] is Map) {
+              if (_metricsProcess == process)
+                _appendConnections(catalogMap(value['data']));
             } else {
               if (event != 'metrics' || value['data'] is! Map)
                 throw const FormatException();
@@ -570,6 +575,7 @@ extension _ProxyRuntime on DesktopProxy {
     }
     if (_process == launch) _process = null;
     _metricsProcess = null;
+    _connections.clear();
   }().whenComplete(() => _stopping = null);
 
   Future<void> _disconnect() async {

@@ -771,6 +771,196 @@ void main() {
     expect(saved!.perAppTargets, {'/opt/tools/': 'block'});
   });
 
+  testWidgets('recent connections name the app and add its program', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    const versions = '/home/u/.local/share/claude/versions/';
+    final messenger = tester.binding.defaultBinaryMessenger;
+    final hosted = <Object?>[];
+    messenger.setMockMethodCallHandler(DesktopIntegration.channel, (
+      call,
+    ) async {
+      if (call.method != 'routingApplications') return null;
+      hosted.add((call.arguments as Map)['processes']);
+      return [
+        {
+          'name': '2.1.300',
+          'process': '${versions}2.1.300',
+          'suggested': versions,
+        },
+      ];
+    });
+    addTearDown(
+      () =>
+          messenger.setMockMethodCallHandler(DesktopIntegration.channel, null),
+    );
+    Map<String, Object?> entry(
+      int key,
+      int seq, {
+      String owner = 'found',
+      String path = '',
+      String kind = 'proxy',
+      List<String> rules = const [],
+      String host = '192.0.2.10',
+    }) => {
+      'key': key,
+      'seq': seq,
+      'time': DateTime(2026, 11, 9, 12, 0, key).millisecondsSinceEpoch,
+      'network': 'tcp',
+      'host': host,
+      'port': 443,
+      'inbound': 'elarni-tun',
+      'outbound': 'elarni-proxy',
+      'kind': kind,
+      'rules': rules,
+      'owner': owner,
+      'path': path,
+    };
+    var list = [
+      entry(
+        1,
+        1,
+        path: '${versions}2.1.300',
+        rules: ['elarni-per-app-other'],
+        host: 'api.example.com',
+      ),
+      entry(
+        2,
+        2,
+        path: '/usr/bin/curl',
+        kind: 'direct',
+        rules: ['elarni-per-app-listed'],
+      ),
+      entry(3, 3, owner: 'unknown', rules: ['elarni-per-app-listed']),
+      entry(4, 4, owner: ''),
+    ];
+    final reads = <(int, int)>[];
+    TunnelSettings? saved;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: PerAppRoutingEditor(
+              settings: const TunnelSettings(
+                xrayTunEnabled: true,
+                perAppMode: 'bypass',
+                perAppProcesses: ['/usr/bin/curl'],
+              ),
+              windows: false,
+              linux: true,
+              readConnections: ({int epoch = 0, int after = 0}) async {
+                reads.add((epoch, after));
+                final since = epoch == 7 ? after : 0;
+                return RecentConnections.fromMap({
+                  'epoch': 7,
+                  'seq': list.last['seq'],
+                  'connections': [
+                    for (final item in list)
+                      if ((item['seq']! as int) > since) item,
+                  ],
+                });
+              },
+              onSave: (value) async => saved = value,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('per-app-connections')));
+    await tester.pumpAndSettle();
+    expect(reads.first, (0, 0));
+    // Newest first; each names its app, address and where it went.
+    final rows = [4, 3, 2, 1]
+        .map(
+          (key) =>
+              tester.getTopLeft(find.byKey(Key('per-app-connection-$key'))).dy,
+        )
+        .toList();
+    expect(rows, [...rows]..sort());
+    expect(find.text('claude'), findsOneWidget);
+    expect(find.text('Unidentified traffic'), findsOneWidget);
+    expect(find.text('App not looked up'), findsOneWidget);
+    expect(find.text('api.example.com:443 · TCP'), findsOneWidget);
+    expect(find.text('Direct · Per-app rule'), findsOneWidget);
+    expect(find.text('Through a server · Not listed'), findsOneWidget);
+    // Only a found program outside the list can be added.
+    expect(find.byKey(const Key('per-app-add-connection-1')), findsOneWidget);
+    for (final key in [2, 3, 4]) {
+      expect(find.byKey(Key('per-app-add-connection-$key')), findsNothing);
+    }
+    // A later decision updates its entry in place.
+    list = [...list.take(3), entry(4, 5, owner: '', kind: 'block')];
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(reads.last, (7, 4));
+    expect(find.text('Blocked'), findsOneWidget);
+    expect(find.byKey(const Key('per-app-connection-4')), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('per-app-connections-search')),
+      'example.com',
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('per-app-connection-2')), findsNothing);
+    await tester.tap(find.byKey(const Key('per-app-add-connection-1')));
+    await tester.pumpAndSettle();
+    // The host gives a version's program the folder of versions.
+    expect(hosted.last, ['/usr/bin/curl', '${versions}2.1.300']);
+    expect(find.text('claude added. Save changes to apply.'), findsOneWidget);
+    expect(find.byKey(const Key('per-app-add-connection-1')), findsNothing);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+    expect(saved!.perAppProcesses, ['/usr/bin/curl', versions]);
+  });
+
+  testWidgets('recent connections ask for a tunnel when none answers', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      DesktopIntegration.channel,
+      (call) async => call.method == 'routingApplications' ? [] : null,
+    );
+    addTearDown(
+      () =>
+          messenger.setMockMethodCallHandler(DesktopIntegration.channel, null),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: PerAppRoutingEditor(
+              settings: const TunnelSettings(xrayTunEnabled: true),
+              windows: false,
+              readConnections: ({int epoch = 0, int after = 0}) async =>
+                  throw PlatformException(code: 'not_running'),
+              onSave: (_) async {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('per-app-connections')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'Connect to see which apps open connections and where they go.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('per-app-connections-off')), findsOneWidget);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+  });
+
   // A Snap or script launcher's rule would name /usr/bin/snap or /bin/sh.
   testWidgets('a launcher chosen on Linux explains why it is refused', (
     tester,

@@ -2976,4 +2976,57 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get perAppUseSuggested => 'Use suggested rule';
+
+  @override
+  String get perAppConnections => 'Recent connections';
+
+  @override
+  String get perAppConnectionsHelp =>
+      'Connections apps opened while Elarni is connected, newest first, with where each one went. It names the program behind an app\'s traffic, such as a helper or updater, so you can add it. Kept in memory until you disconnect.';
+
+  @override
+  String get perAppConnectionsDisconnected =>
+      'Connect to see which apps open connections and where they go.';
+
+  @override
+  String get perAppConnectionsOff =>
+      'Per-app routing is off, so apps are not named. Turn it on and save to see them.';
+
+  @override
+  String get perAppConnectionsEmpty => 'No connections yet.';
+
+  @override
+  String get perAppConnectionsSearch => 'Search apps and addresses';
+
+  @override
+  String get perAppConnectionNoApp => 'App not looked up';
+
+  @override
+  String get perAppConnectionDirect => 'Direct';
+
+  @override
+  String get perAppConnectionProxy => 'Through a server';
+
+  @override
+  String get perAppConnectionBlocked => 'Blocked';
+
+  @override
+  String get perAppConnectionDns => 'DNS';
+
+  @override
+  String get perAppConnectionRouting => 'Routing';
+
+  @override
+  String get perAppConnectionListed => 'Per-app rule';
+
+  @override
+  String get perAppConnectionNotListed => 'Not listed';
+
+  @override
+  String get perAppConnectionAdd => 'Add to list';
+
+  @override
+  String perAppConnectionAdded(String name) {
+    return '$name added. Save changes to apply.';
+  }
 }

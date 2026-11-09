@@ -1206,17 +1206,19 @@ pub(crate) fn apply_per_app_routing(
     {
         return Err(CompileError::InvalidOutbound);
     }
+    // Rule tags let the connections view tell a per-app decision from normal routing.
     let mut gate = vec![
         json!({"type":"field", "inboundTag":[tun_tag], "network":"tcp,udp",
-        "port":53, "outboundTag":reentry}),
+        "port":53, "outboundTag":reentry, "ruleTag":"elarni-per-app-dns"}),
     ];
     gate.extend(groups.iter().map(|(tag, processes)| {
         json!({"type":"field", "inboundTag":[tun_tag],
-        "network":"tcp,udp", "process":processes, "outboundTag":tag})
+        "network":"tcp,udp", "process":processes, "outboundTag":tag,
+        "ruleTag":"elarni-per-app-listed"})
     }));
     gate.push(
         json!({"type":"field", "inboundTag":[tun_tag], "network":"tcp,udp",
-        "outboundTag":remaining}),
+        "outboundTag":remaining, "ruleTag":"elarni-per-app-other"}),
     );
     config["routing"]["rules"]
         .as_array_mut()

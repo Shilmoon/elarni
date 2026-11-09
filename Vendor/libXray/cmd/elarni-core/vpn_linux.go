@@ -89,7 +89,9 @@ type linuxReply struct {
 	PID     int                  `json:"helperPid,omitempty"`
 	Metrics *xray.RuntimeMetrics `json:"metrics,omitempty"`
 	Logs    []xray.LogEntry      `json:"logs,omitempty"`
-	Lost    bool                 `json:"lost,omitempty"` // the tunnel ended without a stop; its supervisor waits
+	// The connections view's entries that changed since the last frame.
+	Connections *xray.ConnectionsResult `json:"connections,omitempty"`
+	Lost        bool                    `json:"lost,omitempty"` // the tunnel ended without a stop; its supervisor waits
 }
 type linuxChild struct {
 	command *exec.Cmd
@@ -217,8 +219,8 @@ func startLinuxChild(command *exec.Cmd, events func(linuxReply)) (*linuxChild, e
 			if linuxReadFrame(output, &reply) != nil {
 				break
 			}
-			// Metrics, log lines and a tunnel loss are events, not replies.
-			if reply.Metrics != nil || len(reply.Logs) > 0 || reply.Lost {
+			// Metrics, log lines, connections and a tunnel loss are events, not replies.
+			if reply.Metrics != nil || len(reply.Logs) > 0 || reply.Connections != nil || reply.Lost {
 				if reply.Lost {
 					child.up.Store(false)
 				}
@@ -362,6 +364,7 @@ func startVPN(payload json.RawMessage) (any, error) {
 					linuxBroker.metrics = reply.Metrics
 				}
 				xray.AppendLogs(reply.Logs)
+				relayedConnections.add(reply.Connections)
 			}
 		})
 		if err != nil {
@@ -857,6 +860,7 @@ func linuxWorker(ctx context.Context, input io.Reader, output io.Writer) (code i
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	var gate metricsGate
+	var connections connectionsCursor
 	for {
 		select {
 		case <-ctx.Done():
@@ -882,8 +886,9 @@ func linuxWorker(ctx context.Context, input io.Reader, output io.Writer) (code i
 				if metrics, err := xray.GetRuntimeMetrics(); err == nil && gate.due(metrics, reply.Logs != nil, now) {
 					reply.Metrics = &metrics
 				}
+				reply.Connections = connections.read()
 			}
-			if (reply.Metrics != nil || reply.Logs != nil) && linuxWriteFrame(output, reply) != nil {
+			if (reply.Metrics != nil || reply.Logs != nil || reply.Connections != nil) && linuxWriteFrame(output, reply) != nil {
 				return 1
 			}
 		}

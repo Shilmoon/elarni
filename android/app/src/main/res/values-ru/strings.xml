@@ -732,4 +732,19 @@
         <item quantity="many">Обновлено %d дней назад</item>
         <item quantity="other">Обновлено %d дня назад</item>
     </plurals>
+    <string name="recent_connections">Недавние подключения</string>
+    <string name="recent_connections_help">Подключения, которые приложения открыли, пока Elarni подключён, — сначала новые, и куда ушло каждое. Хранится в памяти до отключения.</string>
+    <string name="connect_to_see_connections">Подключитесь, чтобы увидеть, какие приложения открывают подключения и куда они идут.</string>
+    <string name="per_app_off_connections">Маршрутизация по приложениям выключена, поэтому приложения не определяются. Включите её и сохраните.</string>
+    <string name="no_connections_yet">Подключений пока нет.</string>
+    <string name="app_not_looked_up">Приложение не определялось</string>
+    <string name="unidentified_traffic">Неопознанный трафик</string>
+    <string name="connection_uid">UID %1$s</string>
+    <string name="connection_through_server">Через сервер</string>
+    <string name="connection_blocked">Заблокировано</string>
+    <string name="connection_dns">DNS</string>
+    <string name="connection_routing">Маршрутизация</string>
+    <string name="connection_per_app_rule">Правило приложения</string>
+    <string name="connection_not_listed">Не в списке</string>
+    <string name="add_to_list">Добавить в список</string>
 </resources>

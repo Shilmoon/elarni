@@ -843,5 +843,21 @@
   "perAppWarningVersioned": "Указывает одну версию приложения и перестанет срабатывать после следующего обновления.",
   "perAppWarningUnknown": "Это правило может не соответствовать ни одной программе.",
   "perAppSuggestedRule": "Предлагаемое правило: {rule}",
-  "perAppUseSuggested": "Использовать"
+  "perAppUseSuggested": "Использовать",
+  "perAppConnections": "Недавние подключения",
+  "perAppConnectionsHelp": "Подключения, которые приложения открыли, пока Elarni подключён, — сначала новые, и куда ушло каждое. Здесь видно, какая программа стоит за трафиком приложения, например вспомогательный процесс или программа обновления, и её можно добавить. Хранится в памяти до отключения.",
+  "perAppConnectionsDisconnected": "Подключитесь, чтобы увидеть, какие приложения открывают подключения и куда они идут.",
+  "perAppConnectionsOff": "Маршрутизация по приложениям выключена, поэтому приложения не определяются. Включите её и сохраните.",
+  "perAppConnectionsEmpty": "Подключений пока нет.",
+  "perAppConnectionsSearch": "Поиск по приложениям и адресам",
+  "perAppConnectionNoApp": "Приложение не определялось",
+  "perAppConnectionDirect": "Напрямую",
+  "perAppConnectionProxy": "Через сервер",
+  "perAppConnectionBlocked": "Заблокировано",
+  "perAppConnectionDns": "DNS",
+  "perAppConnectionRouting": "Маршрутизация",
+  "perAppConnectionListed": "Правило приложения",
+  "perAppConnectionNotListed": "Не в списке",
+  "perAppConnectionAdd": "Добавить в список",
+  "perAppConnectionAdded": "{name} добавлено. Сохраните изменения, чтобы применить."
 }

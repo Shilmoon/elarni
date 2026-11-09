@@ -218,6 +218,10 @@ abstract interface class TunnelControl {
   /// current level: `{'level': String, 'entries': [{seq, time, level, text}]}`.
   Future<Map<String, Object?>> readLogs({int after = 0});
 
+  /// The running core's recent connections that changed after seq [after] of
+  /// list [epoch], oldest change first; for another epoch, the whole list.
+  Future<RecentConnections> readConnections({int epoch = 0, int after = 0});
+
   /// Saves exported log text where the user chooses.
   Future<void> saveLogs(String text);
   Future<Map<String, Object?>> systemInfo();
@@ -685,6 +689,14 @@ final class NativeTunnelControl implements TunnelControl {
       _mapResult('readLogs', {'after': after});
 
   @override
+  Future<RecentConnections> readConnections({
+    int epoch = 0,
+    int after = 0,
+  }) async => RecentConnections.fromMap(
+    await _mapResult('readConnections', {'epoch': epoch, 'after': after}),
+  );
+
+  @override
   Future<void> saveLogs(String text) async {
     await _mapResult('saveLogs', {'content': text});
   }
@@ -756,6 +768,93 @@ final class ProcessRuleChecks {
 
   /// False when the running programs could not be listed.
   final bool listed;
+}
+
+/// One routed connection: the app per-app routing found and the outbound that
+/// took it. A connection a per-app rule sent through normal routing again is
+/// one entry with the later decision's outbound.
+final class RecentConnection {
+  const RecentConnection({
+    required this.key,
+    required this.seq,
+    required this.time,
+    required this.network,
+    required this.host,
+    required this.port,
+    required this.outbound,
+    required this.kind,
+    this.inbound = '',
+    this.rules = const [],
+    this.owner = '',
+    this.pid = 0,
+    this.name = '',
+    this.path = '',
+  });
+
+  static RecentConnection? fromMap(Object? value) {
+    if (value is! Map || value['key'] is! int || value['seq'] is! int) {
+      return null;
+    }
+    String text(String key) => value[key] is String ? value[key] as String : '';
+    int number(String key) => value[key] is int ? value[key] as int : 0;
+    return RecentConnection(
+      key: value['key'] as int,
+      seq: value['seq'] as int,
+      time: DateTime.fromMillisecondsSinceEpoch(number('time')),
+      network: text('network'),
+      host: text('host'),
+      port: number('port'),
+      inbound: text('inbound'),
+      outbound: text('outbound'),
+      kind: text('kind'),
+      rules: [
+        for (final rule in value['rules'] as List? ?? const [])
+          if (rule is String) rule,
+      ],
+      owner: text('owner'),
+      pid: number('pid'),
+      name: text('name'),
+      path: text('path'),
+    );
+  }
+
+  final int key, seq, port, pid;
+  final DateTime time;
+  final String network, host, inbound, outbound, name, path;
+
+  /// direct, block, proxy, dns, or routing while it waits for its next decision.
+  final String kind;
+
+  /// Tags of the rules that took it; the per-app rules' start "elarni-per-app-".
+  final List<String> rules;
+
+  /// found; unknown when the lookup failed (the "-1" rule's traffic); empty
+  /// when no per-app rule asked.
+  final String owner;
+
+  /// A per-app rule for a listed app (or unidentified traffic) took it.
+  bool get listed => rules.contains('elarni-per-app-listed');
+
+  /// The per-app rules passed it on: not listed.
+  bool get unlisted => rules.contains('elarni-per-app-other');
+}
+
+final class RecentConnections {
+  const RecentConnections(this.epoch, this.seq, this.connections);
+
+  factory RecentConnections.fromMap(Map<String, Object?> value) =>
+      RecentConnections(
+        value['epoch'] is int ? value['epoch'] as int : 0,
+        value['seq'] is int ? value['seq'] as int : 0,
+        [
+          for (final item in value['connections'] as List? ?? const [])
+            ?RecentConnection.fromMap(item),
+        ],
+      );
+
+  /// Names the core's list; 0 when no tunnel is running.
+  final int epoch, seq;
+  final List<RecentConnection> connections;
 }
 
 final class PingResult {

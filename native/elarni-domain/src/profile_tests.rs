@@ -141,6 +141,14 @@ fn per_app_policy_gates_tun_then_preserves_provider_and_app_routing() {
         assert_eq!(rules[1]["process"], json!(listed));
         assert_eq!(rules[1]["inboundTag"], json!(["elarni-tun"]));
         assert_eq!(rules[2]["outboundTag"] == entry, mode == PerAppMode::Bypass);
+        // The connections view names the per-app rule that took a connection.
+        for (rule, tag) in rules.iter().zip([
+            "elarni-per-app-dns",
+            "elarni-per-app-listed",
+            "elarni-per-app-other",
+        ]) {
+            assert_eq!(rule["ruleTag"], tag);
+        }
         assert_eq!(
             rules[1]["outboundTag"] == entry,
             mode == PerAppMode::ProxyOnly

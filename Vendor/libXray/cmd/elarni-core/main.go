@@ -217,6 +217,7 @@ func serve(input io.Reader, output io.Writer, invoke func(string) response, stop
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	var gate metricsGate
+	var connections connectionsCursor
 	for {
 		select {
 		case <-closed:
@@ -238,6 +239,11 @@ func serve(input io.Reader, output io.Writer, invoke func(string) response, stop
 			}
 			if logs != nil {
 				events = append(events, logs)
+			}
+			if result.run && options.Payload.StreamMetrics {
+				if event := connectionsEvent(&connections); event != nil {
+					events = append(events, event)
+				}
 			}
 			for _, event := range events {
 				go func() { written <- json.NewEncoder(output).Encode(event) }()
@@ -262,6 +268,7 @@ func serveVPNSession(requests <-chan string, closed <-chan struct{}, output io.W
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	var gate metricsGate
+	var connections connectionsCursor
 	write := func(value any) bool {
 		done := make(chan error, 1)
 		go func() { done <- json.NewEncoder(output).Encode(value) }()
@@ -325,6 +332,11 @@ func serveVPNSession(requests <-chan string, closed <-chan struct{}, output io.W
 			}
 			if active && logs != nil && !write(logs) {
 				return 1
+			}
+			if active && streamMetrics {
+				if event := connectionsEvent(&connections); event != nil && !write(event) {
+					return 1
+				}
 			}
 			if active && !up() {
 				// The app reports the drop and may reconnect through this owner. The

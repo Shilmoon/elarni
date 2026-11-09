@@ -41,6 +41,7 @@ extension _ProxyCommands on DesktopProxy {
       'automationStatus',
       'runtimeMetrics',
       'readLogs',
+      'readConnections',
       'nodeConfig',
       'inboundCredentials',
     }.contains(method);
@@ -186,6 +187,21 @@ extension _ProxyCommands on DesktopProxy {
               if ((line['seq']! as int) > after) line,
           ],
           'last': _logSeq,
+        };
+      case 'readConnections':
+        if (_state != 'connected')
+          return {'epoch': 0, 'seq': 0, 'connections': const <Object?>[]};
+        final epoch = args['epoch'] is int ? args['epoch']! as int : 0;
+        final after = epoch == _connectionsEpoch && args['after'] is int
+            ? args['after']! as int
+            : 0;
+        return {
+          'epoch': _connectionsEpoch,
+          'seq': _connections.isEmpty ? 0 : _connections.values.last['seq'],
+          'connections': [
+            for (final entry in _connections.values)
+              if ((entry['seq']! as int) > after) entry,
+          ],
         };
       case 'saveLogs':
         final content = args['content'];
@@ -814,6 +830,25 @@ extension _ProxyCommands on DesktopProxy {
       });
     }
     if (_logs.length > 1000) _logs.removeRange(0, _logs.length - 1000);
+  }
+
+  // The core's list, relayed by its tunnel owner on Windows and Linux.
+  void _appendConnections(CatalogMap data) {
+    final epoch = data['epoch'];
+    if (epoch is! int || epoch == 0) return;
+    if (epoch != _connectionsEpoch) {
+      _connectionsEpoch = epoch;
+      _connections.clear();
+    }
+    for (final item in data['connections'] as List? ?? const []) {
+      if (item is! Map || item['key'] is! int || item['seq'] is! int) continue;
+      final key = item['key'] as int;
+      _connections.remove(key);
+      _connections[key] = catalogMap(item);
+    }
+    while (_connections.length > 500) {
+      _connections.remove(_connections.keys.first);
+    }
   }
 
   CatalogMap _runtimeMetrics() => {
