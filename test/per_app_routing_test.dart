@@ -279,7 +279,7 @@ void main() {
     ]) {
       for (final path in paths) {
         final profile = PerAppProfile(platform, 'bypass', [path]);
-        expect(profile.valid, isFalse);
+        expect(profile.validationError, isNotNull);
         expect(profile.encode, throwsFormatException);
         expect(
           () => PerAppProfile.decode(
@@ -297,15 +297,15 @@ void main() {
       }
     }
     for (final platform in ['macos', 'windows', 'linux']) {
-      expect(PerAppProfile(platform, 'off', []).valid, isTrue);
+      expect(PerAppProfile(platform, 'off', []).validationError, isNull);
       expect(
         PerAppProfile(platform, 'bypass', [
           'curl',
           'browser.exe',
           'self/',
           'xray/',
-        ]).valid,
-        isTrue,
+        ]).validationError,
+        isNull,
       );
     }
     expect(
@@ -314,13 +314,15 @@ void main() {
         r'\\server\Apps\Browser.exe',
         '//server/Apps/',
         'service:BITS',
-      ]).valid,
-      isTrue,
+      ]).validationError,
+      isNull,
     );
     // "children:" wraps one rule of a program, which is checked as that rule.
     expect(
-      PerAppProfile('linux', 'bypass', ['children:/opt/claude/claude']).valid,
-      isTrue,
+      PerAppProfile('linux', 'bypass', [
+        'children:/opt/claude/claude',
+      ]).validationError,
+      isNull,
     );
     for (final rule in [
       'children:',
@@ -330,14 +332,16 @@ void main() {
       'children:service:BITS',
     ]) {
       expect(
-        PerAppProfile('linux', 'bypass', [rule]).valid,
-        isFalse,
+        PerAppProfile('linux', 'bypass', [rule]).validationError,
+        isNotNull,
         reason: rule,
       );
     }
     expect(
-      PerAppProfile('android', 'bypass', ['children:com.example.app']).valid,
-      isFalse,
+      PerAppProfile('android', 'bypass', [
+        'children:com.example.app',
+      ]).validationError,
+      isNotNull,
     );
     // Flatpak and AppImage rules belong to Linux, service rules to Windows.
     expect(
@@ -345,8 +349,8 @@ void main() {
         'flatpak:org.mozilla.firefox',
         'appimage:/home/u/Applications/Cursor.AppImage',
         'appimage:/home/u/Applications/',
-      ]).valid,
-      isTrue,
+      ]).validationError,
+      isNull,
     );
     expect(
       PerAppProfile('linux', 'bypass', ['service:BITS']).validationError,
@@ -358,7 +362,7 @@ void main() {
       ]).validationError,
       'Flatpak and AppImage rules name Linux apps and cannot be used in a macOS profile.',
     );
-    expect(PerAppProfile('android', 'off', []).valid, isTrue);
+    expect(PerAppProfile('android', 'off', []).validationError, isNull);
     expect(PerAppProfile.platformLabel('android'), 'Android');
     final android = PerAppProfile('android', 'proxyOnly', ['com.example.app']);
     for (final desktop in ['macos', 'windows', 'linux']) {
