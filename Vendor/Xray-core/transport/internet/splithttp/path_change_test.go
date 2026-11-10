@@ -240,6 +240,60 @@ func testPathChangeClosesDeadConnections(t *testing.T, h3, earlier bool) {
 	}
 }
 
+// The change is often reported while the old path still delivers what was in flight, or a
+// moment before it dies. What arrives then is no answer: counted as one, it kept the dead
+// connection and its streams open until the idle timeout.
+func TestPathChangeIgnoresWhatTheOldPathStillDelivers(t *testing.T) {
+	for _, h3 := range []bool{false, true} {
+		t.Run(map[bool]string{false: "h2", true: "h3"}[h3], func(t *testing.T) {
+			t.Cleanup(splithttp.SetPathChangeTiming(500*time.Millisecond, 50*time.Millisecond))
+			server := xhttpServer(t, h3, nil, func(conn stat.Connection) {
+				defer conn.Close()
+				if _, err := conn.Read(make([]byte, 1)); err != nil {
+					return
+				}
+				for chunk := make([]byte, 1<<10); ; time.Sleep(5 * time.Millisecond) {
+					if _, err := conn.Write(chunk); err != nil {
+						return
+					}
+				}
+			})
+			drop := new(atomic.Bool)
+			var relay string
+			if h3 {
+				relay, _ = udpRelay(t, server, 0, drop)
+			} else {
+				relay, _ = tcpRelay(t, server, drop)
+			}
+			client := xhttpClient(t, h3, `{"path":"/x","mode":"stream-one","xmux":{"maxConnections":1}}`)
+			download := dialXHTTP(t, context.Background(), destination(t, relay), client)
+			if _, err := download.Write([]byte{1}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := io.ReadFull(download, make([]byte, 1<<10)); err != nil {
+				t.Fatal(err)
+			}
+			failed := make(chan struct{})
+			go func() {
+				defer close(failed)
+				for b := make([]byte, 32<<10); ; {
+					if _, err := download.Read(b); err != nil {
+						return
+					}
+				}
+			}()
+			internet.SocketPathChanged()
+			time.Sleep(30 * time.Millisecond)
+			drop.Store(true)
+			select {
+			case <-failed:
+			case <-time.After(2 * time.Second):
+				t.Fatal("a stream on a dead path stayed open past the bound")
+			}
+		})
+	}
+}
+
 // udp is the destination XHTTP/3 keeps its connections under.
 func udp(dest net.Destination) net.Destination {
 	dest.Network = net.Network_UDP

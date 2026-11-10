@@ -379,11 +379,12 @@ func (c *ownedSocket) PacketConn() net.PacketConn {
 func (c *ownedSocket) SetQUICConn(conn *quicgo.Conn) { c.quic.Store(conn) }
 
 // answers reports whether the connection over this socket received anything within bound,
-// while it sends heartbeats, which the server acknowledges.
+// while it sends heartbeats, which the server acknowledges. Packets counted in the first
+// fifth may predate the path change: the old path's last deliveries are still being read.
 func (c *ownedSocket) answers(bound time.Duration) bool {
 	var conn *quicgo.Conn
 	var before uint64
-	for range 5 {
+	for tick := range 5 {
 		if conn == nil {
 			if conn = c.quic.Load(); conn != nil {
 				before = conn.ConnectionStats().PacketsReceived
@@ -393,9 +394,14 @@ func (c *ownedSocket) answers(bound time.Duration) bool {
 			return false
 		}
 		time.Sleep(bound / 5)
-		if conn != nil && conn.ConnectionStats().PacketsReceived > before {
+		if conn == nil {
+			continue
+		}
+		now := conn.ConnectionStats().PacketsReceived
+		if tick > 0 && now > before {
 			return true
 		}
+		before = now
 	}
 	return false
 }
