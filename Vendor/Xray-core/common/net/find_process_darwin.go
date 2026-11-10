@@ -42,7 +42,7 @@ func FindProcess(network, srcIP string, srcPort uint16, destIP string, destPort 
 	}
 	// App Sandbox denies proc_pidfdinfo for foreign processes. The socket tables
 	// expose ownership without a per-process scan (and its sandbox denial storm).
-	table, err := unix.SysctlRaw("net.inet." + network + ".pcblist_n")
+	table, err := darwinSocketTables[network].get()
 	if err != nil {
 		return 0, "", "", errors.New("failed to read socket table").Base(err)
 	}
@@ -59,6 +59,14 @@ func FindProcess(network, srcIP string, srcPort uint16, destIP string, destPort 
 	}
 	absPath = filepath.ToSlash(absPath)
 	return int(pid), filepath.Base(absPath), absPath, nil
+}
+
+// darwinSocketTables shares socket-table reads between concurrent lookups (Elarni): a read
+// copies every socket of the host, about 1 ms with a browser's, and a burst of new
+// connections made one each. The tables are only read, so lookups share one copy.
+var darwinSocketTables = map[string]*processTable{
+	"tcp": {fetch: func(uint32) ([]byte, error) { return unix.SysctlRaw("net.inet.tcp.pcblist_n") }},
+	"udp": {fetch: func(uint32) ([]byte, error) { return unix.SysctlRaw("net.inet.udp.pcblist_n") }},
 }
 
 // pcblist_n uses length/kind records aligned to 8 bytes, with pack(4) fields.

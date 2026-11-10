@@ -70,3 +70,12 @@ func TestParentProcessOfARunningProgram(t *testing.T) {
 		t.Fatal("a missing program has a parent")
 	}
 }
+
+// One level of a "children:" rule's walk: the program that started this test.
+func BenchmarkParentProcess(b *testing.B) {
+	for b.Loop() {
+		if _, ok := ParentProcess(os.Getpid()); !ok {
+			b.Fatal("no parent")
+		}
+	}
+}

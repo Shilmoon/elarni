@@ -40,6 +40,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   left half-registered, and on Windows the VPN adapter's IPv6 setup errors are only logged
   when the registry's DisabledComponents turns IPv6 off, with IPv6 outside the tunnel blocked
   when leak blocking is on.
+- Per-app routing finds each new connection's app faster. Windows and Linux ask the system for
+  that one connection instead of reading every socket on the computer (Windows: 0.64 ms to
+  25 µs per connection), and macOS reads its socket table once for connections that open
+  together, as a browser's do (64 at once: 70 ms to 2.6 ms).
 
 ### Fixed
 
