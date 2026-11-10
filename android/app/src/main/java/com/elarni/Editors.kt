@@ -540,6 +540,8 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
                     else -> LazyColumn(Modifier.heightIn(max = 480.dp).testTag("per-app-connections-list")) {
                         items(entries.values.sortedByDescending { it.optLong("key") }.take(200), key = { it.optLong("key") }) { entry ->
                             val rules = entry.strings("rules")
+                            // Each per-app target's rule is numbered: elarni-per-app-listed-0, -1, ...
+                            val listedRule = rules.any { it.startsWith("elarni-per-app-listed") }
                             val app = if (entry.string("owner") == "found") byUid[entry.string("name")]?.firstOrNull() else null
                             val title = when (entry.string("owner")) {
                                 "found" -> app?.string("name") ?: tr(R.string.connection_uid, entry.string("name"))
@@ -550,7 +552,7 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
                             val route = listOfNotNull(when (entry.string("kind")) {
                                 "direct" -> tr(R.string.direct); "block" -> tr(R.string.connection_blocked); "dns" -> tr(R.string.connection_dns)
                                 "routing" -> tr(R.string.connection_routing); else -> tr(R.string.connection_through_server)
-                            }, tr(R.string.connection_per_app_rule).takeIf { "elarni-per-app-listed" in rules },
+                            }, tr(R.string.connection_per_app_rule).takeIf { listedRule },
                                 tr(R.string.connection_not_listed).takeIf { "elarni-per-app-other" in rules }).joinToString(" · ")
                             val key = entry.optLong("key")
                             val pkg = app?.string("package")
@@ -562,7 +564,7 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
                                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Text(route, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                if (pkg != null && pkg !in packages && "elarni-per-app-listed" !in rules) {
+                                if (pkg != null && pkg !in packages && !listedRule) {
                                     TextButton({ add(pkg) }, modifier = Modifier.testTag("per-app-add-connection-$key")) { Text(tr(R.string.add_to_list)) }
                                 }
                             }
