@@ -275,6 +275,21 @@ class PerAppRoutingDraft {
     _saved = saved;
   }
 
+  /// Whether the form holds edits that are not saved yet.
+  bool get dirty =>
+      settings.perAppMode != _saved.perAppMode ||
+      !listEquals(settings.perAppProcesses, _saved.perAppProcesses) ||
+      !mapEquals(settings.perAppTargets, _saved.perAppTargets) ||
+      settings.enforceRoutes != _saved.enforceRoutes ||
+      settings.includeAllNetworks != _saved.includeAllNetworks ||
+      settings.hideVPNIcon != _saved.hideVPNIcon ||
+      !listEquals(settings.includedRoutes, _saved.includedRoutes) ||
+      !listEquals(settings.excludedRoutes, _saved.excludedRoutes);
+
+  /// Set by the editor while it is on screen: saves the draft as "Save
+  /// changes" does and tells whether it was saved. Leaving the page calls it.
+  Future<bool> Function()? save;
+
   TunnelSettings applyTo(TunnelSettings saved) {
     final mode = settings.perAppMode == _saved.perAppMode
         ? saved.perAppMode
@@ -405,6 +420,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
     super.initState();
     search.addListener(() => draft.search = search.text);
     input.addListener(() => draft.input = input.text);
+    draft.save = _save;
     _loadApps();
     if (view == _AppView.connections) _watchConnections();
   }
@@ -422,6 +438,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
 
   @override
   void dispose() {
+    if (draft.save == _save) draft.save = null;
     _connectionsTimer?.cancel();
     search.dispose();
     input.dispose();
@@ -729,13 +746,15 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
     );
   }
 
-  Future<void> _operation(Future<void> Function() action) async {
+  /// Tells whether [action] finished; a failure shows its reason here.
+  Future<bool> _operation(Future<void> Function() action) async {
     setState(() {
       working = true;
       notice = null;
     });
     try {
       await action();
+      return true;
     } on FormatException catch (error) {
       if (mounted) setState(() => notice = error.message);
     } on PlatformException catch (error) {
@@ -750,6 +769,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
     } finally {
       if (mounted) setState(() => working = false);
     }
+    return false;
   }
 
   void _show(_AppView next) {
@@ -1207,7 +1227,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
     ),
   );
 
-  Future<void> _save() => _operation(() async {
+  Future<bool> _save() => _operation(() async {
     final error = profile.validationError;
     if (error != null) throw FormatException(error);
     await widget.onSave(draft.applyTo(widget.settings));

@@ -47,17 +47,26 @@ class InteractionModel : ViewModel() {
     var importing = false
     var importSources = emptyList<String>()
     var reviewingEditor = false
+    /** Set while the open editor has unsaved edits: saves them for the move the user asked for. */
+    var leaveSave: ((String) -> Unit)? = null
+    /** The move a draft save was started for ("back", "top", "tab <page>", "open <detail> <id>"); AppUI runs it once the draft is stored. */
+    var leaveAfterSave: String? = null
+    var leave by mutableStateOf<String?>(null)
+    /** "saving" from a flipped switch until its save ends, then "saved" for a moment; the top bar shows it. */
+    var saveStatus by mutableStateOf("")
     var lastErrorEvent = -1L
     var consentGeneration: Long? = null
     private val drafts = mutableMapOf<String, MutableState<String>>()
     private val fieldDrafts = mutableMapOf<String, SnapshotStateMap<String, String>>()
     fun draft(key: String, initial: () -> String): MutableState<String> = drafts.getOrPut(key) { mutableStateOf(initial()) }
     fun fields(key: String, initial: () -> Map<String, String>): SnapshotStateMap<String, String> = fieldDrafts.getOrPut(key) { mutableStateMapOf<String, String>().apply { putAll(initial()) } }
-    fun discardDrafts() { drafts.clear(); fieldDrafts.clear(); reviewingEditor = false }
+    fun discardDrafts() { drafts.clear(); fieldDrafts.clear(); reviewingEditor = false; leaveAfterSave = null; if (saveStatus == "saving") saveStatus = "" }
     fun discardDrafts(prefixes: List<String>) {
         drafts.keys.removeAll { key -> prefixes.any(key::startsWith) }
         fieldDrafts.keys.removeAll { key -> prefixes.any(key::startsWith) }
-        reviewingEditor = false
+        reviewingEditor = false; leaveAfterSave = null
+        // A switch still waiting out its pause went with the draft.
+        if (saveStatus == "saving") saveStatus = ""
     }
 }
 
@@ -171,7 +180,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    fun run(command: String, args: JSONObject = JSONObject(), done: (JSONObject) -> Unit = {}) {
+    fun run(command: String, args: JSONObject = JSONObject(), failed: () -> Unit = {}, done: (JSONObject) -> Unit = {}) {
         // Only an approval continues an import; an import whose review vanished must not move a later save.
         if (command !in listOf("import", "approveSource", "approveResource")) interaction.importing = false
         if (command == "import") {
@@ -183,7 +192,7 @@ class MainActivity : ComponentActivity() {
             try {
                 val result = if (command == "ping") repository.ping(args) else repository.execute(command, args)
                 withContext(Dispatchers.Main) {
-                    if (command == "reject") { interaction.reviewingEditor = false; interaction.importing = false }
+                    if (command == "reject") { interaction.reviewingEditor = false; interaction.leaveAfterSave = null; interaction.importing = false }
                     if (interaction.importing && result.optBoolean("saved")) {
                         val current = Catalog(repository.state.value.catalog)
                         val sources = current.sources.map { it.string("id") + ":" + it.optDouble("lastSuccessfulFetch", 0.0) } + current.nodes.map { it.string("configurationRevision", it.string("id")) }
@@ -191,7 +200,10 @@ class MainActivity : ComponentActivity() {
                         interaction.importing = false
                     }
                     if (interaction.reviewingEditor && result.optBoolean("saved")) {
-                        interaction.reviewingEditor = false; interaction.dismissEditor = true
+                        interaction.reviewingEditor = false
+                        // Saved for a move: AppUI closes the editor and goes where the user was heading.
+                        val move = interaction.leaveAfterSave; interaction.leaveAfterSave = null
+                        if (move != null) interaction.leave = move else interaction.dismissEditor = true
                     }
                     if (result.optBoolean("reconnectAfterReview")) interaction.notice = tr(R.string.destination_approved_tap_connect)
                     done(result)
@@ -199,7 +211,10 @@ class MainActivity : ComponentActivity() {
             }
             catch (_: Exception) {
                 // A failed approval retains its warning and editable draft.
-                withContext(Dispatchers.Main) { if (command !in listOf("approveSource", "approveResource")) { interaction.reviewingEditor = false; interaction.importing = false } }
+                withContext(Dispatchers.Main) {
+                    if (command !in listOf("approveSource", "approveResource")) { interaction.reviewingEditor = false; interaction.leaveAfterSave = null; interaction.importing = false }
+                    failed()
+                }
             }
         }
     }
@@ -211,9 +226,16 @@ class MainActivity : ComponentActivity() {
                 try { repository.execute("refresh", obj("id" to id)) } catch (_: AppFailure) { }
             }
         }
-    fun saveReviewed(command: String, args: JSONObject) {
-        interaction.reviewingEditor = true
+    /** Saves an editor's draft and closes the editor, or with [move] makes that move, once the draft is stored. */
+    fun saveReviewed(command: String, args: JSONObject, move: String? = null) {
+        interaction.reviewingEditor = true; interaction.leaveAfterSave = move
         run(command, args)
+    }
+    /** A save the top bar reports: "Saving…", then "Saved". */
+    fun runShown(command: String, args: JSONObject, failed: () -> Unit = {}, done: (JSONObject) -> Unit = {}) {
+        interaction.saveStatus = "saving"
+        // A save that stopped at a review is not stored yet.
+        run(command, args, { interaction.saveStatus = ""; failed() }) { if (it.optBoolean("saved")) { interaction.saveStatus = "saved"; done(it) } else interaction.saveStatus = "" }
     }
     // The VPN excludes this app (Platform.kt), so while connected, test cores, direct TCP and ICMP
     // reach other servers outside the tunnel; only the selected server's proxy test uses the tunnel.

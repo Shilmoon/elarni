@@ -160,6 +160,26 @@ fun segmentShape(index: Int, count: Int): Shape {
 private fun lines(value: String) = value.lines().map(String::trim).filter(String::isNotEmpty).distinct()
 @Composable private fun rememberDraft(activity: MainActivity, key: String, initial: () -> String) = remember(activity.interaction, key) { activity.interaction.draft(key, initial) }
 
+/** How long a flipped switch waits before it saves, so several flipped in a row make one save. Instrumentation shortens it. */
+@Volatile var autoApplyMillis = 1000L
+
+/** Leaving the page with unsaved edits saves them first (AppUI's leave); [save] gets the move to make once they are stored. */
+@Composable private fun SaveOnLeave(activity: MainActivity, dirty: Boolean, save: (String) -> Unit) {
+    val latest by rememberUpdatedState(save)
+    DisposableEffect(activity.interaction, dirty) {
+        activity.interaction.leaveSave = if (dirty) { move -> latest(move) } else null
+        onDispose { activity.interaction.leaveSave = null }
+    }
+}
+/** Returns what a switch calls when flipped: [apply] runs once the switches have been left alone for [autoApplyMillis]. */
+@Composable private fun rememberAutoApply(activity: MainActivity, apply: () -> Unit): () -> Unit {
+    var flips by rememberSaveable { mutableIntStateOf(0) }
+    val latest by rememberUpdatedState(apply)
+    LaunchedEffect(flips) { if (flips > 0) { delay(autoApplyMillis); latest() } }
+    return { flips++; activity.interaction.saveStatus = "saving" }
+}
+private fun canonical(json: String) = JSONObject(json).let { value -> value.keys().asSequence().sorted().joinToString("\u0000") { "$it\u0001${value.get(it)}" } }
+
 @Composable fun SettingsEditor(catalog: Catalog, section: String, busy: Boolean, activity: MainActivity,
     navigate: (String, String) -> Unit, openServers: () -> Unit, done: () -> Unit) {
     val saved = catalog.settings
@@ -179,8 +199,40 @@ private fun lines(value: String) = value.lines().map(String::trim).filter(String
     val immediate = if (section == "General") setOf("onDemandEnabled", "disconnectOnSleep", "connectOnUntrustedWiFi", "expiryReminders", "allowExternalControl") else emptySet()
     var namesAllowed by remember { mutableStateOf(true) }
     LifecycleResumeEffect(activity.wifiAnswers) { namesAllowed = WiFiRule.namesAllowed(activity); onPauseOrDispose {} }
+    /** Saves the edits: only the flipped switches after their pause, or the whole draft for Save changes and for leaving ([move]). */
+    fun apply(switchesOnly: Boolean, move: String? = null) {
+        val edits = fields.filter { it.key !in immediate && edited(it.key) && (!switchesOnly || it.initial is Boolean) }
+        val lists = if (switchesOnly) emptyList() else when (section) { "Apps & routes" -> listOf("includedRoutes", "excludedRoutes"); "General" -> listOf("trustedWiFiNetworks"); else -> emptyList() }.filter(::edited)
+        if (edits.isEmpty() && lists.isEmpty()) {
+            // Flipped back within the pause: nothing to save.
+            if (switchesOnly && activity.interaction.saveStatus == "saving") activity.interaction.saveStatus = ""
+            if (move != null) activity.interaction.leave = move
+            return
+        }
+        try {
+            val patch = JSONObject()
+            edits.forEach { item -> patch.put(item.key, when (item.initial) {
+                is Boolean -> values[item.key] == "true"
+                is Int -> values[item.key]?.toIntOrNull() ?: throw AppFailure("invalid_settings")
+                else -> values[item.key]
+            }) }
+            lists.forEach { patch.put(it, JSONArray(lines(values[it] ?: ""))) }
+            localError = null
+            // The editor stays open, so what it saved is where later edits start from.
+            val sent = values.filterKeys { it in lists || edits.any { item -> item.key == it } }
+            activity.runShown("settings", obj("settings" to patch), failed = {
+                // A refused switch goes back to what is saved; typed values stay to be corrected.
+                if (switchesOnly) sent.keys.forEach { key -> if (values[key] == sent[key]) base[key]?.let { values[key] = it } }
+            }) { base.putAll(sent); if (move != null) activity.interaction.leave = move }
+        } catch (_: Exception) {
+            localError = tr(R.string.enter_valid_numbers_and_cidr_routes)
+            if (move != null) activity.interaction.notice = localError
+        }
+    }
+    val flipped = rememberAutoApply(activity) { apply(switchesOnly = true) }
+    SaveOnLeave(activity, values.keys.any(::edited)) { move -> apply(switchesOnly = false, move = move) }
     @Composable fun toggle(item: SettingField) = SettingsSwitch(item.title, saved.optBoolean(item.key), item.detail, enabled = !busy) {
-        activity.run("settings", obj("settings" to obj(item.key to it)))
+        activity.runShown("settings", obj("settings" to obj(item.key to it)))
         if (item.key == "connectOnUntrustedWiFi" && it && !WiFiRule.namesAllowed(activity)) activity.allowWiFiNames()
     }
     @Composable fun field(field: SettingField) {
@@ -188,11 +240,11 @@ private fun lines(value: String) = value.lines().map(String::trim).filter(String
         when {
             // Shown inverted: dropping the login needs a warning; requiring one without a saved login generates it.
             field.key == "inboundAuthEnabled" -> SettingsSwitch(field.title, value != "true", field.detail, enabled = !busy) { allow ->
-                if (allow) askOpenProxy = true else values[field.key] = "true"
+                if (allow) askOpenProxy = true else { values[field.key] = "true"; flipped() }
             }
             field.initial is Boolean -> SettingsSwitch(field.title, value == "true", field.detail,
                 enabled = !busy && (field.key != "allowLAN" || values["inboundAuthEnabled"] == "true")) {
-                values[field.key] = it.toString()
+                values[field.key] = it.toString(); flipped()
             }
             field.choices.isNotEmpty() -> {
                 val labels = when (field.key) {
@@ -293,27 +345,13 @@ private fun lines(value: String) = value.lines().map(String::trim).filter(String
             val ports = if (values["httpInboundEnabled"] == "true") tr(R.string.ports_a_and_b, values["socksPort"], values["httpPort"]) else tr(R.string.port_a, values["socksPort"])
             AlertDialog(onDismissRequest = { askOpenProxy = false }, title = { Text(tr(R.string.allow_apps_without_a_login)) },
                 text = { Text(tr(R.string.in_local_proxy_mode_any_app, ports)) },
-                confirmButton = { TextButton({ askOpenProxy = false; values["inboundAuthEnabled"] = "false"; values["allowLAN"] = "false" },
+                confirmButton = { TextButton({ askOpenProxy = false; values["inboundAuthEnabled"] = "false"; values["allowLAN"] = "false"; flipped() },
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text(tr(R.string.allow_without_login)) } },
                 dismissButton = { TextButton({ askOpenProxy = false }) { Text(tr(R.string.cancel)) } })
         }
-        // Apps & routes saves only the route fields, which show while their section is open.
-        if (section != "Apps & routes" || routesOpen) EditorActions(busy, done, {
-            try {
-                val patch = JSONObject()
-                fields.filter { it.key !in immediate && edited(it.key) }.forEach { item -> patch.put(item.key, when (item.initial) {
-                    is Boolean -> values[item.key] == "true"
-                    is Int -> values[item.key]?.toIntOrNull() ?: throw AppFailure("invalid_settings")
-                    else -> values[item.key]
-                }) }
-                if (section == "Apps & routes") listOf("includedRoutes", "excludedRoutes").filter(::edited).forEach { patch.put(it, JSONArray(lines(values[it] ?: ""))) }
-                if (section == "General" && edited("trustedWiFiNetworks")) patch.put("trustedWiFiNetworks", JSONArray(lines(values["trustedWiFiNetworks"] ?: "")))
-                localError = null
-                // The editor stays open, so what it saved is where later edits start from.
-                val sent = values.filterKeys(::edited)
-                activity.run("settings", obj("settings" to patch)) { base.putAll(sent) }
-            } catch (_: Exception) { localError = tr(R.string.enter_valid_numbers_and_cidr_routes) }
-        })
+        // Switches save themselves; the buttons are for what is typed or picked. Apps & routes has that only in its open route section.
+        val typed = if (section == "Apps & routes") routesOpen else fields.any { it.key !in immediate && it.initial !is Boolean }
+        if (typed) EditorActions(busy, done, { apply(switchesOnly = false) })
     }
 }
 
@@ -322,7 +360,9 @@ private fun lines(value: String) = value.lines().map(String::trim).filter(String
     FormColumn {
         TextField(tr(R.string.username), user) { user = it }
         OutlinedTextField(password, { password = it }, label = { Text(tr(R.string.password)) }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
-        EditorActions(busy, done, { activity.saveReviewed("credentials", obj("username" to user, "password" to password)) })
+        fun save(move: String? = null) = activity.saveReviewed("credentials", obj("username" to user, "password" to password), move)
+        SaveOnLeave(activity, user.isNotEmpty() || password.isNotEmpty()) { move -> save(move) }
+        EditorActions(busy, done, { save() })
     }
 }
 
@@ -377,6 +417,12 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
     var manual by rememberDraft(activity, "per-app-manual") { packages.joinToString("\n") }
     var profile by rememberDraft(activity, "per-app-profile") { "" }
     var error by remember { mutableStateOf<String?>(null) }
+    // A removed app takes its target with it.
+    fun save(move: String? = null) = activity.saveReviewed("settings", obj("settings" to obj("perAppMode" to mode, "perAppProcesses" to JSONArray(packages),
+        "perAppTargets" to JSONObject(targets.filterKeys { it in packages }), "xrayTunEnabled" to (mode != "off" || saved.optBoolean("xrayTunEnabled")))), move)
+    fun edits() = listOf(mode, packages, targets.filterKeys { it in packages }.toSortedMap()).toString()
+    val opened = rememberSaveable { edits() }
+    SaveOnLeave(activity, edits() != opened) { move -> save(move) }
     LaunchedEffect(Unit) {
         try { apps = activity.repository.execute("apps").objects("apps") }
         catch (_: Exception) { error = tr(R.string.couldn_t_load_installed_apps_reopen) }
@@ -474,9 +520,7 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
     }
         Surface {
             Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)) {
-                // A removed app takes its target with it.
-                EditorActions(busy, done, { activity.saveReviewed("settings", obj("settings" to obj("perAppMode" to mode, "perAppProcesses" to JSONArray(packages),
-                    "perAppTargets" to JSONObject(targets.filterKeys { it in packages }), "xrayTunEnabled" to (mode != "off" || saved.optBoolean("xrayTunEnabled"))))) })
+                EditorActions(busy, done, { save() })
             }
         }
     }
@@ -624,6 +668,26 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
     var section by rememberDraft(activity, "routing-section-$id") { if (initialSection == "dns") "dns" else "rules" }
     var error by remember { mutableStateOf<String?>(null) }
     val jsonEditor = initialSection == "json"
+    // What the draft started from, moved along by each switch that saved itself: leaving saves only when the two differ.
+    var openedForm by rememberDraft(activity, "routing-opened-$id") { encoded }
+    val openedText = rememberDraft(activity, "routing-opened-text-$id") { if (jsonEditor) raw else inputs.toSortedMap().toString() }.value
+    val dirty = if (jsonEditor) raw != openedText else canonical(encoded) != canonical(openedForm) || inputs.toSortedMap().toString() != openedText
+    // A saved profile's switch saves itself onto the stored profile; what is typed here waits for Save changes or for leaving.
+    var flippedKeys by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    fun carry(key: String, from: JSONObject, to: JSONObject) = to.apply { if (from.has(key)) put(key, from.get(key)) else remove(key) }
+    val flipped = rememberAutoApply(activity) {
+        val keys = flippedKeys; flippedKeys = emptyList()
+        val stored = keys.fold(original.copy()) { value, key -> carry(key, draft, value) }
+        if (keys.isEmpty() || canonical(stored.toString()) == canonical(original.toString())) { if (activity.interaction.saveStatus == "saving") activity.interaction.saveStatus = "" }
+        else activity.runShown("saveRouting", obj("id" to id, "text" to stored.toString()), failed = {
+            // A refused switch goes back to what is stored.
+            encoded = keys.fold(JSONObject(encoded)) { value, key -> carry(key, original, value) }.toString()
+        }) { openedForm = keys.fold(JSONObject(openedForm)) { value, key -> carry(key, stored, value) }.toString() }
+    }
+    fun flip(key: String, change: JSONObject.() -> Unit) {
+        encoded = draft.copy().apply(change).toString()
+        if (id.isNotEmpty()) { flippedKeys = flippedKeys + key; flipped() }
+    }
     val hostRows = inputs["DnsHosts"].orEmpty().let { if (it.isEmpty()) emptyList() else it.lines().map { row -> row.split('=', limit = 2) } }
     fun updateHost(index: Int, part: Int, text: String) {
         inputs["DnsHosts"] = hostRows.mapIndexed { at, row -> if (at == index) {
@@ -651,7 +715,7 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
                 }
                 when (section) {
                     "rules" -> {
-                        ToggleField(tr(R.string.proxy_unmatched_traffic), draft.string("GlobalProxy", "true") == "true", enabled = !busy) { set("GlobalProxy", it.toString()) }
+                        ToggleField(tr(R.string.proxy_unmatched_traffic), draft.string("GlobalProxy", "true") == "true", enabled = !busy) { flip("GlobalProxy") { put("GlobalProxy", it.toString()) } }
                         listOf(tr(R.string.direct), tr(R.string.proxy), tr(R.string.block)).forEach { action ->
                             HorizontalDivider()
                             Text(action, style = MaterialTheme.typography.titleMedium)
@@ -661,7 +725,7 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
                         }
                     }
                     "dns" -> {
-                        ToggleField(tr(R.string.keep_domain_identity_with_fake_dns), draft.string("FakeDNS") == "true", enabled = !busy) { set("FakeDNS", it.toString()) }
+                        ToggleField(tr(R.string.keep_domain_identity_with_fake_dns), draft.string("FakeDNS") == "true", enabled = !busy) { flip("FakeDNS") { put("FakeDNS", it.toString()) } }
                         for (prefix in listOf("Remote", "Domestic")) {
                             HorizontalDivider()
                             Text(if (prefix == "Remote") tr(R.string.remote_dns) else tr(R.string.direct_dns), style = MaterialTheme.typography.titleMedium)
@@ -671,7 +735,7 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
                         }
                         HorizontalDivider()
                         ToggleField(tr(R.string.choose_direct_dns_by_domain), draft.has("DomesticDNSDomains"), enabled = !busy) { explicit ->
-                            encoded = draft.copy().apply { if (explicit) put("DomesticDNSDomains", JSONArray()) else remove("DomesticDNSDomains") }.toString()
+                            flip("DomesticDNSDomains") { if (explicit) put("DomesticDNSDomains", JSONArray()) else remove("DomesticDNSDomains") }
                         }
                         if (draft.has("DomesticDNSDomains")) TextField(tr(R.string.domains_using_direct_dns), inputs["DomesticDNSDomains"] ?: "", 3) { inputs["DomesticDNSDomains"] = it }
                         HorizontalDivider()
@@ -688,7 +752,7 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
                         val orders = listOf("block-direct-proxy", "block-proxy-direct", "direct-block-proxy", "direct-proxy-block", "proxy-block-direct", "proxy-direct-block")
                         ChoiceField(tr(R.string.rule_order), draft.string("RouteOrder", "block-direct-proxy"), orders, orders.map { it.split('-').joinToString(" → ") { word -> word.replaceFirstChar { letter -> letter.uppercase() } } }, enabled = !busy) { set("RouteOrder", it) }
                         ChoiceField(tr(R.string.resolve_domains_for_routing), draft.string("DomainStrategy", "AsIs"), listOf("AsIs", "IPIfNonMatch", "IPOnDemand"), listOf(tr(R.string.keep_names), tr(R.string.if_no_match), tr(R.string.when_needed)), enabled = !busy) { set("DomainStrategy", it) }
-                        ToggleField(tr(R.string.reduce_routing_data_size), draft.string("UseChunkFiles") == "true", enabled = !busy) { set("UseChunkFiles", it.toString()) }
+                        ToggleField(tr(R.string.reduce_routing_data_size), draft.string("UseChunkFiles") == "true", enabled = !busy) { flip("UseChunkFiles") { put("UseChunkFiles", it.toString()) } }
                         TextField(tr(R.string.geoip_url), draft.string("Geoipurl")) { set("Geoipurl", it) }
                         TextField(tr(R.string.geosite_url), draft.string("Geositeurl")) { set("Geositeurl", it) }
                         HorizontalDivider()
@@ -713,10 +777,11 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
         }
         Surface {
             Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)) {
-                EditorActions(busy, done, {
-                    try { activity.saveReviewed("saveRouting", obj("id" to id, "text" to if (jsonEditor) raw else formContent())) }
-                    catch (_: Exception) { error = tr(R.string.enter_a_unique_hostname_and_an) }
-                })
+                fun save(move: String? = null): Boolean =
+                    try { activity.saveReviewed("saveRouting", obj("id" to id, "text" to if (jsonEditor) raw else formContent()), move); true }
+                    catch (_: Exception) { error = tr(R.string.enter_a_unique_hostname_and_an); if (move != null) activity.interaction.notice = error; false }
+                SaveOnLeave(activity, dirty) { move -> save(move) }
+                EditorActions(busy, done, { save() })
             }
         }
     }
@@ -753,7 +818,13 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         TextField(tr(R.string.fallback_hosts_one_per_line), fallback, 3) { fallback = it }
-        EditorActions(busy, done, { val value = JSONObject(); fields.forEach { if (!values[it.first].isNullOrEmpty()) value.put(it.first, values[it.first]) }; activity.saveReviewed("sourceOptions", obj("id" to id, "options" to value, "fallbackHosts" to JSONArray(lines(fallback)))) })
+        fun save(move: String? = null) {
+            val value = JSONObject(); fields.forEach { if (!values[it.first].isNullOrEmpty()) value.put(it.first, values[it.first]) }
+            activity.saveReviewed("sourceOptions", obj("id" to id, "options" to value, "fallbackHosts" to JSONArray(lines(fallback))), move)
+        }
+        val opened = rememberDraft(activity, "source-options-$id-opened") { values.toSortedMap().toString() + fallback }.value
+        SaveOnLeave(activity, values.toSortedMap().toString() + fallback != opened) { move -> save(move) }
+        EditorActions(busy, done, { save() })
     }
 }
 
@@ -766,14 +837,31 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
     val targets = remember(targetsJSON) { JSONArray(targetsJSON).objects().map { it.toString() } }
     fun setTargets(values: List<String>) { targetsJSON = JSONArray(values.map(::JSONObject)).toString() }
     val locations = remember { ServerLocations(activity) }
+    // The switch saves itself with the page as it stands: turning recovery on alone would save it without its servers.
+    var opened by rememberDraft(activity, "automation-opened") { listOf(enabled, policy, selected, targetsJSON).toString() }
+    val available = remember(catalog) { catalog.nodes.filter { it.string("format") == "xrayProfile" }.map { it.string("id") }.toSet() }
+    // A provider refresh can remove a chosen server, which then has no row to clear it with.
+    val chosen = selected.filter { it in available }
+    fun save(move: String? = null, stay: Boolean = false) {
+        val source = catalog.sources.firstOrNull { it.objects("nodes").any { n -> n.string("id") == catalog.selected } }?.string("id") ?: ""
+        val russian = chosen.filter { locations.russianEntry(catalog.node(it).string("name")) }
+        val args = obj("configuration" to obj("schemaVersion" to 1, "enabled" to enabled, "policy" to policy, "subscriptionID" to source,
+            "nodeIDs" to JSONArray(chosen), "russianEntryNodeIDs" to JSONArray(russian), "targets" to JSONArray(targets.map(::JSONObject))))
+        val sent = listOf(enabled, policy, selected, targetsJSON).toString(); val flippedTo = enabled
+        // A refused switch goes back; the rest of the page stays to be corrected.
+        if (stay) activity.runShown("automation", args, failed = { if (enabled == flippedTo) enabled = !flippedTo }) { opened = sent }
+        else activity.saveReviewed("automation", args, move)
+    }
+    val flipped = rememberAutoApply(activity) {
+        if (listOf(enabled, policy, selected, targetsJSON).toString() != opened) save(stay = true)
+        else if (activity.interaction.saveStatus == "saving") activity.interaction.saveStatus = ""
+    }
+    SaveOnLeave(activity, listOf(enabled, policy, selected, targetsJSON).toString() != opened) { move -> save(move) }
     FormColumn {
-        ToggleField(tr(R.string.enable_automatic_selection), enabled) { enabled = it }
+        ToggleField(tr(R.string.enable_automatic_selection), enabled) { enabled = it; flipped() }
         ChoiceField(tr(R.string.policy), policy, listOf("fixed", "orderedFallback", "lowestLatency"), listOf(tr(R.string.keep_selected_server), tr(R.string.ordered_fallback), tr(R.string.lowest_latency))) { policy = it }
         Text(tr(R.string.allowed_servers_listed_in_fallback_order), style = MaterialTheme.typography.titleMedium)
         Text(tr(R.string.servers_may_come_from_any_subscription), style = MaterialTheme.typography.bodySmall)
-        val available = remember(catalog) { catalog.nodes.filter { it.string("format") == "xrayProfile" }.map { it.string("id") }.toSet() }
-        // A provider refresh can remove a chosen server, which then has no row to clear it with.
-        val chosen = selected.filter { it in available }
         val listed = chosen.toSet()
         chosen.forEachIndexed { position, id ->
             Row(Modifier.toggleable(true, role = Role.Checkbox) { selected = chosen - id }, verticalAlignment = Alignment.CenterVertically) {
@@ -806,12 +894,7 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
             HorizontalDivider()
         }
         if (targets.size < 2) TextButton({ setTargets(targets + obj("id" to newId(), "url" to "", "expectedStatus" to 204, "expectedBody" to "").toString()) }) { Text(tr(R.string.add_target)) }
-        EditorActions(busy, done, {
-            val source = catalog.sources.firstOrNull { it.objects("nodes").any { n -> n.string("id") == catalog.selected } }?.string("id") ?: ""
-            val russian = chosen.filter { locations.russianEntry(catalog.node(it).string("name")) }
-            activity.saveReviewed("automation", obj("configuration" to obj("schemaVersion" to 1, "enabled" to enabled, "policy" to policy, "subscriptionID" to source,
-                "nodeIDs" to JSONArray(chosen), "russianEntryNodeIDs" to JSONArray(russian), "targets" to JSONArray(targets.map(::JSONObject)))))
-        })
+        EditorActions(busy, done, { save() })
     }
 }
 

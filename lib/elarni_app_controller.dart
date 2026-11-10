@@ -764,6 +764,72 @@ extension _HomeController on _ElarniHomeState {
     }
   }
 
+  /// Leaving the per-app page saves its unsaved edits first, as "Save changes"
+  /// does. Edits that cannot be saved keep the page open, where the editor
+  /// says why; Cancel drops them.
+  Future<bool> _leavePerApp() async {
+    final draft = _perAppDraft;
+    if (_page != DesktopPage.routing || _routingTab != 1) return true;
+    if (draft == null || !draft.dirty) return true;
+    return await draft.save?.call() ?? true;
+  }
+
+  Future<void> _navigate(DesktopPage page) async {
+    if (page == _page || !await _leavePerApp() || !mounted) return;
+    _set(() => _page = page);
+  }
+
+  Future<void> _openRoutingTab(int index) async {
+    if (index == _routingTab) return;
+    final left = await _leavePerApp();
+    if (!mounted) return;
+    _set(() {
+      if (left) {
+        _routingTab = index;
+      } else {
+        _routingTabRefusals++;
+      }
+    });
+  }
+
+  /// A flipped route checkbox saves itself once the checkboxes have been left
+  /// alone for a moment, so several flipped in a row make one save. One that
+  /// cannot be saved on its own, such as enforced routes before specific
+  /// routes are named, waits for "Save changes" with the rest of the draft.
+  void _routeToggled() {
+    _routeToggleTimer?.cancel();
+    _routeToggleTimer = Timer(settingsAutoApplyDelay, () async {
+      final draft = _perAppDraft;
+      if (!mounted || draft == null) return;
+      // Another save is running; this one follows it.
+      if (_busy) {
+        _routeToggled();
+        return;
+      }
+      final edited = draft.applyTo(_settings);
+      final next = _settings.copyWith(
+        enforceRoutes: edited.enforceRoutes,
+        includeAllNetworks: edited.includeAllNetworks,
+        hideVPNIcon: edited.hideVPNIcon,
+      );
+      if (next.enforceRoutes == _settings.enforceRoutes &&
+          next.includeAllNetworks == _settings.includeAllNetworks &&
+          next.hideVPNIcon == _settings.hideVPNIcon) {
+        return;
+      }
+      if (next.routeEnforcementError != null) return;
+      if (await _saveSettings(next) || !mounted) return;
+      // A refused checkbox goes back to what is saved.
+      _set(
+        () => draft.settings = draft.settings.copyWith(
+          enforceRoutes: _settings.enforceRoutes,
+          includeAllNetworks: _settings.includeAllNetworks,
+          hideVPNIcon: _settings.hideVPNIcon,
+        ),
+      );
+    });
+  }
+
   Future<void> _toggleHideVPNIcon(bool enabled) async {
     if (enabled) {
       final confirmed = await showDialog<bool>(
@@ -785,12 +851,13 @@ extension _HomeController on _ElarniHomeState {
       );
       if (confirmed != true) return;
     }
-    if (mounted)
-      _set(
-        () => _perAppDraft!.settings = _perAppDraft!.settings.copyWith(
-          hideVPNIcon: enabled,
-        ),
-      );
+    if (!mounted) return;
+    _set(
+      () => _perAppDraft!.settings = _perAppDraft!.settings.copyWith(
+        hideVPNIcon: enabled,
+      ),
+    );
+    _routeToggled();
   }
 
   Future<void> _refreshSubscriptions() async {

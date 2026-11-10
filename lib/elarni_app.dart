@@ -24,6 +24,10 @@ part 'elarni_app_controller.dart';
 part 'elarni_app_editors.dart';
 part 'elarni_app_pages.dart';
 
+/// How long a flipped route checkbox waits before it saves, so several
+/// flipped in a row make one save.
+const settingsAutoApplyDelay = Duration(seconds: 1);
+
 bool _sameJson(Object? a, Object? b) {
   try {
     return jsonEncode(a) == jsonEncode(b);
@@ -248,6 +252,9 @@ class _ElarniHomeState extends State<ElarniHome> {
   int _pingTimeout = 7;
   Timer? _monitorTimer;
   Timer? _localStateTimer;
+  Timer? _routeToggleTimer;
+  // Bumped when a tab change is refused, so the tab bar shows the open tab again.
+  int _routingTabRefusals = 0;
   TunnelState _state = TunnelState.disconnected;
   TunnelState? _lastKnownState;
   bool _connectFailed = false;
@@ -324,7 +331,7 @@ class _ElarniHomeState extends State<ElarniHome> {
     super.initState();
     widget.desktop.onAction = (action) {
       if (action == 'settings' && mounted) {
-        setState(() => _page = DesktopPage.settings);
+        unawaited(_navigate(DesktopPage.settings));
       }
       if (action == 'connect' && _canConnect) unawaited(_connect());
       if (action == 'disconnect' && _canDisconnect) unawaited(_disconnect());
@@ -371,6 +378,7 @@ class _ElarniHomeState extends State<ElarniHome> {
     _pingExpectedBody.dispose();
     _monitorTimer?.cancel();
     _localStateTimer?.cancel();
+    _routeToggleTimer?.cancel();
     final dispose = widget.onDispose;
     if (dispose != null) unawaited(dispose().catchError((Object _) {}));
     super.dispose();
@@ -497,12 +505,15 @@ class _ElarniHomeState extends State<ElarniHome> {
       onChanged: _busy
           ? null
           // The per-app editor changes the draft without rebuilding this row.
-          : (value) => setState(
-              () => _perAppDraft!.settings = update(
-                _perAppDraft!.settings,
-                value,
-              ),
-            ),
+          : (value) {
+              setState(
+                () => _perAppDraft!.settings = update(
+                  _perAppDraft!.settings,
+                  value,
+                ),
+              );
+              _routeToggled();
+            },
     );
     Widget perAppRouting() => PerAppRoutingEditor(
       settings: _settings,
@@ -1499,7 +1510,7 @@ class _ElarniHomeState extends State<ElarniHome> {
     );
     return ElarniShell(
       page: _page,
-      onNavigate: (page) => setState(() => _page = page),
+      onNavigate: (page) => unawaited(_navigate(page)),
       importBusy: _busy,
       importing: _importing,
       onImport: _importProfiles,
@@ -1523,13 +1534,13 @@ class _ElarniHomeState extends State<ElarniHome> {
                   [
                     DefaultTabController(
                       // An import that opens the profiles moves the tab too.
-                      key: ValueKey(_routingTab),
+                      key: ValueKey((_routingTab, _routingTabRefusals)),
                       length: 2,
                       initialIndex: _routingTab,
                       child: TabBar(
                         isScrollable: true,
                         tabAlignment: TabAlignment.start,
-                        onTap: (index) => setState(() => _routingTab = index),
+                        onTap: (index) => unawaited(_openRoutingTab(index)),
                         tabs: [
                           Tab(text: l10n.routingProfiles),
                           Tab(text: l10n.perAppRouting),

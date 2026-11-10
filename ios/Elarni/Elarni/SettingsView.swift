@@ -64,7 +64,15 @@ struct PreferencesEditor: View {
   @Environment(IOSAppModel.self) private var model
   @Environment(\.dismiss) private var dismiss
   @State private var value: IOSPreferences
-  init(kind: Kind, initial: IOSPreferences, inline: Bool = false) { self.kind = kind; self.inline = inline; _value = State(initialValue: initial) }
+  // What the draft started from: a save sends only what was changed here, so a server order chosen on Home since stays.
+  @State private var base: IOSPreferences
+  init(kind: Kind, initial: IOSPreferences, inline: Bool = false) { self.kind = kind; self.inline = inline; _value = State(initialValue: initial); _base = State(initialValue: initial) }
+  private var dirty: Bool { updatedPreferences != model.preferences }
+  private var valid: Bool { (try? model.validatePreferences(updatedPreferences)) != nil }
+  private func save(leaving: Bool) {
+    let next = updatedPreferences, sent = value
+    model.launchShown { try model.savePreferences(next); base = sent; if !inline && !leaving { dismiss() } }
+  }
   var body: some View {
     AppForm {
       if kind == .general {
@@ -75,7 +83,7 @@ struct PreferencesEditor: View {
           Toggle("On Demand", isOn: setting(\.onDemandEnabled))
           Toggle("Connect on untrusted Wi-Fi", isOn: Binding(get: { model.settings.connectOnUntrustedWiFi == true }, set: { enabled in
             var next = model.settings; next.connectOnUntrustedWiFi = enabled
-            model.launch { try await model.saveSettings(next) }
+            model.launchShown { try await model.saveSettings(next) }
           })).accessibilityIdentifier("connectOnUntrustedWiFi")
           if model.settings.connectOnUntrustedWiFi == true {
             NavigationLink { TrustedWiFiEditor() } label: {
@@ -91,7 +99,7 @@ struct PreferencesEditor: View {
             ForEach([1, 2, 4, 6, 12, 24, 48, 168], id: \.self) { Text($0 == 168 ? String(localized: "Weekly") : String(localized: "Every \($0) hours")).tag($0) }
           }
           Toggle("Subscription expiry reminders", isOn: Binding(get: { model.preferences.expiryReminders }, set: { enabled in
-            model.launch { try await model.setReminders(enabled); value.expiryReminders = model.preferences.expiryReminders }
+            model.launchShown { try await model.setReminders(enabled); value.expiryReminders = model.preferences.expiryReminders; base.expiryReminders = value.expiryReminders }
           }))
           Picker("Server order", selection: $value.serverOrder) { Text("Provider order").tag("provider"); Text("Alphabetical").tag("name"); Text("Lowest latency").tag("latency") }
           Toggle("Favorites first", isOn: Binding(get: { value.favoritesFirst ?? true }, set: { value.favoritesFirst = $0 }))
@@ -122,27 +130,39 @@ struct PreferencesEditor: View {
         }
         Section { Button("Open server list") { model.selectedTab = 0 } }
       }
-    }.navigationTitle(LocalizedStringKey(kind.rawValue)).navigationBarTitleDisplayMode(.inline)
-    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Save") { model.launch { try model.savePreferences(updatedPreferences); if !inline { dismiss() } } }.disabled(model.busy) } }
+      if dirty && !valid { InvalidDraftNote() }
+    }.draftPage(LocalizedStringKey(kind.rawValue), dirty: dirty, valid: valid, cancel: { value = model.preferences; base = value; dismiss() }, save: save)
+    // Back on this page with nothing pending: show what is saved now.
+    .onAppear { if !dirty { value = model.preferences; base = value } }
+    // The switch saves itself once it has been left alone for the pause.
+    .task(id: value.favoritesFirst) {
+      guard kind == .general, value.favoritesFirst != base.favoritesFirst else { return }
+      model.saveStatus = .saving
+      try? await Task.sleep(for: autoApplyDelay)
+      guard !Task.isCancelled else { return }
+      var next = model.preferences; next.favoritesFirst = value.favoritesFirst
+      let sent = value.favoritesFirst
+      model.launchShown({ try model.savePreferences(next); base.favoritesFirst = sent }, failed: { value.favoritesFirst = base.favoritesFirst })
+    }
   }
   private var updatedPreferences: IOSPreferences {
     var next = model.preferences
+    func take<Value: Equatable>(_ key: WritableKeyPath<IOSPreferences, Value>) { carry(key, from: value, since: base, to: &next) }
     switch kind {
     case .general:
-      next.autoUpdateHours = value.autoUpdateHours; next.serverOrder = value.serverOrder; next.favoritesFirst = value.favoritesFirst
+      take(\.autoUpdateHours); take(\.serverOrder); take(\.favoritesFirst)
     case .appearance:
-      next.theme = value.theme; next.accent = value.accent
+      take(\.theme); take(\.accent)
     case .tests:
-      next.probeMode = value.probeMode; next.probeTimeout = value.probeTimeout
-      next.probeURL = value.probeURL; next.probeMethod = value.probeMethod; next.probeVariant = value.probeVariant
-      next.probeExpectedStatus = value.probeExpectedStatus; next.probeExpectedBody = value.probeExpectedBody
+      take(\.probeMode); take(\.probeTimeout); take(\.probeURL); take(\.probeMethod); take(\.probeVariant)
+      take(\.probeExpectedStatus); take(\.probeExpectedBody)
     }
     return next
   }
   private func setting(_ key: WritableKeyPath<IOSTunnelSettings, Bool>) -> Binding<Bool> {
     Binding(get: { model.settings[keyPath: key] }, set: { enabled in
       var next = model.settings; next[keyPath: key] = enabled
-      model.launch { try await model.saveSettings(next) }
+      model.launchShown { try await model.saveSettings(next) }
     })
   }
 }
@@ -154,8 +174,53 @@ struct ConnectionEditor: View {
   @Environment(IOSAppModel.self) private var model
   @Environment(\.dismiss) private var dismiss
   @State private var value: IOSTunnelSettings
+  // What the draft started from: a save sends only what was changed here, so a setting saved on another page since stays.
+  @State private var base: IOSTunnelSettings
   @State private var editingDNS: RoutingProfile?
-  init(kind: Kind, initial: IOSTunnelSettings, inline: Bool = false) { self.kind = kind; self.inline = inline; _value = State(initialValue: initial) }
+  init(kind: Kind, initial: IOSTunnelSettings, inline: Bool = false) { self.kind = kind; self.inline = inline; _value = State(initialValue: initial); _base = State(initialValue: initial) }
+  private var switches: [WritableKeyPath<IOSTunnelSettings, Bool>] {
+    switch kind {
+    case .connection: [\.httpInboundEnabled, \.inboundAuthEnabled, \.allowLAN]
+    case .dns: [\.resolveServer]
+    case .routes: [\.includeAllNetworks, \.enforceRoutes]
+    case .advanced: [\.fragmentationEnabled, \.muxEnabled, \.sniffingEnabled, \.monitoringEnabled]
+    }
+  }
+  private var flipped: [Bool?] { switches.map { Optional(value[keyPath: $0]) } + [value.recordDiagnostics] }
+  /// The saved settings with the switches flipped here and, with `typed`, what was typed or picked here.
+  private func merged(typed: Bool) -> IOSTunnelSettings {
+    var next = model.settings
+    func take<Value: Equatable>(_ key: WritableKeyPath<IOSTunnelSettings, Value>) { carry(key, from: value, since: base, to: &next) }
+    switches.forEach(take); take(\.recordDiagnostics)
+    guard typed else { return next }
+    switch kind {
+    case .connection: take(\.profilePreferredIP); take(\.preferredIP); take(\.socksPort); take(\.httpPort)
+    case .dns: take(\.profileDNSMode)
+    case .routes: take(\.includedRoutes); take(\.excludedRoutes)
+    case .advanced:
+      take(\.fragmentPackets); take(\.fragmentLength); take(\.fragmentInterval)
+      take(\.idleTimeoutSeconds); take(\.tcpMaxConnections); take(\.udpMaxConnections)
+    }
+    return next
+  }
+  private var dirty: Bool { merged(typed: true) != model.settings }
+  private var valid: Bool { (try? merged(typed: true).validate()) != nil }
+  private func save(leaving: Bool) {
+    let next = merged(typed: true), sent = value
+    model.launchShown { try await model.saveSettings(next); base = sent; if !inline && !leaving { dismiss() } }
+  }
+  /// The flipped switches alone, once they have been left alone for the pause; a refused one goes back.
+  private func saveSwitches() {
+    let next = merged(typed: false), sent = value
+    model.launchShown({
+      try await model.saveSettings(next)
+      for key in switches { base[keyPath: key] = sent[keyPath: key] }
+      base.recordDiagnostics = sent.recordDiagnostics
+    }, failed: {
+      for key in switches where value[keyPath: key] == sent[keyPath: key] { value[keyPath: key] = base[keyPath: key] }
+      if value.recordDiagnostics == sent.recordDiagnostics { value.recordDiagnostics = base.recordDiagnostics }
+    })
+  }
   // Its own builder keeps the body within what the type checker solves in time.
   @ViewBuilder private var routeSections: some View {
     Section {
@@ -232,9 +297,21 @@ struct ConnectionEditor: View {
 #endif
       }
       Section { Text("Saving these settings reconnects an active VPN.").font(.footnote).foregroundStyle(AppPalette.secondary) }
-    }.navigationTitle(LocalizedStringKey(kind.rawValue)).navigationBarTitleDisplayMode(.inline)
-    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Save") { model.launch { try await model.saveSettings(value); if !inline { dismiss() } } }.disabled(model.busy) } }
-    .onChange(of: model.settings.inboundCredentialRef) { _, ref in value.inboundCredentialRef = ref; value.inboundAuthEnabled = model.settings.inboundAuthEnabled }
+      if dirty && !valid { InvalidDraftNote() }
+    }.draftPage(LocalizedStringKey(kind.rawValue), dirty: dirty, valid: valid, cancel: { value = model.settings; base = value; dismiss() }, save: save)
+    // Back on this page with nothing pending: show what is saved now.
+    .onAppear { if !dirty { value = model.settings; base = value } }
+    .task(id: flipped) {
+      guard merged(typed: false) != model.settings else { return }
+      model.saveStatus = .saving
+      try? await Task.sleep(for: autoApplyDelay)
+      guard !Task.isCancelled else { return }
+      saveSwitches()
+    }
+    .onChange(of: model.settings.inboundCredentialRef) { _, ref in
+      value.inboundCredentialRef = ref; value.inboundAuthEnabled = model.settings.inboundAuthEnabled
+      base.inboundCredentialRef = ref; base.inboundAuthEnabled = value.inboundAuthEnabled
+    }
     .sheet(item: $editingDNS) { RoutingEditor(profile: $0, initialSection: "dns") }
   }
 }
@@ -249,8 +326,17 @@ struct CredentialsView: View {
       Section { TextField("Username", text: $username).textContentType(.username); SecureField("Password", text: $password).textContentType(.newPassword) }
         .textInputAutocapitalization(.never).autocorrectionDisabled()
       Section { Text("Each value must be 1–255 UTF-8 bytes with no control characters. The username cannot contain a colon. Saving enables authentication and reconnects an active VPN. Credentials are kept in the shared Keychain.").font(.footnote).foregroundStyle(AppPalette.secondary) }
-    }.navigationTitle("Listener credentials").navigationBarTitleDisplayMode(.inline)
-    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Save") { model.launch { try await model.updateCredentials(username: username, password: password); password = ""; dismiss() } }.disabled(model.busy || username.isEmpty || password.isEmpty) } }
+      if dirty && !valid { InvalidDraftNote() }
+    }.draftPage("Listener credentials", dirty: dirty, valid: valid, canSave: !username.isEmpty && !password.isEmpty, cancel: { username = ""; password = ""; dismiss() }) { leaving in
+      let user = username, secret = password
+      model.launch { try await model.updateCredentials(username: user, password: secret); username = ""; password = ""; if !leaving { dismiss() } }
+    }
+  }
+  private var dirty: Bool { !username.isEmpty || !password.isEmpty }
+  // The two values only make sense together.
+  private var valid: Bool {
+    (1...255).contains(username.utf8.count) && (1...255).contains(password.utf8.count) && !username.contains(":") &&
+      !(username + password).unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
   }
 }
 
@@ -258,22 +344,28 @@ struct TrustedWiFiEditor: View {
   @Environment(IOSAppModel.self) private var model
   @Environment(\.dismiss) private var dismiss
   @State private var text = ""
-  @State private var invalid = false
+  @State private var loaded = false
+  private var saved: [String] { model.settings.trustedWiFiNetworks ?? [] }
+  private var next: IOSTunnelSettings { var next = model.settings; next.trustedWiFiNetworks = lines(text); return next }
+  private var dirty: Bool { loaded && lines(text) != saved }
+  private var valid: Bool { (try? next.validate()) != nil }
   var body: some View {
     AppForm {
       Section {
         LinesEditor(title: "Trusted Wi-Fi networks", text: $text).accessibilityIdentifier("trustedWiFiNetworks")
       } footer: {
-        Text(invalid ? String(localized: "Use up to 64 names of at most 32 bytes each, without tabs.") : String(localized: "One network name per line. Joining one of these leaves the VPN as it is."))
-          .foregroundStyle(invalid ? Color.red : AppPalette.secondary)
+        Text(valid ? String(localized: "One network name per line. Joining one of these leaves the VPN as it is.") : String(localized: "Use up to 64 names of at most 32 bytes each, without tabs."))
+          .foregroundStyle(valid ? AppPalette.secondary : Color.red)
       }
-    }.navigationTitle("Trusted Wi-Fi").navigationBarTitleDisplayMode(.inline)
-    .onAppear { text = (model.settings.trustedWiFiNetworks ?? []).joined(separator: "\n") }
-    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Save") {
-      var next = model.settings; next.trustedWiFiNetworks = lines(text)
-      guard (try? next.validate()) != nil else { invalid = true; return }
-      model.launch { try await model.saveSettings(next); dismiss() }
-    }.disabled(model.busy) } }
+      if dirty && !valid { InvalidDraftNote() }
+    }
+    // Once: a draft left open under another tab is still there on return.
+    .onAppear { if !loaded { text = saved.joined(separator: "\n"); loaded = true } }
+    .draftPage("Trusted Wi-Fi", dirty: dirty, valid: valid, cancel: { text = saved.joined(separator: "\n"); dismiss() }) { leaving in
+      guard valid else { return }
+      let next = next
+      model.launchShown { try await model.saveSettings(next); if !leaving { dismiss() } }
+    }
   }
 }
 
@@ -287,6 +379,28 @@ struct RecoveryEditor: View {
   @State private var status2: Int
   @State private var body1: String
   @State private var body2: String
+  private struct Edits: Equatable { var value: AutomationConfiguration; var urls: [String]; var statuses: [Int]; var bodies: [String] }
+  private var edits: Edits { Edits(value: value, urls: [url1, url2], statuses: [status1, status2], bodies: [body1, body2]) }
+  // What the page opened with, moved along by each save: leaving saves only when the page differs from it.
+  @State private var opened: Edits?
+  private var dirty: Bool { opened != nil && edits != opened }
+  private var valid: Bool { (try? model.validatePreferences(updated)) != nil }
+  private var updated: IOSPreferences {
+    var next = model.preferences; next.automation = value
+    if value.enabled {
+      next.automation.targets = [.init(id: "primary", url: url1, expectedStatus: status1, expectedBody: body1)]
+      if value.policy != .fixed { next.automation.targets.append(.init(id: "secondary", url: url2, expectedStatus: status2, expectedBody: body2)) }
+    }
+    next.automation.subscriptionID = model.selected?.subscriptionID ?? ""
+    next.automation.russianEntryNodeIDs = value.nodeIDs.filter { id in model.nodes.first { $0.id == id }.map { ServerLocation.russianEntry($0.name) } == true }
+    return next
+  }
+  /// `stay` is the switch saving itself with the page as it stands: the page stays open, and a refused switch goes back.
+  private func save(leaving: Bool, stay: Bool = false) {
+    let next = updated, sent = edits
+    model.launchShown({ try model.savePreferences(next); opened = sent; if !leaving && !stay { dismiss() } },
+                      failed: { if stay, value.enabled == sent.value.enabled { value.enabled.toggle() } })
+  }
   init(initial: AutomationConfiguration) {
     _value = State(initialValue: initial)
     _url1 = State(initialValue: initial.targets.first?.url ?? "https://www.gstatic.com/generate_204")
@@ -328,18 +442,17 @@ struct RecoveryEditor: View {
       }
       Section("Primary health target") { target(url: $url1, status: $status1, body: $body1) }
       if value.policy != .fixed { Section { target(url: $url2, status: $status2, body: $body2) } header: { Text("Independent second target") } footer: { Text("Use a different hostname. Only repeated classified timeouts at both targets permit cycling through your allowed servers.") } }
-    }.navigationTitle("Automatic recovery").navigationBarTitleDisplayMode(.inline)
-    .toolbar {
-      ToolbarItem(placement: .topBarTrailing) { EditButton() }
-      ToolbarItem(placement: .confirmationAction) { Button("Save") { model.launch {
-        if value.enabled {
-          value.targets = [.init(id: "primary", url: url1, expectedStatus: status1, expectedBody: body1)]
-          if value.policy != .fixed { value.targets.append(.init(id: "secondary", url: url2, expectedStatus: status2, expectedBody: body2)) }
-        }
-        value.subscriptionID = model.selected?.subscriptionID ?? ""
-        value.russianEntryNodeIDs = value.nodeIDs.filter { id in model.nodes.first { $0.id == id }.map { ServerLocation.russianEntry($0.name) } == true }
-        var next = model.preferences; next.automation = value; try model.savePreferences(next); dismiss()
-      } }.disabled(model.busy) }
+      if dirty && !valid { InvalidDraftNote() }
+    }.toolbar { ToolbarItem(placement: .topBarTrailing) { EditButton() } }
+    .draftPage("Automatic recovery", dirty: dirty, valid: valid, cancel: { opened = edits; dismiss() }) { leaving in save(leaving: leaving) }
+    .onAppear { if opened == nil { opened = edits } }
+    .task(id: value.enabled) {
+      // Recovery turned on before its servers are chosen cannot be saved yet: the switch then waits with the rest of the page.
+      guard let opened, value.enabled != opened.value.enabled, valid else { return }
+      model.saveStatus = .saving
+      try? await Task.sleep(for: autoApplyDelay)
+      guard !Task.isCancelled else { return }
+      if valid { save(leaving: false, stay: true) } else { model.saveStatus = nil }
     }
   }
   private func target(url: Binding<String>, status: Binding<Int>, body: Binding<String>) -> some View {

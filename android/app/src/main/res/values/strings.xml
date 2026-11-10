@@ -640,6 +640,8 @@
     <string name="item_no_longer_in_catalog">This item is no longer in your catalog.</string>
     <string name="ok">OK</string>
     <string name="save_changes">Save changes</string>
+    <string name="saving">Saving…</string>
+    <string name="saved">Saved</string>
     <string name="import_profiles">Import profiles</string>
     <plurals name="server_count">
         <item quantity="one">%d server</item>
