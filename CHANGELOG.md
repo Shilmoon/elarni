@@ -4,6 +4,12 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Fixed
+
+- Android: with the keyboard open, screens lost the height of the navigation bar a second time,
+  and the per-app app search showed nothing it found: the results were below the visible list,
+  after the selected apps. The results now come right under the search field.
+
 ## 0.6.0 - 2026-11-10
 
 ### Added

@@ -398,8 +398,11 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
         target.startsWith("node:") -> servers.firstOrNull { "node:${it.first}" == target }?.let { tr(R.string.server, it.second) } ?: tr(R.string.missing_server)
         else -> target
     }
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
+    // With the keyboard open the search field filled the visible list, and what it found stayed below.
+    LaunchedEffect(query) { if (query.isNotEmpty()) list.animateScrollToItem(1) }
     Column(Modifier.fillMaxSize()) {
-    LazyColumn(Modifier.weight(1f).testTag("per-app-list"), contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(Modifier.weight(1f).testTag("per-app-list"), list, contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         ChoiceField(tr(R.string.mode), mode, listOf("off", "bypass", "proxyOnly"), listOf(tr(R.string.off), tr(R.string.bypass_listed_apps), tr(R.string.only_listed_apps)), enabled = !busy) { mode = it }
@@ -411,47 +414,53 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
             packages = (packages + added).distinct()
             if (mode == "off") mode = "bypass"
         }
-        TextField(tr(R.string.search_installed_apps), query) { query = it }
         }
         }
+        item { Box(Modifier.padding(top = 4.dp)) { TextField(tr(R.string.search_installed_apps), query) { query = it } } }
         if (loading) item { Text(tr(R.string.loading_app_list), style = MaterialTheme.typography.bodySmall) }
-        if (selectedApps.isNotEmpty() || missingApps.isNotEmpty()) item { Text(tr(R.string.selected_apps, selectedApps.size + missingApps.size), style = MaterialTheme.typography.titleMedium) }
-        items(missingApps, key = { "missing-$it" }) { name -> MissingAppRow(name, !busy) { select(name, false) } }
-        items(selectedApps, key = { it.string("package") }) { app ->
-            val name = app.string("package")
-            Column {
-                InstalledAppRow(app, true, !busy, activity) { select(name, it) }
-                if (mode != "off") {
-                    val current = targets[name] ?: modeTarget
-                    // A deleted server stays shown until another target replaces it.
-                    val choices = listOf("direct", "routing", "block") + servers.map { "node:${it.first}" } +
-                        listOfNotNull(current.takeIf { it.startsWith("proxy:") || it.startsWith("node:") && servers.none { server -> "node:${server.first}" == it } }) + "ask-proxy"
-                    Box(Modifier.testTag("per-app-target-$name")) {
-                        ChoiceField(tr(R.string.traffic), current, choices, choices.map { if (it == "ask-proxy") tr(R.string.local_proxy_2) else label(it) }, enabled = !busy) { value ->
-                            if (value == "ask-proxy") proxyFor = name else setTarget(name, value)
+        val selectedSection: () -> Unit = {
+            if (selectedApps.isNotEmpty() || missingApps.isNotEmpty()) item { Text(tr(R.string.selected_apps, selectedApps.size + missingApps.size), style = MaterialTheme.typography.titleMedium) }
+            items(missingApps, key = { "missing-$it" }) { name -> MissingAppRow(name, !busy) { select(name, false) } }
+            items(selectedApps, key = { it.string("package") }) { app ->
+                val name = app.string("package")
+                Column {
+                    InstalledAppRow(app, true, !busy, activity) { select(name, it) }
+                    if (mode != "off") {
+                        val current = targets[name] ?: modeTarget
+                        // A deleted server stays shown until another target replaces it.
+                        val choices = listOf("direct", "routing", "block") + servers.map { "node:${it.first}" } +
+                            listOfNotNull(current.takeIf { it.startsWith("proxy:") || it.startsWith("node:") && servers.none { server -> "node:${server.first}" == it } }) + "ask-proxy"
+                        Box(Modifier.testTag("per-app-target-$name")) {
+                            ChoiceField(tr(R.string.traffic), current, choices, choices.map { if (it == "ask-proxy") tr(R.string.local_proxy_2) else label(it) }, enabled = !busy) { value ->
+                                if (value == "ask-proxy") proxyFor = name else setTarget(name, value)
+                            }
                         }
                     }
                 }
             }
-        }
-        if (selectedApps.isNotEmpty() && mode != "off") item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("per-app-other-apps"), verticalAlignment = Alignment.CenterVertically) {
-                    Text(tr(R.string.other_apps), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-                    Text(if (mode == "proxyOnly") tr(R.string.direct) else tr(R.string.follow_routing_rules), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (selectedApps.isNotEmpty() && mode != "off") item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("per-app-other-apps"), verticalAlignment = Alignment.CenterVertically) {
+                        Text(tr(R.string.other_apps), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                        Text(if (mode == "proxyOnly") tr(R.string.direct) else tr(R.string.follow_routing_rules), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text(tr(R.string.each_app_can_connect_directly_follow),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Text(tr(R.string.each_app_can_connect_directly_follow),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        if (!loading) item { Text(if (query.isBlank()) tr(R.string.installed_apps) else tr(R.string.search_results), style = MaterialTheme.typography.titleMedium) }
-        items(available.take(visibleCount), key = { it.string("package") }) { app -> InstalledAppRow(app, false, !busy, activity) { select(app.string("package"), it) } }
-        if (available.isNotEmpty()) item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(trPlural(R.plurals.showing_apps, available.size, minOf(visibleCount, available.size), available.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (visibleCount < available.size) OutlinedButton({ visibleCount += 8 }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(tr(R.string.show_more)) }
-            }
-        } else if (!loading) item { Text(if (query.isBlank()) tr(R.string.no_other_installed_apps) else tr(R.string.no_apps_match_your_search), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        val foundSection: () -> Unit = {
+            if (!loading) item { Text(if (query.isBlank()) tr(R.string.installed_apps) else tr(R.string.search_results), style = MaterialTheme.typography.titleMedium) }
+            items(available.take(visibleCount), key = { it.string("package") }) { app -> InstalledAppRow(app, false, !busy, activity) { select(app.string("package"), it) } }
+            if (available.isNotEmpty()) item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(trPlural(R.plurals.showing_apps, available.size, minOf(visibleCount, available.size), available.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (visibleCount < available.size) OutlinedButton({ visibleCount += 8 }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(tr(R.string.show_more)) }
+                }
+            } else if (!loading) item { Text(if (query.isBlank()) tr(R.string.no_other_installed_apps) else tr(R.string.no_apps_match_your_search), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+        // What a search finds comes right under its field; the selection follows it.
+        if (query.isBlank()) { selectedSection(); foundSection() } else { foundSection(); selectedSection() }
         item {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         val missing = packages.filter { name -> apps.none { it.string("package") == name } }
