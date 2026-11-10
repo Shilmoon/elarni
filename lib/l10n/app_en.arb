@@ -298,7 +298,6 @@
   "noMatchingApps": "No matching apps.",
   "noAppsFound": "No apps found. Choose an app file below.",
   "loadingApps": "Loading apps…",
-  "runningApps": "Running apps",
   "installedAndRunningApps": "Installed and running apps",
   "refreshAppList": "Refresh app list",
   "searchApps": "Search apps",

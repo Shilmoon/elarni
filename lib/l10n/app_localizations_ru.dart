@@ -692,9 +692,6 @@ class AppLocalizationsRu extends AppLocalizations {
   String get loadingApps => 'Загрузка приложений…';
 
   @override
-  String get runningApps => 'Запущенные приложения';
-
-  @override
   String get installedAndRunningApps => 'Установленные и запущенные приложения';
 
   @override

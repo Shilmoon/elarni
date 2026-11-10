@@ -1238,12 +1238,6 @@ abstract class AppLocalizations {
   /// **'Loading apps…'**
   String get loadingApps;
 
-  /// No description provided for @runningApps.
-  ///
-  /// In en, this message translates to:
-  /// **'Running apps'**
-  String get runningApps;
-
   /// No description provided for @installedAndRunningApps.
   ///
   /// In en, this message translates to:
