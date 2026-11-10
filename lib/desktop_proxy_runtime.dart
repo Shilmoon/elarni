@@ -272,24 +272,24 @@ extension _ProxyRuntime on DesktopProxy {
           throw desktopError('native_unavailable');
         _vpnReplyProcess = process;
       }
-      final response =
-          (lease || leased
-                  ? _readLine(_leaseOutput!)
-                  : reused
-                  ? (_vpnReply = Completer<CatalogMap>()).future
-                  : runtime
-                  ? _readRuntimeResponse(process, session: session)
-                  : _readResponse(process))
-              .timeout(
-                timeout ??
-                    (method == 'fetchSubscription'
-                        ? const Duration(seconds: 35)
-                        : method == 'prepareRoutingAssets'
-                        ? const Duration(seconds: 370)
-                        : method == 'runVPN'
-                        ? const Duration(seconds: 120)
-                        : _replyTimeout),
-              );
+      // Awake time: a connect that straddles a sleep must not run out at resume.
+      final response = awakeTimeout(
+        lease || leased
+            ? _readLine(_leaseOutput!)
+            : reused
+            ? (_vpnReply = Completer<CatalogMap>()).future
+            : runtime
+            ? _readRuntimeResponse(process, session: session)
+            : _readResponse(process),
+        timeout ??
+            (method == 'fetchSubscription'
+                ? const Duration(seconds: 35)
+                : method == 'prepareRoutingAssets'
+                ? const Duration(seconds: 370)
+                : method == 'runVPN'
+                ? const Duration(seconds: 120)
+                : _replyTimeout),
+      );
       // A lease that missed a reply can no longer pair replies with requests,
       // so it ends; the next storage request takes a new one.
       if (leased)

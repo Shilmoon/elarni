@@ -271,7 +271,12 @@ class AndroidE2E {
             refresh.get(15, java.util.concurrent.TimeUnit.SECONDS)
             val deadline = System.currentTimeMillis() + 10_000
             while (manager.activeNotifications.any { it.id == 1 } && System.currentTimeMillis() < deadline) Thread.sleep(100)
-            assertTrue("Disconnect left the VPN service in the foreground", manager.activeNotifications.none { it.id == 1 })
+            // Seen twice in CI and not explained by the start and stop paths: name the service's state when it fails again.
+            if (manager.activeNotifications.any { it.id == 1 }) {
+                val services = shell("dumpsys activity services ${ui.activity.packageName}")
+                fail("Disconnect left the VPN service in the foreground: connection=${repo.state.value.connection} " +
+                    "error=${repo.state.value.error} refresh=${refresh.get()}\n$services")
+            }
             assertEquals("disconnected", repo.state.value.connection)
         }
     }

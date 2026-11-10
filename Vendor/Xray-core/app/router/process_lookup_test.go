@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -88,5 +89,34 @@ func BenchmarkProcessRulesOfAFailedLookup(b *testing.B) {
 		for _, m := range matchers {
 			m.Apply(ctx)
 		}
+	}
+}
+
+// Android's TUN looks up each new flow's owner as it arrives only while routing has
+// process rules: without per-app rules nothing asks, and lookups cost a Binder call.
+func TestRouterHoldsTheSocketOwnerPrefetchWhileItHasProcessRules(t *testing.T) {
+	perApp := &Config{Rule: []*RoutingRule{
+		{Process: []string{"10123"}, TargetTag: &RoutingRule_Tag{Tag: "proxy"}, RuleTag: "app"},
+		{PortList: &net.PortList{Range: []*net.PortRange{{From: 53, To: 53}}}, TargetTag: &RoutingRule_Tag{Tag: "dns"}, RuleTag: "dns"},
+	}}
+	r := new(Router)
+	if err := r.Init(context.Background(), perApp, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !net.SocketOwnerPrefetchWanted() {
+		t.Fatal("prefetch off with a process rule")
+	}
+	if err := r.RemoveRule("app"); err != nil {
+		t.Fatal(err)
+	}
+	if net.SocketOwnerPrefetchWanted() {
+		t.Fatal("prefetch still on after the process rule was removed")
+	}
+	if err := r.ReloadRules(perApp, false); err != nil || !net.SocketOwnerPrefetchWanted() {
+		t.Fatalf("prefetch off after reloading the process rule: %v", err)
+	}
+	r.Close()
+	if net.SocketOwnerPrefetchWanted() {
+		t.Fatal("prefetch still on after the router closed")
 	}
 }

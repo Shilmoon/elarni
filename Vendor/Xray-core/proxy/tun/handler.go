@@ -350,6 +350,10 @@ func (t *Handler) serve(conn net.Conn, destination net.Destination, admitted *ad
 		Reason: "",
 	})
 	errors.LogInfo(ctx, "processing from ", source, " to ", destination)
+	// Elarni: Android names a socket's owner only while it exists; routing asks after sniffing.
+	if source.Address.Family().IsIP() && destination.Address.Family().IsIP() {
+		net.PrefetchSocketOwner(destination.Network.SystemString(), source.Address.IP().String(), uint16(source.Port), destination.Address.IP().String(), uint16(destination.Port))
+	}
 
 	// both kinds of connection are buf.Reader and buf.Writer, what they carry is counted on the way
 	reader := &buf.TimeoutWrapperReader{Reader: buf.NewReader(conn), Counter: t.uplinkCounter}

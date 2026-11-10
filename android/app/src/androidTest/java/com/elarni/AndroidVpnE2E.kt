@@ -70,7 +70,8 @@ class AndroidVpnE2E {
         // launch wait can then remain blocked. The token below proves completion.
         shell("am start -n $packageName/com.elarni.traffic.TrafficActivity --es token $token --es mode $mode --es address $address --ei port $port$proxy")
         var result: JSONObject? = null
-        ui.waitUntil(10_000) {
+        // Two direct TCP tries of 4 s connect and 4 s read each fit (TrafficActivity).
+        ui.waitUntil(20_000) {
             result = runCatching { JSONObject(shell("run-as $packageName cat files/result.json")) }.getOrNull()
             result?.string("token") == token
         }
@@ -87,6 +88,23 @@ class AndroidVpnE2E {
         }
         inTunnel = result!!.optBoolean("vpn")
         return result!!.optString("body")
+    }
+
+    /** Waits until the VPN is connected over a Wi-Fi path that has held for 1.5 s. */
+    private fun awaitConnectedOnWiFi() {
+        val connectivity = ui.activity.getSystemService(android.net.ConnectivityManager::class.java)
+        var stablePath: Long? = null
+        var stableSince = android.os.SystemClock.elapsedRealtime()
+        ui.waitUntil(30_000) {
+            val network = repo.engine.physical()
+            val path = network?.networkHandle
+            val wifiReady = connectivity.getNetworkCapabilities(network)
+                ?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
+            val time = android.os.SystemClock.elapsedRealtime()
+            if (!wifiReady || repo.state.value.connection != "connected" || path != stablePath) {
+                stablePath = path; stableSince = time; false
+            } else time - stableSince >= 1500
+        }
     }
 
     @Test fun systemInfoLeavesAnotherAppsVpn() {
@@ -194,9 +212,10 @@ class AndroidVpnE2E {
                 connect()
                 // The physical TUIC endpoint is excluded; the controlled payload
                 // destinations are different IPs and must traverse VpnService.
-                assertTrue(traffic("a", "tcp", httpPort, "198.18.0.81").contains("proxy:elarni-synthetic"))
+                // A TCP reply without the proxy's body came once in CI; name what came instead.
+                traffic("a", "tcp", httpPort, "198.18.0.81").let { assertTrue("TUIC $mode IPv4 TCP body: $it", it.contains("proxy:elarni-synthetic")) }
                 assertEquals("proxy:elarni-udp-fixture", traffic("b", "udp", udpPort, "198.18.0.81"))
-                assertTrue(traffic("b", "tcp", httpPort, "fdfe:dcba:9876::10").contains("proxy:elarni-synthetic"))
+                traffic("b", "tcp", httpPort, "fdfe:dcba:9876::10").let { assertTrue("TUIC $mode IPv6 TCP body: $it", it.contains("proxy:elarni-synthetic")) }
                 assertEquals("proxy:elarni-udp-fixture", traffic("a", "udp", udpPort, "fdfe:dcba:9876::10"))
                 assertEquals("198.18.0.81", traffic("a", "dns", udpPort, "198.18.0.81"))
                 assertTrue(traffic("b", "systemDns", udpPort).contains("198.18.0.81"))
@@ -700,13 +719,16 @@ class AndroidVpnE2E {
                 ui.waitUntil(15_000) { join() != null }
                 assertEquals("disconnected", repo.state.value.connection)
                 // On Wi-Fi, Android reports leaving it; that report asks for the next join. Both reach a killed process.
-                // Mobile data stays foreground for a while after Wi-Fi comes back, as after an earlier run's last join.
-                ui.waitUntil(60_000) { WiFiRule.watching == "leave" }
+                // Mobile data stays foreground for a while after Wi-Fi comes back, as after an earlier run's last join;
+                // WiFiRule.arm looks again every 5 s for up to 2 minutes, so wait as long as it does.
+                ui.waitUntil(125_000) { WiFiRule.watching == "leave" }
                 rule(true, emptyList())
                 var before = rejoin()
                 ui.waitUntil(15_000) { join() != before }
                 ui.waitUntil(15_000) { repo.state.value.connection == "connected" }
                 assertTrue(snapshot().data.optBoolean("connectionIntent"))
+                // The join connects while the default network still moves from mobile data to Wi-Fi.
+                awaitConnectedOnWiFi()
                 assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
                 // A Disconnect holds on this network, even when the rule reads the network again.
                 repo.requestStop(); ui.waitUntil(10_000) { repo.state.value.connection == "disconnected" }
@@ -714,7 +736,7 @@ class AndroidVpnE2E {
                 assertEquals("disconnected", repo.state.value.connection)
                 // In the background, the next join connects: VPN consent allows the service to start. Mobile data
                 // stays foreground for a while after a join, and leaving is watched once it drops back.
-                ui.waitUntil(60_000) { WiFiRule.watching == "leave" }
+                ui.waitUntil(125_000) { WiFiRule.watching == "leave" }
                 shell("input keyevent KEYCODE_HOME")
                 before = rejoin()
                 ui.waitUntil(15_000) { join() != before }
@@ -870,18 +892,7 @@ class AndroidVpnE2E {
                 // Cellular can recover seconds before Wi-Fi associates, and the core then starts there. Require the
                 // default network on the Wi-Fi path we just restored, which the core's new sockets follow without
                 // a restart while cellular stays, then verify uninterrupted traffic.
-                var stablePath: Long? = null
-                var stableSince = android.os.SystemClock.elapsedRealtime()
-                ui.waitUntil(30_000) {
-                    val network = repo.engine.physical()
-                    val path = network?.networkHandle
-                    val wifiReady = connectivity.getNetworkCapabilities(network)
-                        ?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
-                    val time = android.os.SystemClock.elapsedRealtime()
-                    if (!wifiReady || repo.state.value.connection != "connected" || path != stablePath) {
-                        stablePath = path; stableSince = time; false
-                    } else time - stableSince >= 1500
-                }
+                awaitConnectedOnWiFi()
                 assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
                 assertEquals(warning.getString("token"), repo.state.value.approval?.string("token"))
                 assertEquals(1, snapshot().sources.size)

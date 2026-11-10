@@ -979,7 +979,40 @@ pub(crate) fn compile_owned_config(
     });
     close_with_app(&mut config);
     apply_per_app_routing(&mut config, runtime, "elarni-")?;
+    block_tun_own_subnets(&mut config, "elarni-block");
     serde_json::to_vec(&config).map_err(|_| CompileError::InvalidRoute)
+}
+
+/// The TUN's own subnets: Android's VpnService (Platform.kt) and the desktop TUN
+/// (windows_tun_config.go) hold their resolver there. Nothing else answers in them, so a
+/// Private DNS probe on 853 or a subnet broadcast (NetBIOS, Spotify discovery) would
+/// leave by a rule for private ranges and hang until its timeout.
+const TUN_OWN_SUBNETS: [&str; 3] = [
+    "198.51.100.252/30",
+    "fdfe:dcba:9876::/126",
+    "fd76:6f75:7465::/126",
+];
+
+/// Ends TUN traffic to its own subnets, except DNS, ahead of every other rule, the
+/// per-app gate included.
+pub(crate) fn block_tun_own_subnets(config: &mut Value, block_tag: &str) {
+    let Some(tun_tag) = config["inbounds"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|inbound| inbound["protocol"] == "tun")
+        .and_then(|inbound| inbound["tag"].as_str())
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    if let Some(rules) = config["routing"]["rules"].as_array_mut() {
+        rules.insert(
+            0,
+            json!({"type": "field", "inboundTag": [tun_tag], "network": "tcp,udp",
+                "ip": TUN_OWN_SUBNETS, "port": "1-52,54-65535", "outboundTag": block_tag}),
+        );
+    }
 }
 
 /// A per-app proxy target: SOCKS5 or HTTP on this device, without credentials.

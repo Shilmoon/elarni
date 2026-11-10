@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
+import 'awake_timeout.dart';
 import 'platform_services.dart';
 import 'domain_ffi.dart';
 import 'tunnel_channel.dart';

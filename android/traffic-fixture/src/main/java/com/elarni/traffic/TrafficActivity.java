@@ -45,26 +45,32 @@ public final class TrafficActivity extends Activity {
                     int proxyPort = getIntent().getIntExtra("proxyPort", 0);
                     boolean proxy = !"tcp".equals(mode);
                     if (proxy && (proxyAddress == null || NetworkInterface.getByInetAddress(InetAddress.getByName(proxyAddress)) == null || proxyPort < 1024 || proxyPort > 65535)) throw new IOException("Proxy fixture must be on this emulator");
-                    try (Socket socket = new Socket()) {
-                        socket.setSoTimeout(4000); socket.connect(new InetSocketAddress(proxy ? InetAddress.getByName(proxyAddress) : target, proxy ? proxyPort : port), 4000);
-                        if ("socksProxy".equals(mode)) {
-                            OutputStream output = socket.getOutputStream(); DataInputStream input = new DataInputStream(socket.getInputStream());
-                            output.write(new byte[]{5,1,2});
-                            if (input.readUnsignedByte()!=5 || input.readUnsignedByte()!=2) throw new IOException("SOCKS authentication not selected");
-                            byte[] user="fixture-user".getBytes(StandardCharsets.US_ASCII), password="fixture-password".getBytes(StandardCharsets.US_ASCII);
-                            output.write(1); output.write(user.length); output.write(user); output.write(password.length); output.write(password);
-                            if (input.readUnsignedByte()!=1 || input.readUnsignedByte()!=0) throw new IOException("SOCKS login rejected");
-                            output.write(new byte[]{5,1,0,1}); output.write(target.getAddress()); output.write(port>>8); output.write(port);
-                            if (input.readUnsignedByte()!=5 || input.readUnsignedByte()!=0) throw new IOException("SOCKS connect rejected");
-                            input.readByte(); int kind=input.readUnsignedByte(); int length=kind==1?4:kind==4?16:input.readUnsignedByte();
-                            input.readFully(new byte[length+2]);
-                        }
-                        String requestTarget = "httpProxy".equals(mode) ? "http://"+address+":"+port+"/fixture" : "/fixture";
-                        String login = "httpProxy".equals(mode) ? "Proxy-Authorization: Basic "+android.util.Base64.encodeToString("fixture-user:fixture-password".getBytes(StandardCharsets.US_ASCII), android.util.Base64.NO_WRAP)+"\r\n" : "";
-                        socket.getOutputStream().write(("GET "+requestTarget+" HTTP/1.1\r\nHost: fixture.elarni.test\r\n"+login+"Connection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
-                        ByteArrayOutputStream bytes = new ByteArrayOutputStream(); byte[] buffer = new byte[1024];
-                        int count; while ((count = socket.getInputStream().read(buffer)) > 0) { bytes.write(buffer, 0, count); if (bytes.size() > 8192) throw new IOException("Response too large"); }
-                        result.put("body", bytes.toString("UTF-8"));
+                    // Off the VPN, Elarni is not on the path: a loaded host that answers late gets one more try,
+                    // as a reload would. Through the VPN a stall is what the checks look for, so it fails at once.
+                    boolean direct = capabilities == null || !capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN);
+                    for (int attempt = 1; ; attempt++) {
+                        try (Socket socket = new Socket()) {
+                            socket.setSoTimeout(4000); socket.connect(new InetSocketAddress(proxy ? InetAddress.getByName(proxyAddress) : target, proxy ? proxyPort : port), 4000);
+                            if ("socksProxy".equals(mode)) {
+                                OutputStream output = socket.getOutputStream(); DataInputStream input = new DataInputStream(socket.getInputStream());
+                                output.write(new byte[]{5,1,2});
+                                if (input.readUnsignedByte()!=5 || input.readUnsignedByte()!=2) throw new IOException("SOCKS authentication not selected");
+                                byte[] user="fixture-user".getBytes(StandardCharsets.US_ASCII), password="fixture-password".getBytes(StandardCharsets.US_ASCII);
+                                output.write(1); output.write(user.length); output.write(user); output.write(password.length); output.write(password);
+                                if (input.readUnsignedByte()!=1 || input.readUnsignedByte()!=0) throw new IOException("SOCKS login rejected");
+                                output.write(new byte[]{5,1,0,1}); output.write(target.getAddress()); output.write(port>>8); output.write(port);
+                                if (input.readUnsignedByte()!=5 || input.readUnsignedByte()!=0) throw new IOException("SOCKS connect rejected");
+                                input.readByte(); int kind=input.readUnsignedByte(); int length=kind==1?4:kind==4?16:input.readUnsignedByte();
+                                input.readFully(new byte[length+2]);
+                            }
+                            String requestTarget = "httpProxy".equals(mode) ? "http://"+address+":"+port+"/fixture" : "/fixture";
+                            String login = "httpProxy".equals(mode) ? "Proxy-Authorization: Basic "+android.util.Base64.encodeToString("fixture-user:fixture-password".getBytes(StandardCharsets.US_ASCII), android.util.Base64.NO_WRAP)+"\r\n" : "";
+                            socket.getOutputStream().write(("GET "+requestTarget+" HTTP/1.1\r\nHost: fixture.elarni.test\r\n"+login+"Connection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                            ByteArrayOutputStream bytes = new ByteArrayOutputStream(); byte[] buffer = new byte[1024];
+                            int count; while ((count = socket.getInputStream().read(buffer)) > 0) { bytes.write(buffer, 0, count); if (bytes.size() > 8192) throw new IOException("Response too large"); }
+                            result.put("body", bytes.toString("UTF-8"));
+                            break;
+                        } catch (SocketTimeoutException timeout) { if (!direct || attempt == 2) throw timeout; }
                     }
                 } else {
                     byte[] payload = "elarni-udp-fixture".getBytes(StandardCharsets.US_ASCII);

@@ -58,9 +58,10 @@ extension _ProxyProbes on DesktopProxy {
     final timeout = args['timeout']! as int;
     if (automatic) {
       // TSPU freezes an SNI after more than 3 handshakes under ~50 ms apart.
-      // A near server's probe can end sooner, so starts 40 ms apart keep any
-      // 50 ms window to two.
-      final wait = _lastAutomaticProbe + 40 - _clock.elapsedMilliseconds;
+      // A near server's probe can end sooner, so starts 50 ms apart keep any
+      // 50 ms window to two even when one dial takes up to 50 ms longer than
+      // the next (40 ms let two handshakes 46 ms apart through on loaded CI).
+      final wait = _lastAutomaticProbe + 50 - _clock.elapsedMilliseconds;
       if (wait > 0) await Future<void>.delayed(Duration(milliseconds: wait));
       _lastAutomaticProbe = _clock.elapsedMilliseconds;
     }

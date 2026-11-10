@@ -4,6 +4,44 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Changed
+
+- The Xray core is updated to upstream v26.11.9. Its default TLS fingerprint ("chrome") now
+  imitates Chrome 155, which upstream reports Russia's TSPU does not target yet. Multiplexed
+  (mux) connections no longer write to their server connection from two streams at once and
+  carry up to 128 streams each by default, an inbound that fails to start is closed instead of
+  left half-registered, and on Windows the VPN adapter's IPv6 setup errors are only logged
+  when the registry's DisabledComponents turns IPv6 off, with IPv6 outside the tunnel blocked
+  when leak blocking is on.
+
+### Fixed
+
+- On iPhone, iPad and Mac, apps' UDP traffic now reaches the server. The packet bridge's relay
+  socket to the core was not bound to loopback, and iOS and macOS dropped every datagram sent
+  on it, so each UDP session ended at its first datagram: games such as Brawl Stars fell back
+  to TCP and lagged in battles, and QUIC fell back to TCP.
+- Traffic to the VPN adapter's own subnet, other than DNS, now ends at once instead of
+  following routing rules for private ranges. On Android, each connect set off 2,000-4,000
+  Private DNS connections (port 853 on the VPN's resolver) in about 3 s, and the check hung
+  for 16 s or more before it fell back to plain DNS; Windows sent subnet broadcasts (NetBIOS,
+  Spotify device discovery) out the direct route.
+- A Windows connect that the PC slept through no longer fails when it wakes. The helper's
+  30 s startup wait and the app's 120 s connect wait counted the time asleep, so both ran out
+  at resume, the helper exited and the app started over, although the core was ready seconds
+  later. Helper and app waits on Windows now count only the time the PC is awake.
+- A server test whose XHTTP connection was still connecting when the test ended no longer
+  holds its cleanup for up to 16 s. The app reported "An earlier server test is still
+  closing" meanwhile (iOS refused further tests until restarted), and macOS paused automatic
+  server switching. The XHTTP dial now ends with the test, and with the connection it served.
+- Android now names the app of short-lived connections, so per-app rules match them. About
+  16% of QUIC flows to Vision servers and about 5% of TCP connections had no app, because the
+  app had closed its socket by the time routing asked Android who owned it. With per-app rules
+  on, the VPN now asks when the connection arrives and remembers a socket's app for 30 s after
+  it closes.
+- Automatic server tests on Windows, macOS and Linux start 50 ms apart instead of 40 ms, so
+  uneven dial times no longer put three handshakes to one server name within 50 ms. Russia's
+  TSPU freezes a server name after more than three handshakes that close together.
+
 ## 0.5.1 - 2026-11-08
 
 ### Changed

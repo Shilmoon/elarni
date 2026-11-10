@@ -363,12 +363,14 @@ func TestBurstOfPathChangesRebindsOnceMore(t *testing.T) {
 	var passes atomic.Int32
 	defer close(done)
 	go coalesce(moves, done, gap, func() { passes.Add(1) })
-	for range 10 { // spread over one gap, as a path monitor reports a change
+	// Spread over half a gap, as a path monitor reports a change. Spread over a whole
+	// gap, an oversleeping timer (macOS CI) put the last signal past the second pass.
+	for range 10 {
 		select {
 		case moves <- struct{}{}:
 		default:
 		}
-		time.Sleep(gap / 10)
+		time.Sleep(gap / 20)
 	}
 	time.Sleep(3 * gap)
 	if n := passes.Load(); n < 1 || n > 2 {
