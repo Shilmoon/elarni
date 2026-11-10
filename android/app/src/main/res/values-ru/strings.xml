@@ -640,6 +640,8 @@
     <string name="item_no_longer_in_catalog">Этого элемента больше нет в вашем каталоге.</string>
     <string name="ok">ОК</string>
     <string name="save_changes">Сохранить изменения</string>
+    <string name="saving">Сохранение…</string>
+    <string name="saved">Сохранено</string>
     <string name="import_profiles">Импорт профилей</string>
     <plurals name="server_count">
         <item quantity="one">%d сервер</item>

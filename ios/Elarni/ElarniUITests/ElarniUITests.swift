@@ -309,13 +309,65 @@ final class ElarniUITests: XCTestCase {
     app.buttons["Save"].tap()
     XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 10))
     app.alerts.buttons["OK"].tap()
-    settingsCategory(app, "General")
+    // Leaving would save the draft, so a value the app refuses takes Back away: Cancel is the way out without it.
+    XCTAssertFalse(app.navigationBars["Connection"].buttons["Settings"].exists)
+    app.navigationBars["Connection"].buttons["Cancel"].tap()
     settingsCategory(app, "Connection")
     XCTAssertEqual(port.value as? String, "10890")
     for tab in ["Home", "Subscriptions", "Routing", "Settings"] {
       app.tabBars.buttons[tab].tap()
       let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = "Light - \(tab)"; attachment.lifetime = .keepAlways; add(attachment)
     }
+  }
+
+  // Switches save themselves after a short pause. What is picked or typed is saved by leaving the page as well as by Save;
+  // Cancel drops it.
+  @MainActor
+  func testSwitchesSaveThemselvesAndLeavingSavesTheDraft() throws {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--ui-testing", UUID().uuidString]
+    app.launch()
+    app.tabBars.buttons["Settings"].tap()
+    settingsCategory(app, "Advanced")
+    let mux = app.switches["Enable default VLESS mux"]
+    reveal(mux, in: app)
+    XCTAssertEqual(mux.value as? String, "0")
+    mux.switches.firstMatch.tap()
+    // The page title says so: "Saving…", then "Saved" for a moment.
+    XCTAssertTrue(app.navigationBars["Advanced"].staticTexts["saveStatus"].waitForExistence(timeout: 10))
+    XCTAssertEqual(mux.value as? String, "1")
+    // Back saves a picked value.
+    settingsCategory(app, "Server tests")
+    app.buttons["probeTimeout"].tap()
+    menuChoice(app, "15 s timeout", forward: true)
+    settingsCategory(app, "Appearance")
+    // So does another tab.
+    app.buttons["themePicker"].tap()
+    app.buttons["Dark"].tap()
+    app.tabBars.buttons["Home"].tap()
+    app.tabBars.buttons["Settings"].tap()
+    // Cancel drops a typed value and leaves the page.
+    settingsCategory(app, "Connection")
+    let port = app.textFields["SOCKS port"]
+    XCTAssertTrue(port.waitForExistence(timeout: 5))
+    port.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+    port.typeText(XCUIKeyboardKey.delete.rawValue + "5")
+    XCTAssertEqual(port.value as? String, "10895")
+    app.navigationBars["Connection"].buttons["Cancel"].tap()
+    XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+    // A new process reads what was stored.
+    app.terminate(); app.launch()
+    app.tabBars.buttons["Settings"].tap()
+    settingsCategory(app, "Advanced")
+    reveal(mux, in: app)
+    XCTAssertEqual(mux.value as? String, "1")
+    settingsCategory(app, "Server tests")
+    XCTAssertTrue(app.buttons["probeTimeout"].label.contains("15 s timeout"))
+    settingsCategory(app, "Appearance")
+    XCTAssertTrue(app.buttons["themePicker"].label.contains("Dark"))
+    settingsCategory(app, "Connection")
+    XCTAssertEqual(port.value as? String, "10890")
   }
 
   @MainActor

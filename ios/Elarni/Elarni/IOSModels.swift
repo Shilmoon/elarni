@@ -205,7 +205,7 @@ struct ExitResult {
   }
 }
 
-struct IOSPreferences: Codable {
+struct IOSPreferences: Codable, Equatable {
   var version = 1
   var theme = "system"
   var accent = "evergreen"

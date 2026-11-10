@@ -6,6 +6,14 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ### Changed
 
+- Settings no longer wait for **Save changes** to take effect. A switch saves itself about a
+  second after you flip it (several flipped in a row make one save), and the page title shows
+  **Saving…** then **Saved** on Android and iPhone. What you type or pick is saved when you
+  leave the page (Back, another tab, or a page opened from it) as well as by **Save changes**;
+  **Cancel** drops it, and iPhone settings pages gain a **Cancel** for that. A value the app
+  refuses keeps its page open with the reason instead of being dropped. On desktop this
+  applies to the per-app routing page and its route checkboxes; other desktop settings already
+  saved at once. Routing-profile editors on iPhone and desktop keep their Cancel and Save.
 - Removed the core's batch latency test and its start from a config file: no platform calls
   them.
 
