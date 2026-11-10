@@ -330,7 +330,8 @@ private val LocalReselect = compositionLocalOf { 0 }
                             }) }
                         } },
                         snackbarHost = { SnackbarHost(snackbar) }) { padding ->
-                        Box(Modifier.fillMaxSize().padding(padding).imePadding()) {
+                        // The keyboard covers the navigation bar; without consuming its padding the content lost that height twice.
+                        Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
                             Box(Modifier.widthIn(max = if (page == "home" && detail.isEmpty()) androidx.compose.ui.unit.Dp.Infinity else 760.dp).fillMaxSize().align(Alignment.TopCenter)) {
                             if (state.loading) Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) { CircularProgressIndicator(); Text(tr(R.string.opening_your_catalog), Modifier.padding(16.dp)) }
                             else screenStates.SaveableStateProvider("$page/$detail/$id") { when (detail) {

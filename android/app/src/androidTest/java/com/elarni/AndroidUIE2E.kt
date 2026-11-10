@@ -711,6 +711,8 @@ class AndroidUIE2E {
         list.performScrollToNode(hasText("Search installed apps"))
         val next = available.last()
         ui.onNodeWithText("Search installed apps").performTextReplacement(next.string("package"))
+        // What the search finds shows under its field without scrolling, above the keyboard too.
+        ui.waitUntil(5_000) { runCatching { ui.onNodeWithTag("per-app-${next.string("package")}").assertIsDisplayed() }.isSuccess }
         dismissKeyboard()
         list.performScrollToNode(hasTestTag("per-app-${selected.string("package")}"))
         ui.onNodeWithTag("per-app-${selected.string("package")}").assertIsDisplayed()

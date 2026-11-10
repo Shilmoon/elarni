@@ -15,6 +15,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   on the dead path could stay open with its apps stalled until the idle timeout, 30 s or more:
   data the old network had still delivered counted as the server's answer to the check. The
   check now ignores what arrives in its first second. All platforms.
+- Android: with the keyboard open, screens lost the height of the navigation bar a second time,
+  and the per-app app search showed nothing it found: the results were below the visible list,
+  after the selected apps. The results now come right under the search field.
 
 ## 0.6.0 - 2026-11-10
 
