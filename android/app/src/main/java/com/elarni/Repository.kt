@@ -473,6 +473,7 @@ class Repository(private val app: ElarniApplication) {
                 // TSPU freezes an SNI after more than 3 near-simultaneous handshakes, so at most two probes share one at a time.
                 val queues = LinkedHashMap<String, ArrayDeque<String>>()
                 val scoped = scope.associateBy { it.getString("id") }
+                val epoch = edits
                 ids.forEach { queues.getOrPut(Catalog.probeKey(scoped.getValue(it)) ?: it) { ArrayDeque() }.add(it) }
                 val busy = mutableMapOf<String, Int>(); val keys = mutableMapOf<String, String>()
                 var running = 0
@@ -484,7 +485,7 @@ class Repository(private val app: ElarniApplication) {
                         busy[key] = (busy[key] ?: 0) + 1; keys[nodeID] = key; running++
                         completed.submit(java.util.concurrent.Callable {
                             check(generation)
-                            val result = try { engine.probe(catalog, nodeID, options) }
+                            val result = try { engine.probe(catalog, nodeID, options, epoch) }
                                 catch (error: Exception) { obj("nodeId" to nodeID, "status" to "failed", "error" to code(error), "timestamp" to now()) }
                             result.put("protocol", options.string("protocol", "proxy")).put("configurationRevision", catalog.node(nodeID).string("configurationRevision", nodeID))
                         })
@@ -629,13 +630,11 @@ class Repository(private val app: ElarniApplication) {
                 val value = Settings.perAppProfile(args.getString("text"))
                 candidate.data.put("settings", Settings.normalize(candidate.settings.put("perAppMode", value.getString("mode")).put("perAppProcesses", value.getJSONArray("processes")).put("perAppTargets", value.optJSONObject("targets") ?: JSONObject()).put("xrayTunEnabled", true), candidate.data.optJSONObject("inboundCredentials")))
             }
-            "saveRouting" -> { candidate.importRouting(args.getString("text"), update = id.takeIf(String::isNotEmpty)) }
+            // The editor's "New profile" starts every draft under one name, so a new profile never replaces another.
+            "saveRouting" -> { candidate.importRouting(args.getString("text"), update = id.takeIf(String::isNotEmpty), forceNew = id.isEmpty()) }
             "duplicateRouting" -> {
                 val profile = candidate.route(id).getJSONObject("profile").copy()
-                val base = profile.string("Name", "Routing profile") + " copy"
-                var title = base; var suffix = 2
-                while (candidate.routes.any { it.string("name") == title }) title = "$base ${suffix++}"
-                candidate.importRouting(profile.put("Name", title).toString(), forceNew = true)
+                candidate.importRouting(profile.put("Name", profile.string("Name", "Routing profile") + " copy").toString(), forceNew = true)
             }
             "assignRouting" -> {
                 val route = args.string("routeId")
@@ -742,7 +741,8 @@ class Repository(private val app: ElarniApplication) {
             if (!catalog.settings.optBoolean("disconnectOnSleep")) return
             automation.sleeping = sleeping
             if (sleeping && engine.running) { try { engine.stop() } finally { state("paused") } }
-            if (!sleeping && automation.intent) { automation.rearm(Automation.clock()); automation.schedule(Automation.clock()) }
+            // A tunnel that a tile, boot or an external request started while the screen was off is already up.
+            if (!sleeping && automation.intent && !engine.running) { automation.rearm(Automation.clock()); automation.schedule(Automation.clock()) }
         }
     }
     suspend fun boot() {

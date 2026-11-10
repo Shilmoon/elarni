@@ -32,11 +32,14 @@ final class SystemProxySession {
   SystemProxySession(this._os, this._backup);
   final SystemProxy _os;
   final File _backup;
-  int? _port, _failed;
+  // No port is negative, and null is a target too: the user's own setting.
+  static const _none = -1;
+  int? _port, _failed = _none;
   Future<String?> _queue = Future.value();
 
   /// Moves the OS setting to [port], or back to the user's when null. Returns
-  /// an error message when it could not; a failed port is not retried.
+  /// an error message when it could not; a target that failed is tried again
+  /// only after the target changed.
   Future<String?> sync(int? port) => _queue = _queue.then((_) => _sync(port));
 
   /// Restores a setting that a crashed run left pointing at its listener.
@@ -54,12 +57,13 @@ final class SystemProxySession {
 
   Future<String?> _sync(int? port) async {
     // Only the session that failed waits; the next one tries again.
-    if (port == null) _failed = null;
-    if (port == _port || port != null && port == _failed) return null;
-    _failed = null;
+    if (port != _failed) _failed = _none;
+    if (port == _port || port == _failed) return null;
     try {
       await _restore();
     } on Object {
+      // The sync runs every second and would report this each time.
+      _failed = port;
       return _restoreFailed;
     }
     _port = null;

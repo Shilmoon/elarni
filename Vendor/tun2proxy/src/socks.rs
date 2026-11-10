@@ -4,7 +4,7 @@ use crate::{
     proxy_handler::{ProxyHandler, ProxyHandlerManager},
     session_info::SessionInfo,
 };
-use socks5_impl::protocol::{self, Address, AuthMethod, StreamOperation, UserKey, Version, handshake, password_method};
+use socks5_impl::protocol::{self, Address, AuthMethod, StreamOperation, UserKey, handshake, password_method};
 use std::{collections::VecDeque, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
@@ -22,13 +22,11 @@ enum SocksState {
 struct SocksProxyImpl {
     server_addr: SocketAddr,
     info: SessionInfo,
-    domain_name: Option<String>,
     state: SocksState,
     client_inbuf: VecDeque<u8>,
     server_inbuf: VecDeque<u8>,
     client_outbuf: VecDeque<u8>,
     server_outbuf: VecDeque<u8>,
-    version: Version,
     credentials: Option<UserKey>,
     command: protocol::Command,
     udp_associate: Option<SocketAddr>,
@@ -43,63 +41,21 @@ fn udp_relay_addr(server_addr: SocketAddr, relay_addr: SocketAddr) -> SocketAddr
 }
 
 impl SocksProxyImpl {
-    fn new(
-        server_addr: SocketAddr,
-        info: SessionInfo,
-        domain_name: Option<String>,
-        credentials: Option<UserKey>,
-        version: Version,
-        command: protocol::Command,
-    ) -> Result<Self> {
+    fn new(server_addr: SocketAddr, info: SessionInfo, credentials: Option<UserKey>, command: protocol::Command) -> Result<Self> {
         let mut result = Self {
             server_addr,
             info,
-            domain_name,
             state: SocksState::ClientHello,
             client_inbuf: VecDeque::default(),
             server_inbuf: VecDeque::default(),
             client_outbuf: VecDeque::default(),
             server_outbuf: VecDeque::default(),
-            version,
             credentials,
             command,
             udp_associate: None,
         };
         result.send_client_hello()?;
         Ok(result)
-    }
-
-    fn send_client_hello_socks4(&mut self) -> Result<(), Error> {
-        let credentials = &self.credentials;
-        self.server_outbuf.extend(&[self.version as u8, protocol::Command::Connect.into()]);
-        self.server_outbuf.extend(self.info.dst.port().to_be_bytes());
-        let mut ip_vec = Vec::<u8>::new();
-        let mut name_vec = Vec::<u8>::new();
-        match &self.info.dst {
-            SocketAddr::V4(addr) => {
-                if let Some(host) = &self.domain_name {
-                    ip_vec.extend(&[0, 0, 0, host.len() as u8]);
-                    name_vec.extend(host.as_bytes());
-                    name_vec.push(0);
-                } else {
-                    ip_vec.extend(addr.ip().octets().as_ref());
-                }
-            }
-            SocketAddr::V6(addr) => {
-                return Err(format!("SOCKS4 does not support IPv6: {addr}").into());
-            }
-        }
-        self.server_outbuf.extend(ip_vec);
-        if let Some(credentials) = credentials {
-            self.server_outbuf.extend(credentials.username.as_bytes());
-            if !credentials.password.is_empty() {
-                self.server_outbuf.push_back(b':');
-                self.server_outbuf.extend(credentials.password.as_bytes());
-            }
-        }
-        self.server_outbuf.push_back(0);
-        self.server_outbuf.extend(name_vec);
-        Ok(())
     }
 
     fn send_client_hello_socks5(&mut self) -> Result<(), Error> {
@@ -113,30 +69,8 @@ impl SocksProxyImpl {
     }
 
     fn send_client_hello(&mut self) -> Result<(), Error> {
-        match self.version {
-            Version::V4 => {
-                self.send_client_hello_socks4()?;
-            }
-            Version::V5 => {
-                self.send_client_hello_socks5()?;
-            }
-        }
+        self.send_client_hello_socks5()?;
         self.state = SocksState::ServerHello;
-        Ok(())
-    }
-
-    fn receive_server_hello_socks4(&mut self) -> std::io::Result<()> {
-        if self.server_inbuf.len() < 8 {
-            return Ok(());
-        }
-
-        if self.server_inbuf[1] != 0x5a {
-            return Err(crate::Error::from("SOCKS4 server replied with an unexpected reply code.").into());
-        }
-
-        self.server_inbuf.drain(0..8);
-
-        self.state = SocksState::Established;
         Ok(())
     }
 
@@ -166,13 +100,6 @@ impl SocksProxyImpl {
             SocksState::SendRequest
         };
         self.state_change()
-    }
-
-    fn receive_server_hello(&mut self) -> std::io::Result<()> {
-        match self.version {
-            Version::V4 => self.receive_server_hello_socks4(),
-            Version::V5 => self.receive_server_hello_socks5(),
-        }
     }
 
     fn send_auth_data(&mut self) -> std::io::Result<()> {
@@ -221,8 +148,6 @@ impl SocksProxyImpl {
     fn send_request_socks5(&mut self) -> std::io::Result<()> {
         let addr = if self.command == protocol::Command::UdpAssociate {
             Address::unspecified()
-        } else if let Some(domain_name) = &self.domain_name {
-            Address::DomainAddress(domain_name.clone().into(), self.info.dst.port())
         } else {
             self.info.dst.into()
         };
@@ -265,7 +190,7 @@ impl SocksProxyImpl {
 
     fn state_change(&mut self) -> std::io::Result<()> {
         match self.state {
-            SocksState::ServerHello => self.receive_server_hello()?,
+            SocksState::ServerHello => self.receive_server_hello_socks5()?,
 
             SocksState::SendAuthData => self.send_auth_data()?,
 
@@ -291,10 +216,6 @@ impl ProxyHandler for SocksProxyImpl {
 
     fn get_session_info(&self) -> SessionInfo {
         self.info
-    }
-
-    fn get_domain_name(&self) -> Option<String> {
-        self.domain_name.clone()
     }
 
     async fn push_data(&mut self, event: IncomingDataEvent<'_>) -> std::io::Result<()> {
@@ -353,37 +274,20 @@ impl ProxyHandler for SocksProxyImpl {
 pub(crate) struct SocksProxyManager {
     server: SocketAddr,
     credentials: Option<UserKey>,
-    version: Version,
 }
 
 #[async_trait::async_trait]
 impl ProxyHandlerManager for SocksProxyManager {
-    async fn new_proxy_handler(
-        &self,
-        info: SessionInfo,
-        domain_name: Option<String>,
-        udp_associate: bool,
-    ) -> std::io::Result<Arc<Mutex<dyn ProxyHandler>>> {
+    async fn new_proxy_handler(&self, info: SessionInfo, udp_associate: bool) -> std::io::Result<Arc<Mutex<dyn ProxyHandler>>> {
         use socks5_impl::protocol::Command::{Connect, UdpAssociate};
         let command = if udp_associate { UdpAssociate } else { Connect };
         let credentials = self.credentials.clone();
-        Ok(Arc::new(Mutex::new(SocksProxyImpl::new(
-            self.server,
-            info,
-            domain_name,
-            credentials,
-            self.version,
-            command,
-        )?)))
+        Ok(Arc::new(Mutex::new(SocksProxyImpl::new(self.server, info, credentials, command)?)))
     }
 }
 
 impl SocksProxyManager {
-    pub(crate) fn new(server: SocketAddr, version: Version, credentials: Option<UserKey>) -> Self {
-        Self {
-            server,
-            credentials,
-            version,
-        }
+    pub(crate) fn new(server: SocketAddr, credentials: Option<UserKey>) -> Self {
+        Self { server, credentials }
     }
 }

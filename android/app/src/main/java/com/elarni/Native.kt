@@ -103,4 +103,7 @@ object Native {
 
     fun qr(bytes: ByteArray): String = try { LibXray.decodeAndroidQRImage(bytes) }
         catch (_: Exception) { throw AppFailure("invalid_qr_image") }
+    /** A camera frame's brightness plane, [width] * [height] bytes row by row. */
+    fun qrLuma(luma: ByteArray, width: Int, height: Int): String = try { LibXray.decodeAndroidQRLuma(luma, width.toLong(), height.toLong()) }
+        catch (_: Exception) { throw AppFailure("invalid_qr_image") }
 }

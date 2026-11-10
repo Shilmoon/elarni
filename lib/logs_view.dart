@@ -131,23 +131,27 @@ class _LogsViewState extends State<LogsView> {
       _savingLevel = true;
       _status = null;
     });
+    String? saved = level;
+    String? status;
     try {
       final settings = await widget.control.tunnelSettings();
       await widget.control.updateTunnelSettings(
         settings.copyWith(logLevel: level),
       );
       // The Windows and Linux core reads the level when it starts.
-      if (mounted && (Platform.isWindows || Platform.isLinux))
-        setState(() => _status = l10n.logLevelAppliesNextConnection);
+      if (Platform.isWindows || Platform.isLinux)
+        status = l10n.logLevelAppliesNextConnection;
     } on Object {
-      if (mounted)
-        setState(() {
-          _level = previous;
-          _status = l10n.logLevelNotSaved;
-        });
-    } finally {
-      _savingLevel = false;
+      saved = previous;
+      status = l10n.logLevelNotSaved;
     }
+    _savingLevel = false;
+    // Also without a status line: the dropdown is disabled while saving.
+    if (mounted)
+      setState(() {
+        _level = saved;
+        _status = status;
+      });
   }
 
   static String _line(Map<String, Object?> line, {bool export = false}) {

@@ -205,7 +205,10 @@ extension _ProxyRuntime on DesktopProxy {
       'method': method,
       'payload': {...payload, if (method == 'runVPN') 'reuseSession': true},
     });
-    if (utf8.encode(request).length > 16 * 1024 * 1024)
+    // UTF-8 takes at most three bytes for a UTF-16 unit, so only a request
+    // that could be too large is encoded to be measured.
+    const limit = 16 * 1024 * 1024;
+    if (request.length * 3 > limit && utf8.encode(request).length > limit)
       throw desktopError('request_too_large');
     final runtime = {'runXrayFromJson', 'runVPN'}.contains(method),
         lease = method == 'acquireCatalog',

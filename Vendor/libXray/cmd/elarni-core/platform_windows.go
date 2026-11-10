@@ -111,9 +111,8 @@ func platformRequest(method string, payload json.RawMessage) (any, error, bool) 
 		if err != nil {
 			return nil, err, true
 		}
-		if err = installAssets(assets); err != nil {
-			return nil, err, true
-		}
+		// readAssets verified the files in this process.
+		useAssets(assets)
 		if method == "ping" && !request.PacketPath {
 			if bindPhysicalRoutes() != nil {
 				return nil, errors.New("ping_failed"), true

@@ -24,7 +24,6 @@ use tokio::io::{AsyncRead, AsyncWrite};
 /// 2 * MSL (Maximum Segment Lifetime) is the maximum time a TCP connection can be in the TIME_WAIT state.
 const TWO_MSL: Duration = Duration::from_secs(2);
 
-const CLOSE_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 const LAST_ACK_MAX_RETRIES: usize = 3;
 const LAST_ACK_TIMEOUT: Duration = Duration::from_millis(500);
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -37,8 +36,6 @@ pub struct TcpConfig {
     pub last_ack_max_retries: usize,
     /// Timeout for the last ACK in the LAST_ACK state. Default is 500ms.
     pub last_ack_timeout: Duration,
-    /// Timeout for the CLOSE_WAIT state. Default is 5 seconds.
-    pub close_wait_timeout: Duration,
     /// Timeout for TCP connections. Default is 60 seconds.
     pub timeout: Duration,
     /// Timeout for the TIME_WAIT state. Default is 2 seconds.
@@ -71,7 +68,6 @@ impl Default for TcpConfig {
         TcpConfig {
             last_ack_max_retries: LAST_ACK_MAX_RETRIES,
             last_ack_timeout: LAST_ACK_TIMEOUT,
-            close_wait_timeout: CLOSE_WAIT_TIMEOUT,
             timeout: TIMEOUT,
             two_msl: TWO_MSL,
             max_unacked_bytes: MAX_UNACK,
@@ -168,10 +164,12 @@ pub struct IpStackTcpStream {
 }
 
 impl IpStackTcpStream {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         src_addr: SocketAddr,
         dst_addr: SocketAddr,
         tcp: TcpHeader,
+        payload_len: usize,
         up_packet_sender: PacketSender,
         mtu: u16,
         destroy_messenger: Option<::tokio::sync::oneshot::Sender<()>>,
@@ -196,9 +194,9 @@ impl IpStackTcpStream {
         let tuple = NetworkTuple::new(src_addr, dst_addr, true);
         if !tcp.syn {
             if !tcp.rst
-                && let Err(err) = write_packet_to_device(&up_packet_sender, tuple, &tcb, None, ACK | RST, None, None)
+                && let Err(err) = reset_unknown_connection(&up_packet_sender, tuple, &tcp, payload_len)
             {
-                log::warn!("Error sending RST/ACK packet: {err}");
+                log::warn!("Error sending RST packet: {err}");
             }
             let info = format!("Invalid TCP packet: {tuple} {}", tcp_header_fmt(&tcp));
             return Err(IpStackError::IoError(std::io::Error::new(ConnectionRefused, info)));
@@ -661,6 +659,7 @@ async fn tcp_main_logic_loop(
         let network_packet = tokio::select! {
             _ = exit_monitor.recv() => {
                 log::debug!("{network_tuple} task exited due to exit signal");
+                abort_if_open(&up_packet_sender, network_tuple, &mut tcb.lock().unwrap());
                 break;
             }
             _ = retransmit_timer => {
@@ -681,6 +680,7 @@ async fn tcp_main_logic_loop(
         let Some(mut network_packet) = network_packet else {
             let state = { tcb.lock().unwrap().get_state() };
             log::debug!("{network_tuple} {state:?}: session closed unexpectedly by pipe broken, exiting task");
+            abort_if_open(&up_packet_sender, network_tuple, &mut tcb.lock().unwrap());
             tcb.lock().unwrap().change_state(TcpState::Closed);
             write_notify.lock().unwrap().take().map(|w| w.wake_by_ref()).unwrap_or(());
             read_notify.lock().unwrap().take().map(|w| w.wake_by_ref()).unwrap_or(());
@@ -966,6 +966,31 @@ pub(crate) fn write_packet_to_device(
     let len = packet.payload.as_ref().map(|p| p.len()).unwrap_or(0);
     up_packet_sender.send(packet).map_err(|e| Error::new(UnexpectedEof, e))?;
     Ok(len)
+}
+
+/// Elarni: resets the client of a stream that was dropped with its connection open (the proxy refused it,
+/// or the session limit was reached), as an abort does in RFC 9293 3.10.5. Every other end of the task
+/// closes the connection first. With nothing sent, the client waited for a reply until its own timeout.
+fn abort_if_open(sender: &PacketSender, tuple: NetworkTuple, tcb: &mut Tcb) {
+    use TcpState::{CloseWait, Established, FinWait1, FinWait2, SynReceived};
+    if matches!(tcb.get_state(), SynReceived | Established | FinWait1 | FinWait2 | CloseWait) {
+        _ = write_packet_to_device(sender, tuple, tcb, None, ACK | RST, None, None);
+        tcb.change_state(TcpState::Closed);
+    }
+}
+
+/// Elarni: resets a segment of a connection the stack does not have, as RFC 9293 3.10.7.1 has it: at the
+/// sequence number the segment acknowledges, or acknowledging the segment when it carries no ACK. The reset
+/// used a new control block's random number, which a client with an established connection ignores.
+fn reset_unknown_connection(sender: &PacketSender, tuple: NetworkTuple, tcp: &TcpHeader, payload_len: usize) -> std::io::Result<()> {
+    let (flags, seq, ack) = if tcp.ack {
+        (RST, tcp.acknowledgment_number, 0)
+    } else {
+        let len = (payload_len as u32).wrapping_add(u32::from(tcp.fin));
+        (ACK | RST, 0, tcp.sequence_number.wrapping_add(len))
+    };
+    let packet = create_raw_packet(tuple.dst, tuple.src, |_, _| 0, flags, TTL, seq, ack, 0, Vec::new(), None)?;
+    sender.send(packet).map_err(|e| std::io::Error::new(UnexpectedEof, e))
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -244,25 +244,37 @@ extension TunnelMethodChannel {
       manager?.connection.status == .disconnected
   }
 
+  /// Whether a check may be scheduled; when not, the status says why.
+  @MainActor
+  private func automationMayRun() -> Bool {
+    guard let store = try? subscriptionStore(), !store.runtimeReconciliationRequired else { return false }
+    if automationUnreadable { automationStatus = "unreadableConfiguration"; return false }
+    if !automationConfiguration.enabled { automationStatus = "disabled"; return false }
+    guard commands.intent == .connected else {
+      automationStatus = commands.intent == .disconnected ? "stopped" : "intentRequired"
+      return false
+    }
+    if automation.sleeping { automationStatus = "sleeping"; return false }
+    if !automation.online && !canRestartProviderWithoutPath() { automationStatus = "offline"; return false }
+    if automation.episode.exhausted { automationStatus = "exhausted"; return false }
+    return !automationPaused && automationWork == nil
+  }
+
   @MainActor
   func scheduleAutomation(immediate: Bool = false) {
     guard observesSystem else { return }
-    automationTimer?.cancel()
-    automationTimer = nil
-    guard let store = try? subscriptionStore(), !store.runtimeReconciliationRequired else { return }
-    if automationUnreadable { automationStatus = "unreadableConfiguration"; return }
-    if !automationConfiguration.enabled { automationStatus = "disabled"; return }
-    guard commands.intent == .connected else {
-      automationStatus = commands.intent == .disconnected ? "stopped" : "intentRequired"
+    guard automationMayRun() else {
+      automationTimer?.cancel()
+      automationTimer = nil
       return
     }
-    if automation.sleeping { automationStatus = "sleeping"; return }
-    if !automation.online && !canRestartProviderWithoutPath() { automationStatus = "offline"; return }
-    if automation.episode.exhausted { automationStatus = "exhausted"; return }
-    guard !automationPaused, automationWork == nil else { return }
     let now = self.automationNow()
     let due = automation.retryAt ?? (immediate ? now : automation.healthAt ?? now)
     let epoch = automation.epoch
+    if let timer = automationTimer, !timer.isCancelled, let pending = automationTimerDue,
+       pending.at == due, pending.epoch == epoch { return }
+    automationTimer?.cancel()
+    automationTimerDue = (due, epoch)
     automationTimer = Task { @MainActor [weak self] in
       do { try await self?.automationSleep(max(0, due - (self?.automationNow() ?? due))) }
       catch { return }
@@ -340,13 +352,8 @@ extension TunnelMethodChannel {
           Set(settings.includedRoutes) == Set(["0.0.0.0/0", "::/0"]) else {
       throw AutomationFailure.unsupportedPolicy
     }
-    let configuration = try subscriptionStore().routing.runtimeProbeConfiguration(
-      subscriptionID: subscriptionID)
-    if let routes = configuration.routes {
-      guard routes["fallbackAction"] as? String == "proxy",
-            (routes["rules"] as? [[String: Any]])?.isEmpty == true else {
-        throw AutomationFailure.unsupportedPolicy
-      }
+    guard try subscriptionStore().routing.runtimeProbeProxiesAll(subscriptionID: subscriptionID) != false else {
+      throw AutomationFailure.unsupportedPolicy
     }
   }
 
@@ -790,7 +797,11 @@ extension TunnelMethodChannel {
         automation.reject(node: candidate.nodeID, transient: !permanent, now: automationNow())
       }
       // A provider-level failed switch may already have restored its retained core.
-      if !startingDisconnected, !activated, !(error is RunnerTunnelError) { throw error }
+      if !startingDisconnected, !activated, !(error is RunnerTunnelError) {
+        // The previous plan is still running and saved, so nothing is left to reconcile.
+        if Self.keptPreviousPlan(error) { try store.finishRuntimeReconciliation() }
+        throw error
+      }
       do {
         if (try await loadManager()).connection.status == .disconnected {
           try await persistPlan(previous.plan)

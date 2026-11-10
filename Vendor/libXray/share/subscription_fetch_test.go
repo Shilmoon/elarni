@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -746,6 +747,53 @@ func TestSubscriptionFallbackURLTakesOverAFailingMainURL(t *testing.T) {
 		request := SubscriptionFetchRequest{URL: removed.URL, FallbackURL: fallback, ApprovedChain: loopbackApprovals(removed.URL, fallback)}
 		if _, err := fetchFeedUsing(request, net.DefaultResolver.LookupNetIP, func() *http.Transport { return &http.Transport{} }); err == nil || err.Error() != "subscription_unavailable" {
 			t.Fatalf("fallback %q after HTTP 404: %v", fallback, err)
+		}
+	}
+}
+
+// The connect address and HTTP Host are set for the subscription's own host. A mirror and the provider's
+// fallback URL are other hosts: they are dialled and addressed as they are named, so they still work when
+// the override address does not.
+func TestSubscriptionHostOverridesStayWithTheSubscriptionHost(t *testing.T) {
+	var hosts []string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hosts = append(hosts, r.Host)
+		_, _ = w.Write([]byte("fixture"))
+	}))
+	defer server.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	transport := func() *http.Transport { return &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots}} }
+	_, port, _ := net.SplitHostPort(server.Listener.Addr().String())
+	var resolved []string
+	resolve := func(_ context.Context, _, host string) ([]netip.Addr, error) {
+		resolved = append(resolved, host)
+		if host == "blocked.invalid" {
+			return nil, errors.New("no such host")
+		}
+		return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+	}
+	primary := "https://subscription.invalid:" + port + "/feed"
+	for name, request := range map[string]SubscriptionFetchRequest{
+		"mirror":       {URL: primary, FallbackHosts: []string{"example.com"}},
+		"fallback URL": {URL: primary, FallbackURL: "https://example.com:" + port + "/feed"},
+	} {
+		request.ConnectAddress, request.HTTPHost = "blocked.invalid", "front.invalid"
+		hosts, resolved = nil, nil
+		result, err := fetchFeedUsing(request, resolve, transport)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		request.ApprovedChain = result.(map[string]any)["warning"].(map[string]any)["chain"].([]string)
+		result, err = fetchFeedUsing(request, resolve, transport)
+		if err != nil || result.(map[string]any)["body"] != "fixture" {
+			t.Fatalf("%s did not take over from the unreachable connect address: %v, %v", name, err, result)
+		}
+		if !slices.Equal(hosts, []string{"example.com:" + port}) {
+			t.Fatalf("%s was sent Host %v", name, hosts)
+		}
+		if !slices.Contains(resolved, "blocked.invalid") || !slices.Contains(resolved, "example.com") {
+			t.Fatalf("%s resolved %v", name, resolved)
 		}
 	}
 }

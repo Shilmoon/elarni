@@ -180,12 +180,20 @@ func linuxWriteCommand(writer io.Writer, command linuxCommand) error {
 	return nil
 }
 func validLinuxRequest(request vpnRequest) error {
+	if err := validLinuxLimits(request); err != nil {
+		return err
+	}
+	_, err := linuxTunnelConfig([]byte(request.Config), linuxNetwork{Name: "rvvalidate", DNSPort: 5353}, request.RoutePolicy)
+	return err
+}
+
+// validLinuxLimits checks what building the tunnel config does not.
+func validLinuxLimits(request vpnRequest) error {
 	if request.MemoryLimitMB < 0 || request.MemoryLimitMB > 4096 || request.TCPMaxConnections < 0 || request.TCPMaxConnections > 4096 || request.UDPMaxConnections < 0 || request.UDPMaxConnections > 4096 ||
 		request.LogLevel != "" && xray.SetLogLevel(request.LogLevel) != nil {
 		return errors.New("invalid_vpn_request")
 	}
-	_, err := linuxTunnelConfig([]byte(request.Config), linuxNetwork{Name: "rvvalidate", DNSPort: 5353}, request.RoutePolicy)
-	return err
+	return nil
 }
 
 func startLinuxChild(command *exec.Cmd, events func(linuxReply)) (*linuxChild, error) {
@@ -350,11 +358,7 @@ func startVPN(payload json.RawMessage) (any, error) {
 		linuxBroker.Unlock()
 		return nil, errors.New("cancelled")
 	}
-	if child == nil && command == nil {
-		// The running child exited between the locks; start over as idle.
-		linuxBroker.Unlock()
-		return startVPN(payload)
-	}
+	// Only a stop clears the child, and it closes the broker too: a child seen above is still here.
 	if child == nil {
 		child, err = startLinuxChild(command, func(reply linuxReply) {
 			linuxBroker.Lock()
@@ -795,7 +799,8 @@ func linuxWorker(ctx context.Context, input io.Reader, output io.Writer) (code i
 			code = 1
 		}
 	}()
-	if validLinuxRequest(command.Request) != nil || installAssets(command.assets) != nil {
+	// The config is built for this network below, which checks it as well.
+	if validLinuxLimits(command.Request) != nil || installAssets(command.assets) != nil {
 		return 1
 	}
 	filesystem.NewFileReader = func(string) (io.ReadCloser, error) { return nil, errors.New("file_access_denied") }

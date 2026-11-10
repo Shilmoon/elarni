@@ -61,6 +61,14 @@ Local TCP repairs (`src/stream/tcp.rs`, `src/stream/tcb.rs`, tests in
   to wait in place (`block_in_place`), which moved a runtime worker to a new
   thread for every stream dropped early, as in a reconnect storm.
 
+- A segment of a connection the stack does not have is reset at the sequence
+  number it acknowledges (RFC 9293 3.10.7.1); the reset carried a new control
+  block's random number, which an established client ignores. A stream dropped
+  with its connection open resets the client (the abort of RFC 9293 3.10.5):
+  tun2proxy drops one when the proxy port refuses the connection or the session
+  limit is reached, after the SYN-ACK went out, and the client then waited for a
+  reply until its own timeout.
+
 Local session repairs (`src/lib.rs`, `src/stream/udp.rs`, tests in
 `src/stream/tcp_tests.rs` and `src/stream/udp.rs`): a packet for a session that
 ended while its removal is still queued starts a new session, and the queued
@@ -75,3 +83,5 @@ stack reading its input, which the bridge then dropped. While that write waits, 
 ICMP packets beyond 1024 queued are dropped like a full TUN queue drops them,
 since their senders never wait and a tunnel that stopped reading grew the queue
 without bound; TCP packets stay queued, bounded by each connection's window.
+
+`TcpConfig.close_wait_timeout` is removed: nothing read it.

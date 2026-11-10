@@ -29,8 +29,8 @@ final class RoutingStore {
   static let maxRouteModelBytes = 8 * 1024 * 1024
 #endif
   // The core reads each geofile whole; a downloaded original may be up to libXray's geo.MaxSourceBytes.
-  static let maxGeofileBytes = 64 * 1024 * 1024
-  static let maxOriginalGeofileBytes = 256 * 1024 * 1024
+  nonisolated static let maxGeofileBytes = 64 * 1024 * 1024
+  nonisolated static let maxOriginalGeofileBytes = 256 * 1024 * 1024
   nonisolated static let geofileTooLargeMessage = "A geofile is over 64 MB, which the core cannot load whole. " +
     "Turn on Reduce routing-data size for this profile or use a smaller geofile."
   private var staging = false
@@ -52,6 +52,22 @@ final class RoutingStore {
           let record = catalog.profiles.first(where: { $0.id == id && $0.enabled }) else { return nil }
     return try JSONSerialization.jsonObject(with: record.routeModel) as? [String: Any]
   }
+
+  /// The routes previewRoutes returns, as sorted-key JSON with its digest: what the revisions of a subscription's
+  /// servers hash. A route model may be megabytes, so it is parsed and written again only after it changed.
+  func previewRouteKey(subscriptionID: String) throws -> (sorted: Data, digest: String) {
+    guard let id = catalog.assignments[subscriptionID],
+          let record = catalog.profiles.first(where: { $0.id == id && $0.enabled }) else { return Self.noRoutes }
+    if let kept = routeKeys[id], kept.model == record.routeModel { return (kept.sorted, kept.digest) }
+    let routes = try JSONSerialization.jsonObject(with: record.routeModel) as? [String: Any]
+    let sorted = try JSONSerialization.data(withJSONObject: routes ?? [:], options: [.sortedKeys])
+    let digest = Data(SHA256.hash(data: sorted)).base64EncodedString()
+    routeKeys = routeKeys.filter { key, _ in catalog.profiles.contains { $0.id == key } }
+    routeKeys[id] = (record.routeModel, sorted, digest)
+    return (sorted, digest)
+  }
+  private var routeKeys: [String: (model: Data, sorted: Data, digest: String)] = [:]
+  private static let noRoutes = (sorted: Data("{}".utf8), digest: Data(SHA256.hash(data: Data("{}".utf8))).base64EncodedString())
 
   func previewAssetRevision(subscriptionID: String) -> String? {
     guard let id = catalog.assignments[subscriptionID],
@@ -194,7 +210,9 @@ final class RoutingStore {
     return try checkpoint()
   }
 
-  func importContent(_ content: String, selectedSubscriptionID: String?) throws -> [String: Any] {
+  /// A repeated import replaces the manual profile that has its name. `asNew` is the editor's "New profile",
+  /// whose drafts all start under one name: it takes a free name instead.
+  func importContent(_ content: String, selectedSubscriptionID: String?, asNew: Bool = false) throws -> [String: Any] {
     let decoded = try RoutingDomainDecoder.decode(content)
     if decoded.action == "off" {
       guard let selectedSubscriptionID else { throw RoutingStoreError.noSelectedSubscription }
@@ -202,17 +220,26 @@ final class RoutingStore {
       try save()
       return snapshot()
     }
-    guard let profile = decoded.profile,
+    guard var profile = decoded.profile,
           let routeModel = decoded.routeModel else {
       throw RoutingStoreError.invalidImport
     }
-    let name = (profile["Name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    var name = (profile["Name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
       ?? "Routing Profile"
+    if asNew {
+      let base = name
+      var suffix = 2
+      while catalog.profiles.contains(where: { $0.name == name }) {
+        name = "\(base) \(suffix)"
+        suffix += 1
+      }
+      profile["Name"] = name
+    }
     let profileData = try JSONSerialization.data(withJSONObject: profile, options: [.sortedKeys])
     let routeData = try JSONSerialization.data(withJSONObject: routeModel, options: [.sortedKeys])
     let id: String
     let previous: RoutingRecord?
-    if let index = catalog.profiles.firstIndex(where: {
+    if !asNew, let index = catalog.profiles.firstIndex(where: {
       $0.providerSubscriptionID == nil && $0.name == name
     }) {
       previous = catalog.profiles[index]
@@ -451,7 +478,13 @@ final class RoutingStore {
           let profile = catalog.profiles.first(where: { $0.id == profileID }),
           profile.enabled else { return nil }
     guard profile.routeModel.count <= Self.maxRouteModelBytes else { throw RoutingStoreError.routeModelTooLarge }
-    let digest = SHA256.hash(data: profile.routeModel).map { String(format: "%02x", $0) }.joined()
+    // Callers ask on every poll and a model may be megabytes: one is hashed again only after it changed.
+    let digest: String
+    if let kept = modelDigests[profileID], kept.model == profile.routeModel { digest = kept.digest } else {
+      digest = SHA256.hash(data: profile.routeModel).map { String(format: "%02x", $0) }.joined()
+      modelDigests = modelDigests.filter { key, _ in catalog.profiles.contains { $0.id == key } }
+      modelDigests[profileID] = (profile.routeModel, digest)
+    }
     let name = "route-model-\(digest).json"
     let url = revisionsURL.appendingPathComponent(name, isDirectory: false)
     if !FileManager.default.fileExists(atPath: url.path) {
@@ -491,6 +524,36 @@ final class RoutingStore {
     }
   }
 
+  /// Whether the routes a probe would get leave every connection to the proxy, which nested probes need; nil
+  /// without routes. Kept per route revision: a status poll asks every few seconds, and the answer otherwise
+  /// costs the stored model read, hashed and parsed.
+  func runtimeProbeProxiesAll(subscriptionID: String) throws -> Bool? {
+    guard let revision = try runtimeRevision(subscriptionID: subscriptionID) else { return nil }
+    if let kept = probePolicies[revision.digest] {
+      // The answer holds for the model; a probe would still fail without its geofiles.
+      if let assets = revision.assetRevision { _ = try assetDirectory(assets) }
+      return kept
+    }
+    guard let routes = try runtimeProbeConfiguration(subscriptionID: subscriptionID).routes else { return nil }
+    let proxiesAll = routes["fallbackAction"] as? String == "proxy" && (routes["rules"] as? [[String: Any]])?.isEmpty == true
+    if probePolicies.count >= 16 { probePolicies.removeAll() }
+    probePolicies[revision.digest] = proxiesAll
+    return proxiesAll
+  }
+  private var probePolicies: [String: Bool] = [:]
+  private var modelDigests: [String: (model: Data, digest: String)] = [:]
+
+  private func assetDirectory(_ revision: String) throws -> String {
+    guard revision.count <= 64,
+          revision.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || ".-_".contains($0)) })
+    else { throw RoutingStoreError.invalidCatalog }
+    let url = assetsURL.appendingPathComponent(revision, isDirectory: true)
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+          isDirectory.boolValue else { throw RoutingStoreError.invalidCatalog }
+    return url.path
+  }
+
   func runtimeProbeConfiguration(subscriptionID: String) throws
     -> (routes: [String: Any]?, assetDirectory: String?) {
     guard let revision = try runtimeRevision(subscriptionID: subscriptionID) else {
@@ -502,18 +565,8 @@ final class RoutingStore {
           let routes = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       throw RoutingStoreError.invalidCatalog
     }
-    var assetDirectory: String?
-    if let revision = revision.assetRevision {
-      guard revision.count <= 64,
-            revision.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || ".-_".contains($0)) })
-      else { throw RoutingStoreError.invalidCatalog }
-      let url = assetsURL.appendingPathComponent(revision, isDirectory: true)
-      var isDirectory: ObjCBool = false
-      guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-            isDirectory.boolValue else { throw RoutingStoreError.invalidCatalog }
-      assetDirectory = url.path
-    }
-    return (routes, assetDirectory)
+    let directory = try revision.assetRevision.map { try assetDirectory($0) }
+    return (routes, directory)
   }
 
   func refreshGeofiles(id: String, force: Bool = false, file: String? = nil) async throws -> [String: Any] {
@@ -573,7 +626,8 @@ final class RoutingStore {
     pendingAssetRevisions[id] = Set([previous.assetRevision, previous.originalAssetRevision].compactMap { $0 })
     defer { pendingAssetRevisions.removeValue(forKey: id) }
     let fresh = previous.lastGeoRefresh.map { now().timeIntervalSince($0) < 7 * 24 * 60 * 60 } ?? false
-    if !force, !reapply, fresh, previous.geofileStatus != "pending" {
+    // A failed refresh runs again when it is retried, also within the week of an earlier success.
+    if !force, !reapply, fresh, previous.geofileStatus == "ready" {
       return snapshot()
     }
     guard let publish else { throw RoutingStoreError.invalidImport }
@@ -629,7 +683,7 @@ final class RoutingStore {
             updated.geositeUpdatedAt = now(); updated.geositeDownloadedSource = source; updated.geositeValidators = download.validators
           }
         }
-        try validateGeofile(directory: staging, name: name, kind: kind)
+        try await Self.offMain { try Self.validateGeofile(directory: staging, name: name, kind: kind) }
       }
       guard let currentIndex = catalog.profiles.firstIndex(where: { $0.id == id }),
             catalog.profiles[currentIndex].publicationGeneration == previous.publicationGeneration else {
@@ -645,8 +699,10 @@ final class RoutingStore {
       updated.geoipValidators = downloadMetadata.geoipValidators
       updated.geositeValidators = downloadMetadata.geositeValidators
       let revision: String
-      if let retained = previous.originalAssetRevision ?? previous.assetRevision,
-         sameGeofiles(staging, assetsURL.appendingPathComponent(retained)) {
+      let assets = assetsURL
+      let retainedOriginal = previous.originalAssetRevision ?? previous.assetRevision
+      let unchanged = try await Self.offMain { retainedOriginal.map { Self.sameGeofiles(staging, assets.appendingPathComponent($0)) } ?? false }
+      if let retained = retainedOriginal, unchanged {
         revision = retained
         try FileManager.default.removeItem(at: staging)
       } else {
@@ -666,15 +722,21 @@ final class RoutingStore {
       updated.serverGeodata = servers
       do {
         // Complete files need a derived revision only to hold empty records for skipped codes.
-        if let derived = try reduceGeofiles(original: destination, routes: previous.routeModel, servers: servers, reduce: chunked) {
-          if let retained = previous.assetRevision,
-             sameGeofiles(assetsURL.appendingPathComponent(derived.revision), assetsURL.appendingPathComponent(retained)) {
-            try FileManager.default.removeItem(at: assetsURL.appendingPathComponent(derived.revision))
-            updated.assetRevision = retained
-          } else {
-            updated.assetRevision = derived.revision
-            pendingAssetRevisions[id, default: []].insert(derived.revision)
-          }
+        // Named before its files exist, so that reclaimUnusedFiles leaves them while they are written off the main actor.
+        let derivedRevision = UUID().uuidString.lowercased()
+        pendingAssetRevisions[id, default: []].insert(derivedRevision)
+        let routeModel = previous.routeModel, retainedDerived = previous.assetRevision
+        let derived = try await Self.offMain { () -> (skipped: [String], kept: Bool)? in
+          guard let skipped = try Self.reduceGeofiles(assets: assets, revision: derivedRevision, original: destination,
+            routes: routeModel, servers: servers, reduce: chunked) else { return nil }
+          let kept = retainedDerived.map {
+            Self.sameGeofiles(assets.appendingPathComponent(derivedRevision), assets.appendingPathComponent($0))
+          } ?? false
+          if kept { try FileManager.default.removeItem(at: assets.appendingPathComponent(derivedRevision)) }
+          return (skipped, kept)
+        }
+        if let derived {
+          updated.assetRevision = derived.kept ? retainedDerived : derivedRevision
           updated.skippedGeodata = derived.skipped
         }
         if chunked { updated.reductionStatus = "reduced" }
@@ -715,7 +777,12 @@ final class RoutingStore {
     }
   }
 
-  private func sameGeofiles(_ first: URL, _ second: URL) -> Bool {
+  /// Reading, comparing and writing geofiles of tens of megabytes runs off the main actor, which draws the window.
+  private nonisolated static func offMain<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+    try await Task.detached(priority: .userInitiated, operation: work).value
+  }
+
+  private nonisolated static func sameGeofiles(_ first: URL, _ second: URL) -> Bool {
     ["geoip.dat", "geosite.dat"].allSatisfy { name in
       let a = first.appendingPathComponent(name).path, b = second.appendingPathComponent(name).path
       let exists = FileManager.default.fileExists(atPath: a)
@@ -724,18 +791,20 @@ final class RoutingStore {
     }
   }
 
+  // A failed refresh is due again after its retry delay, like a pending one: one failure (offline at the
+  // weekly refresh, a server error) used to end automatic refreshes for the profile.
   func dueGeofiles() -> [String] {
     catalog.profiles.filter { record in
       !refreshingGeofiles.contains(record.id) && record.enabled &&
         (geofileRetryAfter[record.id].map { $0 <= now() } ?? true) &&
-        (record.geofileStatus == "pending" || (record.geofileStatus == "ready" &&
+        (record.geofileStatus == "pending" || record.geofileStatus == "failed" || (record.geofileStatus == "ready" &&
           record.lastGeoRefresh.map { $0.addingTimeInterval(7 * 86400) <= now() } == true))
     }.map(\.id)
   }
 
   func nextGeofileDate() -> Date? {
     catalog.profiles.filter { $0.enabled && !refreshingGeofiles.contains($0.id) }.compactMap { record in
-      let due = record.geofileStatus == "pending" ? now() :
+      let due = record.geofileStatus == "pending" || record.geofileStatus == "failed" ? now() :
         (record.geofileStatus == "ready" ? record.lastGeoRefresh?.addingTimeInterval(7 * 86400) : nil)
       return due.map { max($0, geofileRetryAfter[record.id] ?? $0) }
     }.min()
@@ -865,7 +934,9 @@ final class RoutingStore {
   // Returns nil when complete files serve unchanged. Direct and Block rules and domestic DNS
   // domains may name codes the geofiles lack: those get empty records, which Xray loads as
   // matching nothing. Every other reference needs its record.
-  private func reduceGeofiles(original: URL, routes: Data, servers: [String], reduce: Bool) throws -> (revision: String, skipped: [String])? {
+  // The reduced files go to the directory [revision] of [assets]; the result names the skipped codes.
+  private nonisolated static func reduceGeofiles(assets: URL, revision: String, original: URL, routes: Data, servers: [String],
+    reduce: Bool) throws -> [String]? {
     var references: [String: Set<String>] = ["geoip": [], "geosite": []]
     var optional: [String: Set<String>] = ["geoip": [], "geosite": []]
     func collect(_ value: Any, skippable: Bool = false) throws {
@@ -927,15 +998,14 @@ final class RoutingStore {
       outputs.append((name: name, kind: kind, data: data))
     }
     guard reduce || !skipped.isEmpty else { return nil }
-    let revision = UUID().uuidString.lowercased()
-    let derived = assetsURL.appendingPathComponent(revision, isDirectory: true)
+    let derived = assets.appendingPathComponent(revision, isDirectory: true)
     try FileManager.default.createDirectory(at: derived, withIntermediateDirectories: true)
     do {
       for (name, kind, data) in outputs {
         try data.write(to: derived.appendingPathComponent(name + ".dat"), options: [.atomic])
         try validateGeofile(directory: derived, name: name, kind: kind)
       }
-      return (revision, skipped)
+      return skipped
     } catch {
       try? FileManager.default.removeItem(at: derived)
       throw error
@@ -944,7 +1014,7 @@ final class RoutingStore {
 
   // Keep complete protobuf records for `codes`, or every record with `keepAll`, including
   // attributes and unknown nested fields. Also returns the requested codes the data lacks.
-  static func retainGeodataRecords(_ data: Data, codes: Set<String>, keepAll: Bool = false) throws -> (data: Data, missing: Set<String>) {
+  nonisolated static func retainGeodataRecords(_ data: Data, codes: Set<String>, keepAll: Bool = false) throws -> (data: Data, missing: Set<String>) {
     guard data.count <= maxOriginalGeofileBytes else { throw RoutingStoreError.invalidImport }
     var offset = 0
     func varint(end: Int) throws -> Int {
@@ -1028,7 +1098,7 @@ final class RoutingStore {
     try encoder.encode(catalog).write(to: catalogURL, options: [.atomic])
   }
 
-  private func validateGeofile(directory: URL, name: String, kind: String) throws {
+  private nonisolated static func validateGeofile(directory: URL, name: String, kind: String) throws {
     let request: [String: Any] = [
       "apiVersion": 1,
       "method": "countGeoData",
@@ -1056,7 +1126,7 @@ enum RoutingDomainDecoder {
   }
 
   static func isRoutingLink(_ value: String) -> Bool {
-    ["happ://routing/", "incy://routing/", "elarni://routing/", "://routing/"].contains(where: value.hasPrefix)
+    ["happ://routing/", "incy://routing/", "elarni://routing/"].contains(where: value.hasPrefix)
   }
   struct Result {
     let action: String

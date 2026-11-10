@@ -378,6 +378,22 @@ class AndroidVpnE2E {
             } finally { shell("input keyevent 224"); shell("wm dismiss-keyguard") }
             ui.waitUntil(15_000) { repo.state.value.connection == "connected" }
             assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
+            // A tunnel started while the screen is off, as a tile or an external request starts it, is the one the
+            // screen finds when it turns on: the retry that resumes a paused tunnel used to restart it.
+            try {
+                shell("input keyevent 223")
+                ui.waitUntil(10_000) { repo.state.value.connection == "paused" }
+                runBlocking { repo.requestConnect() }
+                ui.waitUntil(15_000) { repo.state.value.connection == "connected" && Engine.fetchProxy != null }
+            } finally { shell("input keyevent 224"); shell("wm dismiss-keyguard") }
+            // Each start of the core has its own listener login.
+            val session = Engine.fetchProxy
+            runBlocking { repo.screenChanged(false) }
+            // The first retry is due a second after it is scheduled; a tick that finds the lock taken does nothing.
+            repeat(3) { Thread.sleep(600); runBlocking { repo.tick() } }
+            assertEquals("Screen-on restarted a running tunnel", session, Engine.fetchProxy)
+            assertEquals("connected", repo.state.value.connection)
+            assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
             assertEquals(warning.getString("token"), repo.state.value.approval?.string("token"))
             assertEquals(sources, snapshot().sources.size)
             call("reject")

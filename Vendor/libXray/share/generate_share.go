@@ -115,16 +115,53 @@ func decodeOutboundSettings[T any](
 	return &settings, nil
 }
 
+// shareUser is the one user of a "vnext" or "servers" member, in the fields the links carry.
+type shareUser struct {
+	ID         string `json:"id"`
+	Flow       string `json:"flow"`
+	Encryption string `json:"encryption"`
+	Security   string `json:"security"`
+	Username   string `json:"user"`
+	Password   string `json:"pass"`
+}
+
+// oneShareUser reads the user of a list that Xray allows one member: Xray JSON written by hand or by a
+// panel names its server in "vnext" or "servers" instead of the flat fields.
+func oneShareUser(protocol string, users []json.RawMessage) (*shareUser, error) {
+	if len(users) != 1 {
+		return nil, fmt.Errorf("%s outbound has %d users", protocol, len(users))
+	}
+	var user shareUser
+	if err := json.Unmarshal(users[0], &user); err != nil {
+		return nil, fmt.Errorf("invalid %s user: %w", protocol, err)
+	}
+	return &user, nil
+}
+
+// shareHost is the link's host and port; an outbound without a server has no link.
+func shareHost(protocol string, address *conf.Address, port uint16) (string, error) {
+	if address == nil || address.Address == nil {
+		return "", fmt.Errorf("%s outbound has no server address", protocol)
+	}
+	return fmt.Sprintf("%s:%d", address, port), nil
+}
+
 func shadowsocksLink(proxy conf.OutboundDetourConfig, link *url.URL) error {
 	settings, err := decodeOutboundSettings[conf.ShadowsocksClientConfig](proxy)
 	if err != nil {
 		return err
 	}
+	if settings.Address == nil && len(settings.Servers) == 1 && settings.Servers[0] != nil {
+		server := settings.Servers[0]
+		settings.Address, settings.Port, settings.Cipher, settings.Password = server.Address, server.Port, server.Cipher, server.Password
+	}
 
 	link.Fragment = getOutboundName(proxy)
 	link.Scheme = "ss"
 
-	link.Host = fmt.Sprintf("%s:%d", settings.Address, settings.Port)
+	if link.Host, err = shareHost(proxy.Protocol, settings.Address, settings.Port); err != nil {
+		return err
+	}
 	if isShadowsocksAEAD2022(settings.Cipher) {
 		userInfo := escapeShadowsocksUserInfo(settings.Cipher) + ":" +
 			escapeShadowsocksUserInfo(settings.Password)
@@ -159,11 +196,21 @@ func vmessLink(proxy conf.OutboundDetourConfig, link *url.URL) error {
 	if err != nil {
 		return err
 	}
+	if settings.Address == nil && len(settings.Receivers) == 1 && settings.Receivers[0] != nil {
+		server := settings.Receivers[0]
+		user, err := oneShareUser(proxy.Protocol, server.Users)
+		if err != nil {
+			return err
+		}
+		settings.Address, settings.Port, settings.ID, settings.Security = server.Address, server.Port, user.ID, user.Security
+	}
 
 	link.Fragment = getOutboundName(proxy)
 	link.Scheme = "vmess"
 
-	link.Host = fmt.Sprintf("%s:%d", settings.Address, settings.Port)
+	if link.Host, err = shareHost(proxy.Protocol, settings.Address, settings.Port); err != nil {
+		return err
+	}
 	link.User = url.User(settings.ID)
 	if len(settings.Security) > 0 {
 		link.RawQuery = addQuery(link.RawQuery, "encryption", settings.Security)
@@ -177,11 +224,22 @@ func vlessLink(proxy conf.OutboundDetourConfig, link *url.URL) error {
 	if err != nil {
 		return err
 	}
+	if settings.Address == nil && len(settings.Vnext) == 1 && settings.Vnext[0] != nil {
+		server := settings.Vnext[0]
+		user, err := oneShareUser(proxy.Protocol, server.Users)
+		if err != nil {
+			return err
+		}
+		settings.Address, settings.Port = server.Address, server.Port
+		settings.Id, settings.Flow, settings.Encryption = user.ID, user.Flow, user.Encryption
+	}
 
 	link.Fragment = getOutboundName(proxy)
 	link.Scheme = "vless"
 
-	link.Host = fmt.Sprintf("%s:%d", settings.Address, settings.Port)
+	if link.Host, err = shareHost(proxy.Protocol, settings.Address, settings.Port); err != nil {
+		return err
+	}
 	link.User = url.User(settings.Id)
 	if len(settings.Flow) > 0 {
 		link.RawQuery = addQuery(link.RawQuery, "flow", settings.Flow)
@@ -198,11 +256,25 @@ func socksLink(proxy conf.OutboundDetourConfig, link *url.URL) error {
 	if err != nil {
 		return err
 	}
+	if settings.Address == nil && len(settings.Servers) == 1 && settings.Servers[0] != nil {
+		server := settings.Servers[0]
+		settings.Address, settings.Port = server.Address, server.Port
+		// A SOCKS server may have no user at all.
+		if len(server.Users) > 0 {
+			user, err := oneShareUser(proxy.Protocol, server.Users)
+			if err != nil {
+				return err
+			}
+			settings.Username, settings.Password = user.Username, user.Password
+		}
+	}
 
 	link.Fragment = getOutboundName(proxy)
 	link.Scheme = "socks"
 
-	link.Host = fmt.Sprintf("%s:%d", settings.Address, settings.Port)
+	if link.Host, err = shareHost(proxy.Protocol, settings.Address, settings.Port); err != nil {
+		return err
+	}
 	password := fmt.Sprintf("%s:%s", settings.Username, settings.Password)
 	username := base64.StdEncoding.EncodeToString([]byte(password))
 	link.User = url.User(username)
@@ -215,11 +287,17 @@ func trojanLink(proxy conf.OutboundDetourConfig, link *url.URL) error {
 	if err != nil {
 		return err
 	}
+	if settings.Address == nil && len(settings.Servers) == 1 && settings.Servers[0] != nil {
+		server := settings.Servers[0]
+		settings.Address, settings.Port, settings.Password = server.Address, server.Port, server.Password
+	}
 
 	link.Fragment = getOutboundName(proxy)
 	link.Scheme = "trojan"
 
-	link.Host = fmt.Sprintf("%s:%d", settings.Address, settings.Port)
+	if link.Host, err = shareHost(proxy.Protocol, settings.Address, settings.Port); err != nil {
+		return err
+	}
 	link.User = url.User(settings.Password)
 
 	return nil
@@ -234,7 +312,9 @@ func hysteriaLink(proxy conf.OutboundDetourConfig, link *url.URL) error {
 	link.Fragment = getOutboundName(proxy)
 	link.Scheme = "hysteria2"
 
-	link.Host = fmt.Sprintf("%s:%d", settings.Address, settings.Port)
+	if link.Host, err = shareHost(proxy.Protocol, settings.Address, settings.Port); err != nil {
+		return err
+	}
 
 	if proxy.StreamSetting != nil && proxy.StreamSetting.HysteriaSettings != nil {
 		link.User = url.User(proxy.StreamSetting.HysteriaSettings.Auth)
@@ -252,7 +332,7 @@ func streamSettingsQuery(proxy conf.OutboundDetourConfig, link *url.URL) {
 
 	network := "raw"
 	if streamSettings.Network != nil {
-		network = string(*streamSettings.Network)
+		network = shareNetwork(string(*streamSettings.Network))
 	}
 
 	if network == "hysteria" {
@@ -336,12 +416,17 @@ func streamSettingsQuery(proxy conf.OutboundDetourConfig, link *url.URL) {
 	query = addQuery(query, "security", streamSettings.Security)
 
 	switch network {
-	case "raw":
-		if streamSettings.RAWSettings == nil {
+	case "raw", "tcp":
+		// Xray reads either key and prefers the new one, as it does for XHTTP below.
+		rawSettings := streamSettings.RAWSettings
+		if rawSettings == nil {
+			rawSettings = streamSettings.TCPSettings
+		}
+		if rawSettings == nil {
 			break
 		}
 
-		headerConfig := streamSettings.RAWSettings.HeaderConfig
+		headerConfig := rawSettings.HeaderConfig
 		if headerConfig == nil {
 			break
 		}
@@ -435,22 +520,26 @@ func streamSettingsQuery(proxy conf.OutboundDetourConfig, link *url.URL) {
 			query = addQuery(query, "path", path)
 		}
 	case "xhttp":
-		if streamSettings.XHTTPSettings == nil {
+		xhttpSettings := streamSettings.XHTTPSettings
+		if xhttpSettings == nil {
+			xhttpSettings = streamSettings.SplitHTTPSettings
+		}
+		if xhttpSettings == nil {
 			break
 		}
-		host := streamSettings.XHTTPSettings.Host
+		host := xhttpSettings.Host
 		if len(host) > 0 {
 			query = addQuery(query, "host", host)
 		}
-		path := streamSettings.XHTTPSettings.Path
+		path := xhttpSettings.Path
 		if len(path) > 0 {
 			query = addQuery(query, "path", path)
 		}
-		mode := streamSettings.XHTTPSettings.Mode
+		mode := xhttpSettings.Mode
 		if len(mode) > 0 {
 			query = addQuery(query, "mode", mode)
 		}
-		extra := streamSettings.XHTTPSettings.Extra
+		extra := xhttpSettings.Extra
 		if extra != nil {
 			var extraConfig conf.SplitHTTPConfig
 			err := json.Unmarshal(extra, &extraConfig)
@@ -507,7 +596,11 @@ func streamSettingsQuery(proxy conf.OutboundDetourConfig, link *url.URL) {
 		if len(sni) > 0 {
 			query = addQuery(query, "sni", sni)
 		}
+		// Xray reads the key from either name and prefers "password".
 		pbk := streamSettings.REALITYSettings.Password
+		if len(pbk) == 0 {
+			pbk = streamSettings.REALITYSettings.PublicKey
+		}
 		if len(pbk) > 0 {
 			query = addQuery(query, "pbk", pbk)
 		}
@@ -534,6 +627,20 @@ func streamSettingsQuery(proxy conf.OutboundDetourConfig, link *url.URL) {
 	}
 
 	link.RawQuery = query
+}
+
+// shareNetwork gives a transport the name share links use; Xray JSON also takes the long ones.
+func shareNetwork(name string) string {
+	switch name = strings.ToLower(name); name {
+	case "websocket":
+		return "ws"
+	case "splithttp":
+		return "xhttp"
+	case "mkcp":
+		return "kcp"
+	default:
+		return name
+	}
 }
 
 func addQuery(rawQuery string, key, value string) string {

@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import Security
 
@@ -10,14 +9,9 @@ enum SubscriptionDeviceIdentity {
   static let operatingSystem = "macOS"
   static let model = "Mac"
 #endif
-  static func headers(installationID: String, url: URL) -> [String: String] {
-    let scheme = url.scheme?.lowercased() ?? "https"
-    let origin = "\(scheme)://\(url.host?.lowercased() ?? ""):\(url.port ?? (scheme == "https" ? 443 : 80))"
-    let digest = HMAC<SHA256>.authenticationCode(for: Data(origin.utf8), using: SymmetricKey(data: Data(installationID.utf8)))
+  static var userAgent: String {
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1"
-    return ["X-HWID": digest.map { String(format: "%02x", $0) }.joined(),
-      "X-Device-OS": operatingSystem, "X-Ver-OS": ProcessInfo.processInfo.operatingSystemVersionString,
-      "X-Device-Model": model, "User-Agent": "Elarni/\(version) (Xray; \(operatingSystem))"]
+    return "Elarni/\(version) (Xray; \(operatingSystem))"
   }
 }
 struct ProviderMetadata: Codable {
@@ -181,7 +175,7 @@ enum SubscriptionFeedFetcher {
       "encounteredChain": encounteredChain, "fallbackHosts": fallbackHosts, "installationId": installationID ?? "",
       "deviceOS": SubscriptionDeviceIdentity.operatingSystem, "deviceModel": SubscriptionDeviceIdentity.model,
       "deviceVersion": ProcessInfo.processInfo.operatingSystemVersionString,
-      "userAgent": SubscriptionDeviceIdentity.headers(installationID: installationID ?? "", url: url)["User-Agent"] ?? "Elarni"]) { _, new in new }
+      "userAgent": SubscriptionDeviceIdentity.userAgent]) { _, new in new }
     // As on Android: a provider that checks the client gets the one the user named.
     if let agent = options["userAgent"], !agent.isEmpty { request["userAgent"] = agent }
     if let fallbackURL { request["fallbackURL"] = fallbackURL }

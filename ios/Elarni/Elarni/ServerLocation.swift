@@ -33,6 +33,13 @@ struct ServerLocation: Hashable {
     let pattern = "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: name) + "(?![\\p{L}\\p{N}])"
     return (try? NSRegularExpression(pattern: pattern, options: .caseInsensitive)).map { ($0, code) }
   }
+  // One pass that finds whether any name occurs: most server names hold none, and then the patterns above need not run.
+  private static let anyName = try? NSRegularExpression(
+    pattern: "(?<![\\p{L}\\p{N}])(?:" + names.map { NSRegularExpression.escapedPattern(for: $0.0) }.joined(separator: "|") + ")(?![\\p{L}\\p{N}])",
+    options: .caseInsensitive)
+  private static let labelCache: NSCache<NSString, NSSet> = {
+    let cache = NSCache<NSString, NSSet>(); cache.countLimit = 4096; return cache
+  }()
   /// An ISO country code, such as the exit country a trace reports.
   static func fromCode(_ code: String) -> ServerLocation? {
     codes.contains(code) ? ServerLocation(code: code, name: Locale.current.localizedString(forRegionCode: code) ?? code) : nil
@@ -51,6 +58,12 @@ struct ServerLocation: Hashable {
     return ServerLocation(code: code, name: Locale.current.localizedString(forRegionCode: code) ?? code)
   }
   private static func labels(_ name: String) -> Set<String> {
+    if let saved = labelCache.object(forKey: name as NSString) as? Set<String> { return saved }
+    let found = readLabels(name)
+    labelCache.setObject(found as NSSet, forKey: name as NSString)
+    return found
+  }
+  private static func readLabels(_ name: String) -> Set<String> {
     var found = Set<String>()
     let scalars = Array(name.unicodeScalars)
     if scalars.count > 1 {
@@ -73,7 +86,9 @@ struct ServerLocation: Hashable {
     }
     let unplaced = places.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..<name.endIndex, in: name), withTemplate: " ")
     let range = NSRange(unplaced.startIndex..<unplaced.endIndex, in: unplaced)
-    for (regex, code) in expressions where regex.firstMatch(in: unplaced, range: range) != nil { found.insert(code) }
+    if anyName?.firstMatch(in: unplaced, range: range) != nil || anyName == nil {
+      for (regex, code) in expressions where regex.firstMatch(in: unplaced, range: range) != nil { found.insert(code) }
+    }
     // The EU flag often accompanies a member country, which is more specific.
     if found.count > 1 { found.remove("EU") }
     return found

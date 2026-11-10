@@ -9,18 +9,24 @@ import java.net.URI
 
 class ResourceReview(val catalog: Catalog, val routeID: String, val url: String, val warning: JSONObject) : Exception()
 
-/** Value catalog: every editor works on a copy; only Repository publishes it. */
-class Catalog(val data: JSONObject) {
-    val sources get() = data.objects("subscriptions")
-    val routes get() = data.objects("profiles")
+/** Value catalog: every editor works on a copy; only Repository publishes it.
+ *  A [snapshot] is a published copy that nothing edits, such as the one the screens read many times in a frame:
+ *  it reads its lists and settings once. */
+class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
+    private val read = if (snapshot) java.util.concurrent.ConcurrentHashMap<String, Any>() else null
+    @Suppress("UNCHECKED_CAST")
+    private fun <T : Any> once(name: String, value: () -> T): T = if (read == null) value() else read.getOrPut(name, value) as T
+    val sources get() = once("sources") { data.objects("subscriptions") }
+    val routes get() = once("routes") { data.objects("profiles") }
     val assignments get() = data.mapObject("assignments")
-    val settings get() = Settings.defaults().merge(data.mapObject("settings"))
+    val settings get() = once("settings") { Settings.defaults().merge(data.mapObject("settings")) }
     val selected get() = data.string("selectedNodeId")
-    val nodes get() = sources.flatMap { it.objects("nodes") }
+    val nodes get() = once("nodes") { sources.flatMap { it.objects("nodes") } }
     val selectedName get() = nodes.firstOrNull { it.string("id") == selected }?.string("name")
     fun copy() = Catalog(data.copy())
     fun source(id: String) = sources.firstOrNull { it.string("id") == id } ?: throw AppFailure("not_found")
-    fun node(id: String) = nodes.firstOrNull { it.string("id") == id } ?: throw AppFailure("not_found")
+    fun nodeOrNull(id: String): JSONObject? = if (read != null) once("nodeIndex") { nodes.associateBy { it.string("id") } }[id] else nodes.firstOrNull { it.string("id") == id }
+    fun node(id: String) = nodeOrNull(id) ?: throw AppFailure("not_found")
     fun route(id: String) = routes.firstOrNull { it.string("id") == id } ?: throw AppFailure("not_found")
     fun sourceFor(id: String) = sources.firstOrNull { it.objects("nodes").any { node -> node.string("id") == id } } ?: throw AppFailure("not_found")
     fun routeFor(id: String): JSONObject? {
@@ -38,10 +44,10 @@ class Catalog(val data: JSONObject) {
     fun validate() {
         // Edits reach the limits; only an unreadable catalog is corrupt.
         if (sources.size > 1024 || routes.size > 256 || nodes.size > 4096) throw AppFailure("catalog_limit")
-        if (data.optInt("version") != 1 || !Regex("^[a-f0-9]{64}$").matches(data.string("installationID"))) throw AppFailure("storage_corrupt")
+        if (data.optInt("version") != 1 || !installationPattern.matches(data.string("installationID"))) throw AppFailure("storage_corrupt")
         for (items in listOf(sources, routes, nodes)) {
             val ids = items.map { it.string("id") }
-            if (ids.toSet().size != ids.size || ids.any { !Regex("^[A-Za-z0-9-]{1,128}$").matches(it) }) throw AppFailure("storage_corrupt")
+            if (ids.toSet().size != ids.size || ids.any { !idPattern.matches(it) }) throw AppFailure("storage_corrupt")
         }
         if ((sources + nodes).any { it.string("name").length > 1024 }) throw AppFailure("catalog_limit")
         sources.forEach { source ->
@@ -278,7 +284,13 @@ class Catalog(val data: JSONObject) {
             assignRouting(target, null, byUser = provider == null); return null
         }
         val profile = parsed.getJSONObject("profile")
-        val title = display(profile.string("Name")) ?: "Routing profile"
+        var title = display(profile.string("Name")) ?: "Routing profile"
+        if (forceNew) {
+            // A new profile takes a name of its own; the same name is how a repeated import finds the profile to replace.
+            val base = title; var suffix = 2
+            while (routes.any { it.string("name") == title }) title = "$base ${suffix++}"
+            profile.put("Name", title)
+        }
         val previous = if (forceNew) null else if (update != null) route(update) else routes.firstOrNull {
             if (provider == null) it.string("providerSubscriptionId").isEmpty() && it.string("name") == title else it.string("providerSubscriptionId") == provider
         }
@@ -355,6 +367,10 @@ class Catalog(val data: JSONObject) {
         compileNode(node(id), routeFor(id), settings, context, vpn, inboundAuth)
     private fun compileNode(node: JSONObject, route: JSONObject?, setting: JSONObject, context: Context?, vpn: Boolean, inboundAuth: JSONObject? = null): JSONObject {
         if (node.string("format") != "xrayProfile") throw AppFailure("unsupported_profile")
+        return compiled(compileRequest(node, route, setting, context, vpn, inboundAuth).put("profile", node.getJSONObject("config")))
+    }
+    /** The compile request of [node] without its profile: of the server it holds only the IP preference. */
+    private fun compileRequest(node: JSONObject, route: JSONObject?, setting: JSONObject, context: Context?, vpn: Boolean, inboundAuth: JSONObject?): JSONObject {
         val preference = node.string("ipPreference", setting.string("profilePreferredIP", "inherit"))
         val perApp = context != null && setting.getString("perAppMode") != "off"
         // An uninstalled app has no UID. Its package name never matches one, so the rest of the list still applies.
@@ -369,9 +385,12 @@ class Catalog(val data: JSONObject) {
         // Validating every server leaves targets out: one deleted server must fail its app's connect, not every catalog change.
         if (perApp) runtime.put("perAppTargets", perAppTargets(setting, ::process))
         (if (setting.getBoolean("inboundAuthEnabled")) data.getJSONObject("inboundCredentials") else inboundAuth)?.let { runtime.put("inboundAuth", it) }
-        val request = obj("profile" to node.getJSONObject("config"), "socksPort" to setting.getInt("socksPort"), "packetBackend" to if (vpn) "xrayTun" else "nativeTun2Proxy", "tunMtu" to ElarniVpnService.MTU, "runtime" to runtime)
+        val request = obj("socksPort" to setting.getInt("socksPort"), "packetBackend" to if (vpn) "xrayTun" else "nativeTun2Proxy", "tunMtu" to ElarniVpnService.MTU, "runtime" to runtime)
         route?.let { request.put("routes", it.getJSONObject("routeModel")) }
         if (preference != "inherit") request.put("preferredIp", preference)
+        return request
+    }
+    private fun compiled(request: JSONObject): JSONObject {
         val config = JSONObject(Native.domain("compileProfile", request).getString("configUtf8"))
         config.put("log", obj("loglevel" to "none"))
         config.put("stats", JSONObject())
@@ -385,7 +404,6 @@ class Catalog(val data: JSONObject) {
         }
         return config
     }
-    /** Compiles each server in turn, which validates it: 4,096 compiled trees at once outgrew the API 30 heap. */
     // Apps sharing a UID share one rule, so the first listed app's target wins.
     private fun perAppTargets(setting: JSONObject, process: (String) -> String): JSONArray {
         val targets = setting.mapObject("perAppTargets"); val seen = mutableSetOf<String>()
@@ -400,17 +418,31 @@ class Catalog(val data: JSONObject) {
             }
         })
     }
+    /** Compiles each server in turn, which validates it: 4,096 compiled trees at once outgrew the API 30 heap.
+     *  A request that compiled before is not compiled again, so an edit costs the servers it changes. */
     fun validateNodes(valid: () -> Unit = {}) {
         // Resolve settings and each source's route once; per-node lookups were quadratic.
         val setting = settings
         val vpn = setting.getBoolean("xrayTunEnabled")
         val assigned = assignments
         val allRoutes = routes
+        // Servers with one route and one IP preference differ only in their profile.
+        val shared = HashMap<String, Pair<JSONObject, String>>()
         sources.forEach { source ->
             valid()
             val routeId = assigned.string(source.string("id"))
             val route = allRoutes.firstOrNull { it.string("id") == routeId && it.optBoolean("enabled", true) }
-            source.objects("nodes").forEach { node -> if (node.getString("format") == "xrayProfile") compileNode(node, route, setting, null, vpn) }
+            source.objects("nodes").forEach { node ->
+                if (node.getString("format") != "xrayProfile") return@forEach
+                val (request, context) = shared.getOrPut(route?.string("id").orEmpty() + "\n" + node.string("ipPreference")) {
+                    compileRequest(node, route, setting, null, vpn, null).let { it to sha256(it.toString()) }
+                }
+                val profile = node.getJSONObject("config")
+                val key = sha256(context + profile.toString())
+                if (synchronized(validated) { validated[key] } != null) return@forEach
+                compiled(request.put("profile", profile))
+                synchronized(validated) { validated[key] = true }
+            }
         }
     }
     fun share(id: String, subscription: Boolean): JSONObject {
@@ -500,6 +532,14 @@ class Catalog(val data: JSONObject) {
         }
     }
     companion object {
+        private val installationPattern = Regex("^[a-f0-9]{64}$")
+        private val idPattern = Regex("^[A-Za-z0-9-]{1,128}$")
+        // Compile requests that passed validateNodes, by digest; twice the server limit, least recently used first out.
+        private val validated = object : LinkedHashMap<String, Boolean>(256, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>) = size > 8192
+        }
+        private fun sha256(text: String) = java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
+            .joinToString("") { "%02x".format(it.toInt() and 255) }
         // The SNI a probe's handshake sends: bulk tests run at most two probes per SNI,
         // as TSPU counts handshakes per SNI. TLS without a name sends the address.
         fun probeKey(node: JSONObject): String? {

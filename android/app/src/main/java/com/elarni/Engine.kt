@@ -187,7 +187,24 @@ class Engine(private val app: ElarniApplication, private val assets: RoutingAsse
             return file.readBytes()
         } finally { file.delete() }
     }
-    fun probe(catalog: Catalog, id: String, args: JSONObject): JSONObject {
+    // Where a direct test finds a server: its endpoint and the host mapping, kept until the catalog changes.
+    private val probeTargets = HashMap<String, Pair<JSONObject, JSONObject>>()
+    private var probeEpoch = -1L
+    private fun probeTarget(catalog: Catalog, id: String, epoch: Long?): Pair<JSONObject, JSONObject> {
+        // A per-app rule compiles to the UIDs of installed apps, which change without the catalog.
+        val keep = epoch != null && catalog.settings.getString("perAppMode") == "off"
+        if (keep) synchronized(probeTargets) {
+            if (probeEpoch != epoch) { probeTargets.clear(); probeEpoch = epoch!! }
+            probeTargets[id]
+        }?.let { return it }
+        val config = catalog.compile(id, app)
+        val endpoint = Native.domain("profileEndpoints", obj("config" to config)).objects("endpoints").firstOrNull { it.optBoolean("physical") } ?: throw AppFailure("unsupported_ping_method")
+        val target = endpoint to mappings(config, listOf(endpoint)).mapObject(endpoint.getString("host"))
+        if (keep) synchronized(probeTargets) { if (probeEpoch == epoch) probeTargets[id] = target }
+        return target
+    }
+    /** [epoch] counts the catalog's changes; with it a direct test reuses what the last one learned about the server. */
+    fun probe(catalog: Catalog, id: String, args: JSONObject, epoch: Long? = null): JSONObject {
         val method = args.string("protocol", "proxy")
         if (method !in listOf("tcp", "icmp", "proxy", "activeProxy")) throw AppFailure("unsupported_ping_method")
         val timeout = args.optInt("timeout", 5)
@@ -196,12 +213,11 @@ class Engine(private val app: ElarniApplication, private val assets: RoutingAsse
         val delay: Long
         var exit: JSONObject? = null
         if (method == "tcp" || method == "icmp") {
-            val config = catalog.compile(id, app)
-            val endpoint = Native.domain("profileEndpoints", obj("config" to config)).objects("endpoints").firstOrNull { it.optBoolean("physical") } ?: throw AppFailure("unsupported_ping_method")
+            val (endpoint, mapping) = probeTarget(catalog, id, epoch)
             if (method == "tcp" && !endpoint.optBoolean("supportsTcpProbe")) throw AppFailure("unsupported_ping_method")
             val settings = catalog.settings
             catalog.node(id).string("ipPreference").takeIf { it.isNotEmpty() }?.let { settings.put("profilePreferredIP", it) }
-            val address = addresses(endpoint, settings, mappings(config, listOf(endpoint)).mapObject(endpoint.getString("host"))).first()
+            val address = addresses(endpoint, settings, mapping).first()
             if (method == "tcp") {
                 val start = System.nanoTime()
                 Socket().use { socket -> physical()?.bindSocket(socket); socket.connect(InetSocketAddress(address, endpoint.getInt("port")), timeout * 1000) }

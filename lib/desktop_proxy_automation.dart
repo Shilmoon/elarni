@@ -606,15 +606,16 @@ extension _ProxyAutomation on DesktopProxy {
         final deadline = _now + 60;
         for (final id in _automation.round(order, current, _now)) {
           _checkAutomation(epoch);
-          final reference = await _compile(_catalog!, _catalog!.node(id));
+          // A measurement holds for the config it was taken with.
+          final reference =
+              '${_catalog!.node(id)['configurationRevision'] ?? id}';
           final cached = _automation.score(id, reference, _now);
           if (cached != null) {
             scores[id] = cached;
             continue;
           }
           if (_now + 5 >= deadline) continue;
-          // The compile above yielded; a user change may now own the slot.
-          _checkAutomation(epoch);
+          // The last measurement yielded; a user change may now own the slot.
           if (_operation != null) return;
           final done = _operation = Completer<void>();
           try {

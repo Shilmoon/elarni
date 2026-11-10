@@ -171,12 +171,19 @@ pub fn parse_hy2_uri(
         (None, Some(_), _) => return Err(ParseError::UnsupportedObfuscation),
     };
 
+    let value = |key: &str| {
+        single(&query, key)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    let (alpn, server_name, fingerprint) = (value("alpn"), value("sni"), value("fp"));
+    let (upload, download) = (value("up"), value("down"));
     let known = KNOWN_KEYS.iter().copied().collect::<HashSet<_>>();
     let unknown_parameters = query
         .into_iter()
         .filter(|(key, _)| !known.contains(key.as_str()))
         .collect();
-    let alpn = single_value_from_input(input, "alpn")
+    let alpn = alpn
         .unwrap_or_default()
         .split(',')
         .filter(|value| !value.is_empty())
@@ -192,14 +199,11 @@ pub fn parse_hy2_uri(
             schema_version: 1,
             host,
             port,
-            server_name: single_value_from_input(input, "sni").filter(|value| !value.is_empty()),
+            server_name,
             alpn,
-            fingerprint: single_value_from_input(input, "fp").filter(|value| !value.is_empty()),
+            fingerprint,
             obfuscation,
-            bandwidth: Hy2Bandwidth {
-                upload: single_value_from_input(input, "up").filter(|value| !value.is_empty()),
-                download: single_value_from_input(input, "down").filter(|value| !value.is_empty()),
-            },
+            bandwidth: Hy2Bandwidth { upload, download },
             port_hop: ports.map(|ports| Hy2PortHop {
                 ports,
                 interval_seconds: hop_interval,
@@ -226,13 +230,6 @@ fn reject_alias_conflict(
 
 fn single<'a>(query: &'a BTreeMap<String, Vec<String>>, key: &str) -> Option<&'a str> {
     query.get(key)?.first().map(String::as_str)
-}
-
-fn single_value_from_input(input: &str, key: &str) -> Option<String> {
-    Url::parse(input)
-        .ok()?
-        .query_pairs()
-        .find_map(|(candidate, value)| (candidate == key).then(|| value.into_owned()))
 }
 
 fn decode_userinfo(url: &Url) -> Result<Option<String>, ParseError> {

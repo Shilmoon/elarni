@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -162,7 +163,8 @@ private fun lines(value: String) = value.lines().map(String::trim).filter(String
 @Composable fun SettingsEditor(catalog: Catalog, section: String, busy: Boolean, activity: MainActivity,
     navigate: (String, String) -> Unit, openServers: () -> Unit, done: () -> Unit) {
     val saved = catalog.settings
-    val fields = Settings.fields.filter { it.section == section }
+    // The titles come from resources; a new language is a new configuration.
+    val fields = remember(section, LocalConfiguration.current) { Settings.fields.filter { it.section == section } }
     val current = buildMap {
         fields.forEach { put(it.key, saved.get(it.key).toString()) }
         listOf("includedRoutes", "excludedRoutes", "trustedWiFiNetworks").forEach { put(it, saved.strings(it).joinToString("\n")) }
@@ -767,21 +769,22 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
         ChoiceField(tr(R.string.policy), policy, listOf("fixed", "orderedFallback", "lowestLatency"), listOf(tr(R.string.keep_selected_server), tr(R.string.ordered_fallback), tr(R.string.lowest_latency))) { policy = it }
         Text(tr(R.string.allowed_servers_listed_in_fallback_order), style = MaterialTheme.typography.titleMedium)
         Text(tr(R.string.servers_may_come_from_any_subscription), style = MaterialTheme.typography.bodySmall)
-        val available = catalog.nodes.filter { it.string("format") == "xrayProfile" }
+        val available = remember(catalog) { catalog.nodes.filter { it.string("format") == "xrayProfile" }.map { it.string("id") }.toSet() }
         // A provider refresh can remove a chosen server, which then has no row to clear it with.
-        val chosen = selected.filter { id -> available.any { it.string("id") == id } }
-        chosen.forEach { id ->
+        val chosen = selected.filter { it in available }
+        val listed = chosen.toSet()
+        chosen.forEachIndexed { position, id ->
             Row(Modifier.toggleable(true, role = Role.Checkbox) { selected = chosen - id }, verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(true, null)
                 Column(Modifier.weight(1f)) {
                     Text(catalog.node(id).string("name"))
                     Text(catalog.sourceFor(id).string("name"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (chosen.indexOf(id) > 0) TextButton({ val items = chosen.toMutableList(); val index = items.indexOf(id); items[index] = items[index-1]; items[index-1] = id; selected = items }) { Text(tr(R.string.up)) }
+                if (position > 0) TextButton({ val items = chosen.toMutableList(); val index = items.indexOf(id); items[index] = items[index-1]; items[index-1] = id; selected = items }) { Text(tr(R.string.up)) }
             }
         }
         catalog.sources.forEach { source ->
-            val rest = source.objects("nodes").filter { it.string("format") == "xrayProfile" && it.string("id") !in chosen }
+            val rest = source.objects("nodes").filter { it.string("format") == "xrayProfile" && it.string("id") !in listed }
             if (rest.isNotEmpty()) Text(source.string("name"), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
             rest.forEach { node ->
                 Row(Modifier.toggleable(false, role = Role.Checkbox) { selected = chosen + node.string("id") }, verticalAlignment = Alignment.CenterVertically) {
@@ -811,7 +814,8 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
 }
 
 @Composable fun PingEditor(id: String, state: AppState, activity: MainActivity, sourceId: String = "") {
-    val saved = Catalog(state.catalog).settings
+    val catalog = remember(state.catalog) { Catalog(state.catalog, snapshot = true) }
+    val saved = catalog.settings
     var protocol by rememberSaveable { mutableStateOf(saved.string("probeMode", "proxy")) }; var url by rememberSaveable { mutableStateOf(saved.string("probeURL", "https://www.gstatic.com/generate_204")) }
     var timeout by rememberSaveable { mutableStateOf(saved.optInt("probeTimeout", 5).toString()) }; var method by rememberSaveable { mutableStateOf(saved.string("probeMethod", "GET")) }
     var mode by rememberSaveable { mutableStateOf(saved.string("probeVariant", "default")) }
@@ -832,10 +836,9 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
             activity.run("ping", obj("id" to id, "sourceId" to sourceId, "protocol" to protocol, "timeout" to (timeout.toIntOrNull()?.coerceIn(1, 15) ?: 0), "url" to url,
                 "method" to method, "mode" to mode, "expectedStatus" to (expected.toIntOrNull() ?: 0), "expectedBody" to body))
         }, enabled = !state.busy) { Text(tr(R.string.run_test)) }
-        val catalog = Catalog(state.catalog)
-        val scopedIds = catalog.sources.firstOrNull { it.string("id") == sourceId }?.objects("nodes")?.map { it.string("id") }?.toSet() ?: emptySet()
+        val scopedIds = remember(catalog, sourceId) { catalog.sources.firstOrNull { it.string("id") == sourceId }?.objects("nodes")?.map { it.string("id") }?.toSet() ?: emptySet() }
         state.pings.filterKeys { (id.isEmpty() || it == id) && (sourceId.isEmpty() || it in scopedIds) }.forEach { (key, result) ->
-            val node = catalog.nodes.firstOrNull { it.string("id") == key }
+            val node = catalog.nodeOrNull(key)
             Text("${node?.string("name") ?: tr(R.string.server_word)}: ${if (result.string("status") == "success") tr(R.string.ms_value, result.optLong("latencyMs")) else errorMessage(result.string("error"))}")
             Text("${pingScope(result)} · ${date(result.optDouble("timestamp"))}${if (node == null || !pingFresh(node, result, clock)) " · " + tr(R.string.outdated) else ""}", style = MaterialTheme.typography.bodySmall)
         }

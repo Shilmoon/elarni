@@ -174,7 +174,9 @@ func (c *udpConn) enqueue(b *buf.Buffer) (queued, retired bool) {
 	if c.queue.push(b) {
 		return true, false
 	}
-	c.unanswered.Add(-1)
+	// A reply may have counted for this datagram already: a plain decrement would go below zero and
+	// read as retired.
+	c.answer(1)
 	return false, false
 }
 

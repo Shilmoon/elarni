@@ -40,7 +40,7 @@ class AutomationTest {
         assertNull(automation.choose("fixed", order, "a", mapOf("a" to 50.0, "b" to 1.0), healthy = false, time = 0.0))
     }
 
-    @Test fun roundsSkipCoolingAndInvalidServersAndRotateThroughTheRest() {
+    @Test fun roundsSkipCoolingServersAndRotateThroughTheRest() {
         val automation = ready()
         val others = (1..12).map { "s$it" }
         val first = automation.round(listOf("current") + others, "current", 0.0)
@@ -51,7 +51,7 @@ class AutomationTest {
         assertEquals("Two rounds probe every backup", others.toSet(), (first + second).toSet() - "current")
 
         automation.cooldown["s1"] = 60.0
-        automation.invalid.add("s2")
+        automation.cooldown["s2"] = 90.0
         assertFalse(automation.round(listOf("current", "s1", "s2", "s3"), "current", 59.0).any { it in listOf("s1", "s2") })
         assertTrue("A cooldown ends at its time", "s1" in automation.round(listOf("current", "s1", "s2", "s3"), "current", 60.0))
     }

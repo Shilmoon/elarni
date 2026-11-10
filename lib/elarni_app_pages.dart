@@ -129,7 +129,14 @@ extension _HomePages on _ElarniHomeState {
     ];
   }
 
-  List<SubscriptionNode> _displayNodes(SubscriptionGroup group) {
+  // State cannot change while a frame is built; a handler computes afresh.
+  List<SubscriptionNode> _displayNodes(SubscriptionGroup group) =>
+      SchedulerBinding.instance.schedulerPhase ==
+          SchedulerPhase.persistentCallbacks
+      ? _displayNodesMemo[group.id] ??= _filteredNodes(group)
+      : _filteredNodes(group);
+
+  List<SubscriptionNode> _filteredNodes(SubscriptionGroup group) {
     final nodes = group.nodes
         .where(
           (node) => _nodeFilter == 'favorites'
@@ -1918,259 +1925,285 @@ extension _HomePages on _ElarniHomeState {
             _subscriptionActions(group),
           ],
         ),
+        // A closed card does not make its rows.
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+          Builder(
+            builder: (_) => Column(
               children: [
-                if (details.isNotEmpty || !group.isLocal)
-                  ExpansionTile(
-                    key: PageStorageKey('subscription-details:${group.id}'),
-                    title: Text(l10n.details, style: TextStyle(fontSize: 13)),
-                    tilePadding: EdgeInsets.zero,
-                    shape: const Border(),
-                    collapsedShape: const Border(),
-                    childrenPadding: const EdgeInsets.only(bottom: 16),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      SelectionArea(
-                        child: Column(
+                      if (details.isNotEmpty || !group.isLocal)
+                        ExpansionTile(
                           key: PageStorageKey(
-                            'subscription-metadata:${group.id}',
+                            'subscription-details:${group.id}',
                           ),
+                          title: Text(
+                            l10n.details,
+                            style: TextStyle(fontSize: 13),
+                          ),
+                          tilePadding: EdgeInsets.zero,
+                          shape: const Border(),
+                          collapsedShape: const Border(),
+                          childrenPadding: const EdgeInsets.only(bottom: 16),
                           children: [
-                            for (final (label, value) in details)
-                              _detailRow(label, value),
-                            if (!group.isLocal) ..._providerDetailRows(group),
+                            SelectionArea(
+                              child: Column(
+                                key: PageStorageKey(
+                                  'subscription-metadata:${group.id}',
+                                ),
+                                children: [
+                                  for (final (label, value) in details)
+                                    _detailRow(label, value),
+                                  if (!group.isLocal)
+                                    ..._providerDetailRows(group),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      if (ProviderNotice.messages(group).isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        _providerNotice(group, compact: true),
+                      ],
+                      const SizedBox(height: 16),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final label = Text(
+                            l10n.routingProfile,
+                            style: TextStyle(color: scheme.onSurfaceVariant),
+                          );
+                          final picker = ElarniSelect<String>(
+                            key: ValueKey('subscription-routing:${group.id}'),
+                            value: _routing.assignments[group.id] ?? '',
+                            isExpanded: true,
+                            items: [
+                              DropdownMenuItem(
+                                value: '',
+                                child: Text(l10n.noCustomRouting),
+                              ),
+                              for (final profile in _routing.profiles)
+                                DropdownMenuItem(
+                                  value: profile.id,
+                                  child: Text(profile.name),
+                                ),
+                            ],
+                            onChanged: _busy
+                                ? null
+                                : (value) => _runRouting(
+                                    () => widget.tunnelControl
+                                        .assignRoutingProfile(
+                                          group.id,
+                                          value == null || value.isEmpty
+                                              ? null
+                                              : value,
+                                        ),
+                                  ),
+                          );
+                          if (constraints.maxWidth < 400 ||
+                              MediaQuery.textScalerOf(context).scale(1) >=
+                                  1.5) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [label, picker],
+                            );
+                          }
+                          return Row(
+                            children: [
+                              Expanded(child: label),
+                              const SizedBox(width: 16),
+                              Flexible(child: picker),
+                            ],
+                          );
+                        },
+                      ),
+                      if (_routing.profiles.any(
+                        (profile) =>
+                            profile.id == _routing.assignments[group.id] &&
+                            profile.providerSubscriptionId == group.id,
+                      ))
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            l10n.setByYourProvider,
+                            textAlign: TextAlign.end,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      const Divider(height: 24),
+                    ],
+                  ),
+                ),
+                ExpansionTile(
+                  key: PageStorageKey('subscription-servers:${group.id}'),
+                  initiallyExpanded: true,
+                  title: Text(l10n.servers),
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 20),
+                  shape: const Border(),
+                  collapsedShape: const Border(),
+                  children: [
+                    if (selecting)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Semantics(
+                              liveRegion: true,
+                              child: Text(l10n.selectedCount(selectedCount)),
+                            ),
+                            TextButton(
+                              onPressed: () => _set(
+                                () => _selectedServers.addAll([
+                                  for (final node in nodes)
+                                    if (!node.selected &&
+                                        node.isVPN &&
+                                        unreachable(node.id))
+                                      node.id,
+                                ]),
+                              ),
+                              child: Text(l10n.selectUnreachable),
+                            ),
+                            TextButton(
+                              // A subscription keeps at least one server.
+                              onPressed:
+                                  _busy ||
+                                      selectedCount == 0 ||
+                                      selectedCount >= group.nodes.length
+                                  ? null
+                                  : () => _deleteSelected(group),
+                              child: Text(
+                                group.isLocal ? l10n.delete : l10n.hide,
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () => _set(() {
+                                _selectingSubscription = null;
+                                _selectedServers.clear();
+                              }),
+                              child: Text(l10n.cancel),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextFormField(
+                                key: PageStorageKey(
+                                  'subscription-search:${group.id}',
+                                ),
+                                initialValue: search,
+                                decoration: InputDecoration(
+                                  hintText: l10n.searchServers,
+                                  prefixIcon: Icon(
+                                    CupertinoIcons.search,
+                                    size: 19,
+                                  ),
+                                ),
+                                onChanged: (value) => _set(
+                                  () => _subscriptionSearches[group.id] = value
+                                      .trim()
+                                      .toLowerCase(),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            if (group.nodes.length > 1)
+                              TextButton(
+                                key: ValueKey('select-servers:${group.id}'),
+                                onPressed: _busy
+                                    ? null
+                                    : () => _set(() {
+                                        _selectingSubscription = group.id;
+                                        _selectedServers.clear();
+                                      }),
+                                child: Text(l10n.select),
+                              ),
+                            _pingAllButton(subscriptionId: group.id),
                           ],
                         ),
                       ),
+                    if (nodes.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          group.nodes.isEmpty
+                              ? l10n.noServersInSubscription
+                              : l10n.noMatchingServers,
+                        ),
+                      ),
+                    for (final node in nodes) ...[
+                      _serverRow(
+                        node,
+                        group,
+                        subscriptionView: true,
+                        selecting: selecting,
+                      ),
+                      for (final choice in node.groups)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 8,
+                          ),
+                          child: ElarniSelect<String>(
+                            key: ValueKey('${node.id}:${choice.name}'),
+                            value: choice.selected,
+                            isExpanded: true,
+                            label: choice.name,
+                            items: choice.options
+                                .map(
+                                  (option) => DropdownMenuItem(
+                                    value: option,
+                                    child: Text(option),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: _busy
+                                ? null
+                                : (value) {
+                                    if (value != null)
+                                      _selectProfileGroup(
+                                        node.id,
+                                        choice.name,
+                                        value,
+                                      );
+                                  },
+                          ),
+                        ),
                     ],
-                  ),
-                if (ProviderNotice.messages(group).isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  _providerNotice(group, compact: true),
-                ],
-                const SizedBox(height: 16),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final label = Text(
-                      l10n.routingProfile,
-                      style: TextStyle(color: scheme.onSurfaceVariant),
-                    );
-                    final picker = ElarniSelect<String>(
-                      key: ValueKey('subscription-routing:${group.id}'),
-                      value: _routing.assignments[group.id] ?? '',
-                      isExpanded: true,
-                      items: [
-                        DropdownMenuItem(
-                          value: '',
-                          child: Text(l10n.noCustomRouting),
+                    if (group.hiddenNodes.isNotEmpty)
+                      ListTile(
+                        key: ValueKey('hidden-servers:${group.id}'),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 20,
                         ),
-                        for (final profile in _routing.profiles)
-                          DropdownMenuItem(
-                            value: profile.id,
-                            child: Text(profile.name),
-                          ),
-                      ],
-                      onChanged: _busy
-                          ? null
-                          : (value) => _runRouting(
-                              () => widget.tunnelControl.assignRoutingProfile(
-                                group.id,
-                                value == null || value.isEmpty ? null : value,
-                              ),
-                            ),
-                    );
-                    if (constraints.maxWidth < 400 ||
-                        MediaQuery.textScalerOf(context).scale(1) >= 1.5) {
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [label, picker],
-                      );
-                    }
-                    return Row(
-                      children: [
-                        Expanded(child: label),
-                        const SizedBox(width: 16),
-                        Flexible(child: picker),
-                      ],
-                    );
-                  },
-                ),
-                if (_routing.profiles.any(
-                  (profile) =>
-                      profile.id == _routing.assignments[group.id] &&
-                      profile.providerSubscriptionId == group.id,
-                ))
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      l10n.setByYourProvider,
-                      textAlign: TextAlign.end,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                const Divider(height: 24),
-              ],
-            ),
-          ),
-          ExpansionTile(
-            key: PageStorageKey('subscription-servers:${group.id}'),
-            initiallyExpanded: true,
-            title: Text(l10n.servers),
-            tilePadding: const EdgeInsets.symmetric(horizontal: 20),
-            shape: const Border(),
-            collapsedShape: const Border(),
-            children: [
-              if (selecting)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      Semantics(
-                        liveRegion: true,
-                        child: Text(l10n.selectedCount(selectedCount)),
-                      ),
-                      TextButton(
-                        onPressed: () => _set(
-                          () => _selectedServers.addAll([
-                            for (final node in nodes)
-                              if (!node.selected &&
-                                  node.isVPN &&
-                                  unreachable(node.id))
-                                node.id,
-                          ]),
+                        leading: const Icon(CupertinoIcons.eye_slash, size: 19),
+                        title: Text(
+                          l10n.hiddenServersCount(group.hiddenNodes.length),
                         ),
-                        child: Text(l10n.selectUnreachable),
-                      ),
-                      TextButton(
-                        // A subscription keeps at least one server.
-                        onPressed:
-                            _busy ||
-                                selectedCount == 0 ||
-                                selectedCount >= group.nodes.length
-                            ? null
-                            : () => _deleteSelected(group),
-                        child: Text(group.isLocal ? l10n.delete : l10n.hide),
-                      ),
-                      TextButton(
-                        onPressed: () => _set(() {
-                          _selectingSubscription = null;
-                          _selectedServers.clear();
-                        }),
-                        child: Text(l10n.cancel),
-                      ),
-                    ],
-                  ),
-                )
-              else
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextFormField(
-                          key: PageStorageKey(
-                            'subscription-search:${group.id}',
-                          ),
-                          initialValue: search,
-                          decoration: InputDecoration(
-                            hintText: l10n.searchServers,
-                            prefixIcon: Icon(CupertinoIcons.search, size: 19),
-                          ),
-                          onChanged: (value) => _set(
-                            () => _subscriptionSearches[group.id] = value
-                                .trim()
-                                .toLowerCase(),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      if (group.nodes.length > 1)
-                        TextButton(
-                          key: ValueKey('select-servers:${group.id}'),
+                        trailing: TextButton(
                           onPressed: _busy
                               ? null
-                              : () => _set(() {
-                                  _selectingSubscription = group.id;
-                                  _selectedServers.clear();
-                                }),
-                          child: Text(l10n.select),
+                              : () => _showHiddenServers(group),
+                          child: Text(l10n.showAgain),
                         ),
-                      _pingAllButton(subscriptionId: group.id),
-                    ],
-                  ),
+                      ),
+                    const SizedBox(height: 16),
+                  ],
                 ),
-              if (nodes.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text(
-                    group.nodes.isEmpty
-                        ? l10n.noServersInSubscription
-                        : l10n.noMatchingServers,
-                  ),
-                ),
-              for (final node in nodes) ...[
-                _serverRow(
-                  node,
-                  group,
-                  subscriptionView: true,
-                  selecting: selecting,
-                ),
-                for (final choice in node.groups)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 8,
-                    ),
-                    child: ElarniSelect<String>(
-                      key: ValueKey('${node.id}:${choice.name}'),
-                      value: choice.selected,
-                      isExpanded: true,
-                      label: choice.name,
-                      items: choice.options
-                          .map(
-                            (option) => DropdownMenuItem(
-                              value: option,
-                              child: Text(option),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: _busy
-                          ? null
-                          : (value) {
-                              if (value != null)
-                                _selectProfileGroup(
-                                  node.id,
-                                  choice.name,
-                                  value,
-                                );
-                            },
-                    ),
-                  ),
               ],
-              if (group.hiddenNodes.isNotEmpty)
-                ListTile(
-                  key: ValueKey('hidden-servers:${group.id}'),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-                  leading: const Icon(CupertinoIcons.eye_slash, size: 19),
-                  title: Text(
-                    l10n.hiddenServersCount(group.hiddenNodes.length),
-                  ),
-                  trailing: TextButton(
-                    onPressed: _busy ? null : () => _showHiddenServers(group),
-                    child: Text(l10n.showAgain),
-                  ),
-                ),
-              const SizedBox(height: 16),
-            ],
+            ),
           ),
         ],
       ),

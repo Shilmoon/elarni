@@ -49,6 +49,27 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   that one connection instead of reading every socket on the computer (Windows: 0.64 ms to
   25 µs per connection), and macOS reads its socket table once for connections that open
   together, as a browser's do (64 at once: 70 ms to 2.6 ms).
+- Editing a large catalog no longer compiles every server again. On Windows and Linux a favorite,
+  rename, selection, settings toggle or refresh compiles only the servers it changes: with 300
+  servers on a route of 20,000 rules, a favorite or a rename went from 9.4 s to 0.11 s. Android,
+  macOS and iOS likewise validate and hash a server again only after its configuration, its
+  routes or the settings changed.
+- A TCP or ICMP ping on Windows, Linux and Android no longer compiles the server's whole
+  configuration to learn its address; the address is kept until the server changes.
+- macOS and iOS read, compare and reduce geofiles off the main thread, so the window stays
+  responsive during a geofile refresh. Android no longer copies the stored geofiles for each
+  rule edit that keeps them.
+- The Subscriptions page builds the server rows of open cards only, the Settings page builds
+  only the open category, and the Windows Settings page asks for the VPN service state at
+  most once in 30 seconds instead of starting a core process on every reload.
+- Android scans QR codes from the camera's brightness plane instead of encoding each frame
+  as JPEG and decoding it again.
+- The macOS and iOS tunnel resolves a profile's server hosts together when it starts.
+- Removed code no platform runs: the tun2proxy command-line programs, its HTTP and SOCKS4
+  proxies, virtual DNS and UDP gateway, with 90 crates from the Rust lockfile, and libXray
+  methods no app calls. A routing link that starts with `://routing/`, without a scheme, is no
+  longer imported on Windows, Linux, macOS and iOS; nothing writes such links and Android
+  never took them.
 
 ### Fixed
 
@@ -95,6 +116,29 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - On Linux, per-app rules missed IPv4 connections made from IPv6 sockets, which Java apps
   (Minecraft, JetBrains IDEs) and many servers use, and rules stopped matching a program whose
   package was upgraded while it ran, until it restarted.
+- macOS and iOS: an app whose connection the packet stack had given up, as during a server
+  switch or at the session limit, waited for its own timeout. The stack now resets such a
+  connection, so the app reconnects at once.
+- macOS: an automatic switch that the provider refused (missing credentials, an invalid
+  configuration, failed resolution) disconnected the VPN although the previous server was
+  still running. The VPN now stays up, and the app waits 20 s for a switch reply instead of 15.
+- macOS and iOS: after one failed geofile refresh, such as being offline at the weekly
+  refresh, a routing profile's geofiles were never refreshed automatically again. A failed
+  refresh is retried after 15 minutes.
+- **Share** wrote a dead link (`<nil>:0`) for a server imported from Xray JSON in the usual
+  `vnext` or `servers` form, and dropped a REALITY `publicKey` and the path, host, mode and
+  seed of transports named `websocket`, `splithttp`, `mkcp` or `tcp` with an HTTP header.
+- Android and iOS: saving a second new routing profile overwrote the first one's rules,
+  because both started as "My routing". A new profile now takes a free name.
+- Android: with **Disconnect on sleep**, a tunnel started while the screen was off (tile,
+  boot, an external request) was restarted when the screen turned on.
+- A subscription's connect address and HTTP Host override were also used for its mirrors and
+  the provider's fallback URL, which are other hosts, so none could take over.
+- A UDP flow in VPN mode could start again from a new source port after its full queue
+  refused a datagram.
+- Windows and Linux: a system proxy restore that failed was retried and reported every
+  second, and the proxy was never set.
+- macOS: the log level dropdown stayed disabled after a change.
 
 ## 0.5.1 - 2026-11-08
 

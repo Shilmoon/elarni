@@ -28,9 +28,6 @@ const (
 	LibXrayMethodPrepareFetch                LibXrayMethod = "prepareFetch"
 	LibXrayMethodCancelFetch                 LibXrayMethod = "cancelFetch"
 	LibXrayMethodReleaseFetch                LibXrayMethod = "releaseFetch"
-	LibXrayMethodPingBatch                   LibXrayMethod = "pingBatch"
-	LibXrayMethodTestXray                    LibXrayMethod = "testXray"
-	LibXrayMethodRunXray                     LibXrayMethod = "runXray"
 	LibXrayMethodRunXrayFromJson             LibXrayMethod = "runXrayFromJson"
 	LibXrayMethodStopXray                    LibXrayMethod = "stopXray"
 	LibXrayMethodXrayVersion                 LibXrayMethod = "xrayVersion"
@@ -117,7 +114,6 @@ type CountGeoDataRequest struct {
 type PingRequest struct {
 	AndroidAssetDirectory *string `json:"androidAssetDirectory,omitempty"`
 	OperationID           string  `json:"operationId,omitempty"`
-	ConfigPath            string  `json:"configPath,omitempty"`
 	ConfigJSON            string  `json:"configJSON,omitempty"`
 	Timeout               int     `json:"timeout,omitempty"`
 	URL                   string  `json:"url,omitempty"`
@@ -137,31 +133,6 @@ type PingResponse struct {
 	Delay       int64                  `json:"delay"`
 	Diagnostics *xray.ProbeDiagnostics `json:"diagnostics,omitempty"`
 	Exit        *nodep.Exit            `json:"exit,omitempty"`
-}
-
-type PingBatchRequest struct {
-	Configs []PingBatchItemRequest `json:"configs,omitempty"`
-	Timeout int                    `json:"timeout,omitempty"`
-	URL     string                 `json:"url,omitempty"`
-}
-
-type PingBatchItemRequest struct {
-	ConfigPath  string `json:"configPath,omitempty"`
-	OutboundTag string `json:"outboundTag,omitempty"`
-}
-
-type PingBatchResponse struct {
-	Results []PingBatchItemResponse `json:"results,omitempty"`
-}
-
-type PingBatchItemResponse struct {
-	Success bool   `json:"success"`
-	Delay   int64  `json:"delay,omitempty"`
-	Error   string `json:"error,omitempty"`
-}
-
-type RunXrayRequest struct {
-	ConfigPath string `json:"configPath,omitempty"`
 }
 
 type RunXrayFromJSONRequest struct {

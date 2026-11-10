@@ -41,13 +41,18 @@ enum IOSImport {
     }.value
   }
 
-  static func qr(_ text: String) -> UIImage? {
+  @MainActor static func qr(_ text: String) -> UIImage? {
+    if let last = lastQR, last.text == text { return last.image }
     let generator = CIFilter.qrCodeGenerator()
     generator.message = Data(text.utf8)
-    guard let output = generator.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)),
-          let image = CIContext().createCGImage(output, from: output.extent) else { return nil }
-    return UIImage(cgImage: image)
+    var result: UIImage?
+    if let output = generator.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)),
+       let image = CIContext().createCGImage(output, from: output.extent) { result = UIImage(cgImage: image) }
+    lastQR = (text, result)
+    return result
   }
+  // A view asks again on every pass over its body; the code of one text is drawn once.
+  @MainActor private static var lastQR: (text: String, image: UIImage?)?
 }
 
 struct TextFile: FileDocument {

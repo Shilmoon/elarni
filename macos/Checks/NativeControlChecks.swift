@@ -523,6 +523,7 @@ struct NativeControlChecks {
     _ = try await store.setNodeIPPreference(nodeID: first, preference: nil)
     try await pingChecks(store: store, defaults: defaults)
     await record { try await fixedAutomationSelectionCheck(store: store, defaults: defaults, plan: candidate, pinned: second, other: first) }
+    await record { try await refusedAutomaticSwitchCheck(store: store, defaults: defaults, nodes: [first, second]) }
     await record { try await extensionVersionCheck(store: store, defaults: defaults, plan: candidate) }
   }
 
@@ -924,6 +925,55 @@ struct NativeControlChecks {
       throw Failure(message: "a manual choice under a pinned server did not switch the connected provider")
     }
     print("PASS a manual server choice under a pinned automation server switches the connected tunnel")
+  }
+
+  // A switch to an allowed backup that the provider refuses leaves the previous plan running, as a manual one does.
+  static func refusedAutomaticSwitchCheck(store: SubscriptionStore, defaults: UserDefaults, nodes: [String]) async throws {
+    guard let current = store.selectedNodeID(), let other = nodes.first(where: { $0 != current }) else {
+      throw Failure(message: "automatic switch fixture")
+    }
+    let settings = defaults.data(forKey: "ElarniTunnelSettingsV1")
+    defer {
+      defaults.set(settings, forKey: "ElarniTunnelSettingsV1")
+      defaults.removeObject(forKey: TunnelMethodChannel.automationKey)
+    }
+    // Backups are checked only through a tunnel that carries all traffic.
+    defaults.set(try JSONSerialization.data(withJSONObject: ["xrayTunEnabled": false, "includeAllNetworks": true]),
+      forKey: "ElarniTunnelSettingsV1")
+    try TunnelCommandCoordinator(defaults: defaults).persist(.connected)
+    let manager = SwitchManager(plan: Data("{}".utf8))
+    let messenger = ControlMessenger()
+    let controller = TunnelMethodChannel(messenger: messenger, defaults: defaults, observesSystem: false,
+      makeSubscriptions: { store }, loadPreferences: { [manager] })
+    defer { withExtendedLifetime(controller) {} }
+    func target(_ id: String) -> [String: Any] {
+      ["id": id, "url": "https://\(id).invalid/", "expectedStatus": 204, "expectedBody": ""]
+    }
+    _ = try await messenger.call("configureAutomation", arguments: ["schemaVersion": 1, "enabled": true,
+      "policy": "orderedFallback", "subscriptionID": try store.subscriptionID(nodeID: current),
+      "nodeIDs": [current, other], "targets": [target("one"), target("two")]])
+    // The provider runs the plan this controller builds for the selected server, on a usable network.
+    let running = try controller.automationContext(nodeID: current).plan
+    (manager.protocolConfiguration as! NETunnelProviderProtocol).providerConfiguration = ["planPayload": running]
+    controller.automation.pathChanged("fixture", available: true, now: 0)
+    for (code, expected) in [("missing_credentials", "automation_missingCredentials"),
+                             ("invalid_configuration", "automation_invalidConfiguration"),
+                             ("resolution_failed", "automation_indeterminate")] {
+      manager.fixtureSession.switchCode = code
+      let switches = manager.fixtureSession.switches
+      do {
+        _ = try await messenger.call("selectNode", arguments: ["id": other])
+        throw Failure(message: "refused automatic \(code) switch was accepted")
+      } catch let failure as Failure where failure.message == "selectNode: \(expected)" {}
+      let pending = store.runtimeReconciliationRequired
+      let state = try await messenger.call("state")
+      let saved = (manager.protocolConfiguration as! NETunnelProviderProtocol).providerConfiguration!["planPayload"] as? Data
+      guard !pending, state["state"] as? String == "connected", state["connectionIntent"] as? String == "connected",
+            store.selectedNodeID() == current, manager.fixtureSession.switches == switches + 1, saved == running else {
+        throw Failure(message: "refused automatic \(code) switch left reconciliation that stops the working previous plan")
+      }
+    }
+    print("PASS refused automatic node switch keeps the previous plan connected with nothing left to reconcile")
   }
 }
 

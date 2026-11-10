@@ -474,6 +474,42 @@ func TestRetiredDNSFlowPassesLaterQueriesToANewFlow(t *testing.T) {
 	f.finished(t, 40000, time.Second) // the retired flow's session ends on its own
 }
 
+// A reply can count for a datagram the full queue is about to refuse (Elarni): taking that datagram back
+// must not leave the count below zero, which reads as retired and moves the app's flow to a new session.
+func TestRefusedDatagramDoesNotRetireItsFlow(t *testing.T) {
+	c := &udpConn{queue: newPacketQueue(1)}
+	if queued, _ := c.enqueue(buf.New()); !queued {
+		t.Fatal("empty queue refused a datagram")
+	}
+	stop := make(chan struct{})
+	replies := make(chan struct{})
+	go func() {
+		defer close(replies)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				c.answer(1)
+			}
+		}
+	}()
+	for i := 0; i < 200000; i++ {
+		b := buf.New()
+		queued, retired := c.enqueue(b)
+		if !queued {
+			b.Release()
+		}
+		if queued || retired {
+			close(stop)
+			<-replies
+			t.Fatalf("datagram %d into a full queue: queued=%v retired=%v", i, queued, retired)
+		}
+	}
+	close(stop)
+	<-replies
+}
+
 // An app that half-closes and keeps downloading is not finished while data still flows (Elarni):
 // a full table refuses new connections rather than cut that download.
 func TestFullTCPTableKeepsHalfClosedConnectionThatStillReceives(t *testing.T) {

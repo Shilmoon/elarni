@@ -60,9 +60,11 @@ var privateNetworks = func() []netip.Prefix {
 	return result
 }()
 
+var nat64Prefix = netip.MustParsePrefix("64:ff9b::/96")
+
 func addressRisk(address netip.Addr) string {
 	address = address.Unmap()
-	if netip.MustParsePrefix("64:ff9b::/96").Contains(address) {
+	if nat64Prefix.Contains(address) {
 		bytes := address.As16()
 		address = netip.AddrFrom4([4]byte(bytes[12:]))
 	}
@@ -343,6 +345,12 @@ func fetchResourceAttempt(ctx context.Context, request SubscriptionFetchRequest,
 	chain := *encountered
 	defer func() { *encountered = chain }()
 	origin := u.Scheme + "://" + u.Host
+	// The connect address and HTTP Host name the subscription's own host; a mirror and the fallback URL are
+	// other hosts, reached as they are named.
+	own := false
+	if base, err := feedTarget(identity); err == nil {
+		own = origin == base.Scheme+"://"+base.Host
+	}
 	for redirects := 0; redirects <= 5; redirects++ {
 		if err := ctx.Err(); err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -351,8 +359,9 @@ func fetchResourceAttempt(ctx context.Context, request SubscriptionFetchRequest,
 			return nil, errors.New("fetch_failed")
 		}
 		custom := origin == u.Scheme+"://"+u.Host
+		override := custom && own
 		dialHost := u.Hostname()
-		if custom && request.ConnectAddress != "" {
+		if override && request.ConnectAddress != "" {
 			dialHost = strings.Trim(request.ConnectAddress, "[]")
 		}
 		addresses, err := resolve(ctx, "ip", dialHost)
@@ -376,7 +385,7 @@ func fetchResourceAttempt(ctx context.Context, request SubscriptionFetchRequest,
 				return nil, errors.New("invalid_target")
 			}
 			target := u.String()
-			if custom && (request.ConnectAddress != "" || request.HTTPHost != "") {
+			if override && (request.ConnectAddress != "" || request.HTTPHost != "") {
 				target += "\nconnect=" + request.ConnectAddress + "\nhost=" + request.HTTPHost
 			}
 			fingerprint := approvalFingerprint(target, risks)
@@ -434,8 +443,10 @@ func fetchResourceAttempt(ctx context.Context, request SubscriptionFetchRequest,
 			}
 		}
 		if custom && request.HTTPHost != "" {
-			req.Host = request.HTTPHost
 			identityURL.Host = request.HTTPHost
+			if override {
+				req.Host = request.HTTPHost
+			}
 		}
 		if request.InstallationID != "" {
 			req.Header.Set("X-HWID", deviceID(request.InstallationID, request.DeviceSalt, &identityURL))

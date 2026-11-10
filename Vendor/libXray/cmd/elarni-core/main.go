@@ -44,12 +44,14 @@ func dispatch(raw string) (result response) {
 		result.text = nativeResponse(data, err)
 		result.hold = string(request.Method) == "acquireCatalog" && err == nil
 		result.run = string(request.Method) == "runVPN" && err == nil
-		var options struct {
-			ReuseSession bool `json:"reuseSession"`
+		if string(request.Method) == "runVPN" {
+			var options struct {
+				ReuseSession bool `json:"reuseSession"`
+			}
+			_ = json.Unmarshal(request.Payload, &options)
+			// A failed runVPN may leave a live elevated owner for the next connect.
+			result.session = options.ReuseSession
 		}
-		_ = json.Unmarshal(request.Payload, &options)
-		// A failed runVPN may leave a live elevated owner for the next connect.
-		result.session = string(request.Method) == "runVPN" && options.ReuseSession
 		return
 	}
 	if data, err, handled := dataRequest(string(request.Method), request.Payload); handled {
@@ -90,7 +92,7 @@ func dispatch(raw string) (result response) {
 	default:
 		return
 	}
-	result.text = libxray.Invoke(raw)
+	result.text = libxray.InvokeRequest(request)
 	var reply struct {
 		Success bool `json:"success"`
 	}
@@ -138,19 +140,21 @@ func serve(input io.Reader, output io.Writer, invoke func(string) response, stop
 	// EOF detection cannot wait for Invoke: startup can hold the core mutex.
 	requests := make(chan string, 1)
 	closed := make(chan struct{})
+	// Written before the first request is sent, read after it is received.
+	var request struct {
+		Method  string `json:"method"`
+		Payload struct {
+			ReuseSession  bool `json:"reuseSession"`
+			StreamMetrics bool `json:"streamMetrics"`
+		} `json:"payload"`
+	}
 	go func() {
 		scanner := bufio.NewScanner(input)
 		scanner.Buffer(make([]byte, 64*1024), maxMessage+1)
 		if scanner.Scan() {
 			raw := scanner.Text()
-			requests <- raw
-			var request struct {
-				Method  string `json:"method"`
-				Payload struct {
-					ReuseSession bool `json:"reuseSession"`
-				} `json:"payload"`
-			}
 			_ = json.Unmarshal([]byte(raw), &request)
+			requests <- raw
 			if request.Method == "runVPN" && request.Payload.ReuseSession || request.Method == "acquireCatalog" {
 				for scanner.Scan() {
 					select {
@@ -199,14 +203,8 @@ func serve(input io.Reader, output io.Writer, invoke func(string) response, stop
 	case <-closed:
 		return 0
 	}
-	var options struct {
-		Payload struct {
-			StreamMetrics bool `json:"streamMetrics"`
-		} `json:"payload"`
-	}
-	_ = json.Unmarshal([]byte(raw), &options)
 	if result.session && (result.run || running()) {
-		return serveVPNSession(requests, closed, output, invoke, running, up, result.run, options.Payload.StreamMetrics, logCursor)
+		return serveVPNSession(requests, closed, output, invoke, running, up, result.run, request.Payload.StreamMetrics, logCursor)
 	}
 	if result.hold {
 		return serveCatalogLease(requests, closed, output, invoke)
@@ -228,7 +226,7 @@ func serve(input io.Reader, output io.Writer, invoke func(string) response, stop
 			}
 			var events []any
 			logs := logEvent(&logCursor)
-			if result.run && options.Payload.StreamMetrics {
+			if result.run && request.Payload.StreamMetrics {
 				metrics, err := platformMetrics()
 				if err != nil {
 					metrics, err = xray.GetRuntimeMetrics()

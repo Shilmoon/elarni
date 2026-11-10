@@ -65,7 +65,7 @@ func TestPersistedProfilesCannotEnableLocalFileSideEffects(t *testing.T) {
 	if _, err, handled := dataRequest("validateConfig", payload); !handled || err == nil {
 		t.Error("preflight accepted persisted key logging")
 	}
-	_, _, err := xray.PingJSONWithDiagnostics(config, 1, "http://127.0.0.1:1", "", "GET", "default", "baseline")
+	_, _, err := xray.PingJSONWithPreparation(context.Background(), config, 1, "http://127.0.0.1:1", "", "GET", "default", "baseline", nil)
 	if err == nil || !strings.Contains(err.Error(), "key logging") {
 		t.Errorf("probe did not reject persisted key logging before startup: %v", err)
 	}

@@ -7,7 +7,6 @@ import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.SurfaceTexture
-import android.graphics.YuvImage
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
@@ -33,7 +32,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.LifecycleResumeEffect
-import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.util.concurrent.Executor
 
@@ -43,12 +41,11 @@ object QRFrames {
     @Volatile var read: (ByteBuffer, Int, Int, Int) -> String? = ::decode
 
     fun decode(luma: ByteBuffer, rowStride: Int, width: Int, height: Int): String? {
-        // A QR decoder reads only brightness; gray chroma makes the plane an NV21 frame Android can encode.
-        val frame = ByteArray(width * height * 3 / 2)
-        for (row in 0 until height) { luma.position(row * rowStride); luma.get(frame, row * width, width) }
-        frame.fill(128.toByte(), width * height)
-        val jpeg = ByteArrayOutputStream().also { YuvImage(frame, ImageFormat.NV21, width, height, null).compressToJpeg(Rect(0, 0, width, height), 90, it) }.toByteArray()
-        return try { Native.qr(jpeg) } catch (_: AppFailure) { null }
+        // A QR decoder reads only brightness, so the plane goes to it without its row padding and with no image file in between.
+        val frame = ByteArray(width * height)
+        if (rowStride == width) { luma.position(0); luma.get(frame) }
+        else for (row in 0 until height) { luma.position(row * rowStride); luma.get(frame, row * width, width) }
+        return try { Native.qrLuma(frame, width, height) } catch (_: AppFailure) { null }
     }
 }
 

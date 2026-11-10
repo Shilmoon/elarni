@@ -167,14 +167,28 @@ pub fn validate_effective_targets(routes: &RouteModel) -> Result<(), RoutingErro
             .map_or(0, Vec::len);
     if count > MAX_ROUTING_TARGETS
         || routes.rules.len() > 128
-        || serde_json::to_vec(routes)
-            .map_err(|_| RoutingError::InvalidJson)?
-            .len()
-            > 8 * 1024 * 1024
+        || encoded_len(routes)? > 8 * 1024 * 1024
     {
         return Err(RoutingError::TooLarge);
     }
     Ok(())
+}
+
+// The size of the model as JSON, without building the JSON.
+fn encoded_len(routes: &RouteModel) -> Result<usize, RoutingError> {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    serde_json::to_writer(&mut count, routes).map_err(|_| RoutingError::InvalidJson)?;
+    Ok(count.0)
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -362,14 +376,9 @@ pub fn decode_routing(input: &str) -> Result<RoutingImport, RoutingError> {
     if input.is_empty() {
         return Err(RoutingError::Empty);
     }
-    let command = [
-        "happ://routing/",
-        "incy://routing/",
-        "elarni://routing/",
-        "://routing/",
-    ]
-    .iter()
-    .find_map(|prefix| input.strip_prefix(prefix));
+    let command = ["happ://routing/", "incy://routing/", "elarni://routing/"]
+        .iter()
+        .find_map(|prefix| input.strip_prefix(prefix));
     if command == Some("off") {
         return Ok(RoutingImport::Off);
     }

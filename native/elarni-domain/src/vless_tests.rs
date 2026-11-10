@@ -1,7 +1,22 @@
 use serde_json::{Value, json};
 
-use crate::compiler::{compile_xray_outbound_config, compile_xray_outbound_config_with_options};
+use crate::compiler::{CompileError, compile_xray_outbound_config_with_options};
 use crate::model::{PacketBackend, RouteModel, RuntimeOptions};
+
+fn compile_xray_outbound_config(
+    outbound: Value,
+    routes: &RouteModel,
+    socks_port: u16,
+) -> Result<(Vec<u8>, String), CompileError> {
+    compile_xray_outbound_config_with_options(
+        outbound,
+        routes,
+        socks_port,
+        PacketBackend::NativeTun2Proxy,
+        1500,
+        &RuntimeOptions::default(),
+    )
+}
 
 fn routes() -> RouteModel {
     serde_json::from_value(json!({"rules": [], "dnsServers": ["192.0.2.53"]})).unwrap()

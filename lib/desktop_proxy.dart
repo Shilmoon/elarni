@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
+import 'package:crypto/crypto.dart' show sha256;
 import 'awake_timeout.dart';
 import 'platform_services.dart';
 import 'domain_ffi.dart';
@@ -138,9 +139,19 @@ final class DesktopProxy {
   );
   ElarniDomainFfi? _domain;
   DesktopCatalog? _catalog;
-  // Semantics are a pure function of catalog data, so an edit reuses the
-  // committed catalog's result instead of compiling every node twice.
-  final _semanticsMemo = <String, CatalogMap>{};
+  // A digest of what each server compiles to, by what it compiles from: the
+  // route and settings it shares with other servers, then its own config. A
+  // catalog edit compiles only the servers whose inputs it changed.
+  final _compiledMemo = <String, Map<String, _Compiled>>{};
+  var _semanticsPass = 0;
+  final _probeTargets =
+      <
+        String,
+        ({
+          Object revision,
+          Future<({CatalogMap endpoint, Future<Map?> mapping})> target,
+        })
+      >{};
   final _refreshBackoff = <String, ({DateTime until, int failures})>{};
   Future<void>? _initializing, _stopping;
   Future<CatalogMap>? _disconnecting;
@@ -156,6 +167,7 @@ final class DesktopProxy {
   int _manualProbes = 0;
   bool _interruptingProbes = false;
   String? _coreVersion;
+  ({Object? enabled, int at})? _vpnService;
   Timer? _timer, _initRetry;
   void Function(String?)? _listener;
   bool _disposed = false, _storageLost = false;
@@ -429,44 +441,56 @@ final class DesktopProxy {
     }
   }
 
-  static String _compiled(CatalogMap semantics, String id) => jsonEncode(
-    catalogList(
-      semantics['nodes'],
-    ).firstWhere((node) => node['id'] == id)['config'],
-  );
-
-  static CatalogMap _catalogSemantics(
-    DomainRequest request,
-    DesktopCatalog catalog,
-  ) => {
-    'nodes': [
-      for (final source in catalog.sources)
-        for (final node in catalogList(source['nodes']))
-          {
-            'id': node['id'],
-            'identity': node['config'],
-            'assetRevision': _runtimeAssets(
-              catalog,
-              nodeId: node['id']! as String,
-            )['assetRevision'],
-            'config': node['format'] == 'xrayProfile'
-                ? _semanticConfig(request, catalog, node)
-                : node['config'],
-          },
-    ],
-  };
-
-  // A deleted per-app server fails the connect, not every catalog change.
-  static Object? _semanticConfig(
-    DomainRequest request,
-    DesktopCatalog catalog,
-    CatalogMap node,
-  ) {
-    try {
-      return jsonDecode(_compileWith(request, catalog, node));
-    } on PlatformException catch (error) {
-      if (error.code != 'per_app_target_missing') rethrow;
-      return {'error': error.code};
+  // Each server with what it compiles from besides its own config: the route
+  // and settings it shares with other servers. A server that is not compiled
+  // has neither; `error` is a per-app server that is gone, which fails the
+  // connect, not every catalog change.
+  static Iterable<
+    ({
+      CatalogMap node,
+      Object? assetRevision,
+      CatalogMap? context,
+      String? error,
+    })
+  >
+  _compileInputs(DesktopCatalog catalog) sync* {
+    final settings = catalog.settings, assignments = catalog.assignments;
+    final routes = {for (final route in catalog.routes) route['id']: route};
+    final contexts = <String, ({CatalogMap? context, String? error})>{};
+    for (final source in catalog.sources) {
+      final routeID = assignments[source['id']];
+      late final routing = routeID == null
+          ? null
+          : routes[routeID] ?? (throw desktopError('invalid_routing'));
+      late final assetRevision = routing?['enabled'] == true
+          ? routing!['assetRevision']
+          : null;
+      for (final node in catalogList(source['nodes'])) {
+        final preference = node['ipPreference'] as String?;
+        final shared = node['format'] != 'xrayProfile'
+            ? (context: null, error: null)
+            : contexts['$routeID $preference'] ??= () {
+                try {
+                  return (
+                    context: _compileContext(
+                      catalog,
+                      routing,
+                      _preferring(settings, preference),
+                    ),
+                    error: null,
+                  );
+                } on PlatformException catch (error) {
+                  if (error.code != 'per_app_target_missing') rethrow;
+                  return (context: null, error: error.code);
+                }
+              }();
+        yield (
+          node: node,
+          assetRevision: assetRevision,
+          context: shared.context,
+          error: shared.error,
+        );
+      }
     }
   }
 
@@ -481,14 +505,32 @@ final class DesktopProxy {
     () => _withDomain(path, (request) => request(operation, payload)),
   );
 
-  static Future<CatalogMap> _semanticsOff(String path, CatalogMap data) =>
-      Isolate.run(
-        () => _withDomain(
-          path,
-          (request) =>
-              _catalogSemantics(request, _workerCatalog(data, request)),
-        ),
-      );
+  // Display names are left out, as in a server's identity, so a provider
+  // renaming a server does not make it another one.
+  static Future<Map<String, String>> _digestsOff(
+    String path,
+    CatalogMap data,
+    Set<String> nodeIds,
+  ) => Isolate.run(
+    () => _withDomain(
+      path,
+      (request) => {
+        for (final input in _compileInputs(_workerCatalog(data, request)))
+          if (nodeIds.contains(input.node['id']))
+            input.node['id']! as String: sha256
+                .convert(
+                  utf8.encode(
+                    DesktopCatalog.identity(
+                      jsonDecode(
+                        _compileIn(request, input.context!, input.node),
+                      ),
+                    ),
+                  ),
+                )
+                .toString(),
+      },
+    ),
+  );
 
   static Future<String> _compileOff(
     String path,
@@ -546,73 +588,89 @@ final class DesktopProxy {
     }
   }
 
-  static TunnelSettings _nodeSettings(DesktopCatalog catalog, CatalogMap node) {
-    final preference = node['ipPreference'] as String?;
-    return preference == null
-        ? catalog.settings
-        : catalog.settings.copyWith(
-            preferredIP: preference,
-            profilePreferredIP: preference,
-          );
-  }
+  static TunnelSettings _nodeSettings(
+    DesktopCatalog catalog,
+    CatalogMap node,
+  ) => _preferring(catalog.settings, node['ipPreference'] as String?);
+
+  static TunnelSettings _preferring(
+    TunnelSettings settings,
+    String? preference,
+  ) => preference == null
+      ? settings
+      : settings.copyWith(
+          preferredIP: preference,
+          profilePreferredIP: preference,
+        );
 
   static String _compileWith(
     DomainRequest request,
     DesktopCatalog catalog,
     CatalogMap node,
   ) {
-    final settings = _nodeSettings(catalog, node).listeners;
     final source = catalog.sources.firstWhere(
       (source) =>
           catalogList(source['nodes']).any((item) => item['id'] == node['id']),
     );
     final routeID = catalog.assignments[source['id']];
-    final routing = routeID == null ? null : catalog.route(routeID as String);
-    final raw =
-        request('compileProfile', {
-              'profile': node['config'],
-              'routes': routing?['enabled'] == true
-                  ? routing!['routeModel']
-                  : null,
-              'socksPort': settings.socksPort,
-              'packetBackend': settings.xrayTunEnabled
-                  ? 'xrayTun'
-                  : 'nativeTun2Proxy',
-              'tunMtu': 1500,
-              if (settings.profilePreferredIP != 'inherit')
-                'preferredIp': settings.profilePreferredIP,
-              'runtime': {
-                'httpInboundEnabled': settings.httpInboundEnabled,
-                'httpPort': settings.httpPort,
-                'allowLan': settings.allowLAN,
-                if (settings.inboundAuthEnabled)
-                  'inboundAuth': catalog.data['inboundCredentials'],
-                'fragmentationEnabled': settings.fragmentationEnabled,
-                'fragmentPackets': settings.fragmentPackets,
-                'fragmentLength': settings.fragmentLength,
-                'fragmentInterval': settings.fragmentInterval,
-                'muxEnabled': settings.muxEnabled,
-                'preferredIp': settings.preferredIP,
-                'connectionIdleSeconds': settings.idleTimeoutSeconds,
-                'sniffingEnabled': settings.sniffingEnabled,
-                'useDnsFromJson': settings.useDNSFromJSON,
-                'profileDnsMode': settings.profileDNSMode,
-                'perAppMode': settings.perAppMode,
-                'perAppProcesses': settings.perAppProcesses,
-                'perAppTargets': catalog.perAppTargets(settings),
-              },
-            })['configUtf8']!
-            as String;
-    final config = catalogMap(jsonDecode(raw));
-    final policy = catalogMap(config['policy'] ?? {});
-    policy['system'] = {
-      ...catalogMap(policy['system'] ?? {}),
-      'statsInboundUplink': true,
-      'statsInboundDownlink': true,
+    return _compileIn(
+      request,
+      _compileContext(
+        catalog,
+        routeID == null ? null : catalog.route(routeID as String),
+        _nodeSettings(catalog, node),
+      ),
+      node,
+    );
+  }
+
+  // The compiler turns on the counters the tunnel reads.
+  static String _compileIn(
+    DomainRequest request,
+    CatalogMap context,
+    CatalogMap node,
+  ) =>
+      request('compileProfile', {
+            ...context,
+            'profile': node['config'],
+          })['configUtf8']!
+          as String;
+
+  // Everything a compile takes besides the server's own config.
+  static CatalogMap _compileContext(
+    DesktopCatalog catalog,
+    CatalogMap? routing,
+    TunnelSettings nodeSettings,
+  ) {
+    final settings = nodeSettings.listeners;
+    return {
+      'routes': routing?['enabled'] == true ? routing!['routeModel'] : null,
+      'socksPort': settings.socksPort,
+      'packetBackend': settings.xrayTunEnabled ? 'xrayTun' : 'nativeTun2Proxy',
+      'tunMtu': 1500,
+      if (settings.profilePreferredIP != 'inherit')
+        'preferredIp': settings.profilePreferredIP,
+      'runtime': {
+        'httpInboundEnabled': settings.httpInboundEnabled,
+        'httpPort': settings.httpPort,
+        'allowLan': settings.allowLAN,
+        if (settings.inboundAuthEnabled)
+          'inboundAuth': catalog.data['inboundCredentials'],
+        'fragmentationEnabled': settings.fragmentationEnabled,
+        'fragmentPackets': settings.fragmentPackets,
+        'fragmentLength': settings.fragmentLength,
+        'fragmentInterval': settings.fragmentInterval,
+        'muxEnabled': settings.muxEnabled,
+        'preferredIp': settings.preferredIP,
+        'connectionIdleSeconds': settings.idleTimeoutSeconds,
+        'sniffingEnabled': settings.sniffingEnabled,
+        'useDnsFromJson': settings.useDNSFromJSON,
+        'profileDnsMode': settings.profileDNSMode,
+        'perAppMode': settings.perAppMode,
+        'perAppProcesses': settings.perAppProcesses,
+        'perAppTargets': catalog.perAppTargets(settings),
+      },
     };
-    config['policy'] = policy;
-    config['stats'] = <String, Object?>{};
-    return jsonEncode(config);
   }
 
   static CatalogMap _runtimeAssets(DesktopCatalog catalog, {String? nodeId}) {
@@ -695,4 +753,22 @@ final class DesktopProxy {
     _domain?.dispose();
     _domain = null;
   }
+}
+
+final class _Compiled {
+  _Compiled(this.digest, this.pass);
+  final String digest;
+  // The last pass over a catalog that used this entry; unused ones are dropped.
+  int pass;
+}
+
+/// What a server's health record is bound to.
+final class _Semantics {
+  _Semantics(this.config, this.key, this.shared, this.assetRevision);
+  final Object? config, assetRevision;
+  // The compile inputs as text: the server's config, and the rest.
+  final String key, shared;
+  // A digest of the compiled config, the error that kept it from compiling,
+  // or null for a server that is not compiled.
+  String? compiled;
 }
