@@ -4,6 +4,11 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+### Changed
+
+- Removed the core's batch latency test and its start from a config file: no platform calls
+  them.
+
 ## 0.6.0 - 2026-11-10
 
 ### Added

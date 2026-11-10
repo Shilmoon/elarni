@@ -12,7 +12,6 @@ import (
 
 	"github.com/xtls/libxray/memory"
 	"github.com/xtls/libxray/share"
-	"github.com/xtls/xray-core/common/cmdarg"
 	"github.com/xtls/xray-core/common/flightrecorder"
 	"github.com/xtls/xray-core/common/probe"
 	"github.com/xtls/xray-core/core"
@@ -84,21 +83,6 @@ func GetRuntimeMetrics() (RuntimeMetrics, error) {
 		flightrecorder.Record(flightrecorder.Event{Name: "core_metrics", Values: map[string]int64{"uplink_bytes": result.UplinkBytes, "downlink_bytes": result.DownlinkBytes, "tcp_sessions": result.ActiveTCPSessions, "udp_sessions": result.ActiveUDPSessions, "memory_limit": result.MemoryLimitBytes}})
 	}
 	return result, nil
-}
-
-func StartXray(configPath string) (*core.Instance, error) {
-	file := cmdarg.Arg{configPath}
-	config, err := core.LoadConfig("json", file)
-	if err != nil {
-		return nil, err
-	}
-
-	server, err := core.New(config)
-	if err != nil {
-		return nil, err
-	}
-
-	return server, nil
 }
 
 func StartXrayFromJSON(configJSON string) (_ *core.Instance, startErr error) {
