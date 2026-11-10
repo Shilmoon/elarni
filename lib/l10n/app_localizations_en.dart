@@ -568,7 +568,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String appRoutingUses(String engine) {
-    return 'App routing uses $engine. In bypass mode, unlisted or unidentified processes follow normal routing. In only-selected mode, they connect directly.';
+    return 'App routing uses $engine. Unlisted apps connect directly in only-selected mode and follow normal routing in bypass mode. Traffic Elarni cannot link to an app (WSL, virtual machines, containers, connections that closed early) may come from a listed app: in only-selected mode it follows normal routing. Add Unidentified traffic to the list to choose where it goes.';
   }
 
   @override
@@ -2910,4 +2910,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get markProblem => 'Mark problem';
+
+  @override
+  String get perAppUnknownOwner => 'Unidentified traffic';
 }

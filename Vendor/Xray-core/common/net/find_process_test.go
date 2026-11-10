@@ -147,3 +147,46 @@ func tcpAndUDPOnOnePort(t *testing.T, ip string) (net.Listener, net.PacketConn) 
 	t.Fatalf("no port number free for both TCP and UDP: %v", err)
 	return nil, nil
 }
+
+// An IPv6 socket can connect to an IPv4 address (IPV6_V6ONLY off, as Java and Go
+// sockets bound to [::] are). The TUN sees an IPv4 flow, while Linux lists the socket
+// only in its IPv6 tables, with the address mapped into IPv6.
+func TestFindProcessOfADualStackSocket(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	server, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	target, udpTarget := listener.Addr().(*net.TCPAddr), server.LocalAddr().(*net.UDPAddr)
+	dialer := net.Dialer{LocalAddr: &net.TCPAddr{IP: net.IPv6zero}}
+	tcp, err := dialer.Dial("tcp", target.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tcp.Close()
+	client, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv6zero})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if _, err := client.WriteTo([]byte("dual"), udpTarget); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		network        string
+		source, target int
+	}{
+		{"tcp", tcp.LocalAddr().(*net.TCPAddr).Port, target.Port},
+		{"udp", client.LocalAddr().(*net.UDPAddr).Port, udpTarget.Port},
+	} {
+		pid, _, _, err := xnet.FindProcess(c.network, "127.0.0.1", uint16(c.source), "127.0.0.1", uint16(c.target))
+		if err != nil || pid != os.Getpid() {
+			t.Errorf("%s from a dual-stack socket: pid %d, %v; want %d", c.network, pid, err, os.Getpid())
+		}
+	}
+}

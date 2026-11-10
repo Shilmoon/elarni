@@ -221,6 +221,10 @@ final class _RoutingApp {
   final Uint8List? icon;
 }
 
+/// The rule for traffic whose app the lookup could not find: WSL, virtual
+/// machines and containers, and connections that closed before routing.
+const unknownOwnerRule = '-1';
+
 enum _AppView { selected, picker, rules, paste, help }
 
 // Owned by the settings screen, so switching pages does not discard edits.
@@ -389,6 +393,13 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
         .toList();
   }
 
+  // Unidentified traffic leads the list; apps follow by name.
+  static int _byName(_RoutingApp a, _RoutingApp b) =>
+      a.process == unknownOwnerRule || b.process == unknownOwnerRule
+      ? (b.process == unknownOwnerRule ? 1 : 0) -
+            (a.process == unknownOwnerRule ? 1 : 0)
+      : a.name.toLowerCase().compareTo(b.name.toLowerCase());
+
   _RoutingApp _app(String process) =>
       apps
           .where((app) => identity(app.process) == identity(process))
@@ -396,6 +407,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
       _RoutingApp(_name(process), process);
 
   String _name(String process) {
+    if (process == unknownOwnerRule) return l10n.perAppUnknownOwner;
     final parts = process
         .replaceAll('\\', '/')
         .split('/')
@@ -439,14 +451,21 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
       notice = null;
       appListFailed = false;
     });
+    final unknown = _RoutingApp(l10n.perAppUnknownOwner, unknownOwnerRule);
     try {
-      final values = await _nativeApps('routingApplications');
-      values.sort(
-        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-      );
-      if (mounted) setState(() => apps = values);
+      // Hosts list saved rules too, "-1" among them.
+      final values = (await _nativeApps(
+        'routingApplications',
+      )).where((app) => app.process != unknownOwnerRule).toList();
+      values.sort(_byName);
+      if (mounted) setState(() => apps = [unknown, ...values]);
     } on Object {
-      if (mounted) setState(() => appListFailed = true);
+      if (mounted) {
+        setState(() {
+          apps = [unknown];
+          appListFailed = true;
+        });
+      }
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -491,7 +510,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
       );
       final known = apps.map((app) => identity(app.process)).toSet();
       apps.addAll(values.where((app) => known.add(identity(app.process))));
-      apps.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      apps.sort(_byName);
     });
   });
 
@@ -603,7 +622,9 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
   Widget _icon(_RoutingApp app) {
     // A plain rounded square read as a checkbox beside each rule.
     Widget fallback() => Icon(
-      CupertinoIcons.macwindow,
+      app.process == unknownOwnerRule
+          ? CupertinoIcons.question_square
+          : CupertinoIcons.macwindow,
       size: 28,
       color: Theme.of(context).colorScheme.onSurfaceVariant,
     );

@@ -1219,9 +1219,11 @@ pub(crate) fn apply_per_app_routing(
         .map(String::as_str)
         .filter(|name| !targeted.contains(name))
         .collect();
-    // Android names the owner of a flow it could not look up "-1"; a listed app's
-    // flow must not leave the tunnel for that.
-    if runtime.per_app_mode == PerAppMode::ProxyOnly {
+    // "-1" names the owner of a flow the lookup could not find, on every platform; a listed
+    // app's flow must not leave the tunnel for that. Listing "-1" gives it a target instead.
+    if runtime.per_app_mode == PerAppMode::ProxyOnly
+        && !runtime.per_app_processes.iter().any(|name| name == "-1")
+    {
         others.push("-1");
     }
     if !others.is_empty() {

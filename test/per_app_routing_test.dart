@@ -574,7 +574,11 @@ void main() {
     await tester.tap(find.text('Add apps'));
     await tester.pumpAndSettle();
     expect(
-      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+      tester
+          .widget<CheckboxListTile>(
+            find.widgetWithText(CheckboxListTile, 'Browser'),
+          )
+          .value,
       isTrue,
     );
     await tester.tap(find.text('Browser'));
@@ -586,6 +590,86 @@ void main() {
     await tester.tap(find.text('Save changes'));
     await tester.pumpAndSettle();
     expect(saved!.perAppProcesses, [r'C:\Apps\Browser.exe']);
+  });
+
+  // WSL, virtual machines and closed connections have no app. "Only listed" keeps such
+  // traffic in the tunnel; listing it with a target sends it elsewhere.
+  testWidgets('unidentified traffic leads the app list and takes a target', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      DesktopIntegration.channel,
+      (call) async => call.method == 'routingApplications'
+          ? [
+              {'name': 'Aardvark', 'process': '/usr/bin/aardvark'},
+              // A host lists a saved "-1" as a rule of its own.
+              {'name': '-1', 'process': '-1'},
+            ]
+          : null,
+    );
+    addTearDown(
+      () =>
+          messenger.setMockMethodCallHandler(DesktopIntegration.channel, null),
+    );
+    TunnelSettings? saved;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: PerAppRoutingEditor(
+              settings: const TunnelSettings(
+                xrayTunEnabled: true,
+                perAppMode: 'proxyOnly',
+                perAppProcesses: ['/usr/bin/curl'],
+              ),
+              windows: false,
+              linux: true,
+              onSave: (value) async => saved = value,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add apps'));
+    await tester.pumpAndSettle();
+    final tiles = tester
+        .widgetList<CheckboxListTile>(find.byType(CheckboxListTile))
+        .toList();
+    expect(
+      tiles
+          .map(
+            (tile) => find
+                .descendant(
+                  of: find.byWidget(tile),
+                  matching: find.textContaining(
+                    RegExp('Unidentified|Aardvark'),
+                  ),
+                )
+                .evaluate()
+                .map((element) => (element.widget as Text).data)
+                .first,
+          )
+          .take(2),
+      ['Unidentified traffic', 'Aardvark'],
+    );
+    expect(find.text('-1'), findsNothing);
+    await tester.tap(find.text('Unidentified traffic'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    expect(find.text('Unidentified traffic'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('per-app-target:-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(MenuItemButton, 'Direct').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+    expect(saved!.perAppProcesses, ['/usr/bin/curl', '-1']);
+    expect(saved!.perAppTargets, {'-1': 'direct'});
   });
 
   // A Snap or script launcher's rule would name /usr/bin/snap or /bin/sh.
