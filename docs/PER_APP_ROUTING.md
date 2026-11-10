@@ -14,12 +14,21 @@ This is routing, not a firewall or kill switch.
 | Platform | Rules match |
 |---|---|
 | macOS | `.app/` bundles, including their helpers |
-| Windows | exact `.exe` paths, case-insensitive; Squirrel apps such as Discord by install folder |
-| Linux | resolved binary paths, case-sensitive; pick Snap/Flatpak apps from running processes |
+| Windows | exact `.exe` paths, case-insensitive; Squirrel apps such as Discord by install folder; Microsoft Store apps such as Claude by package |
+| Linux | resolved binary paths, case-sensitive; pick Snap/Flatpak apps from running processes; Snap apps by `/snap/<name>/` |
 | Android | package names; apps sharing a UID share a rule |
 
 A bare name matches in any folder, and a path ending in `/` matches everything
 below it.
+
+Apps picked from the list get a rule that still matches after the app updates. On
+desktop platforms an app that keeps each version in its own folder beside the
+previous one matches that folder of versions, when it holds nothing else. Claude
+Code, which the Claude app installs as `claude-code/<version>/<build>/`, is one; on
+Linux, so is `~/.local/share/claude/versions/`. On Windows, a Microsoft Store app's
+folder `WindowsApps\<name>_<version>_<arch>_<resource>_<publisher>\` matches as
+`WindowsApps\<name>_<publisher>\`, its package family, so rules saved for an earlier
+version match too.
 
 ## Sharing
 

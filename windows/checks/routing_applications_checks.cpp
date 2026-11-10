@@ -87,6 +87,60 @@ int main() {
     Require(ExecutableRule(remote) == remote, "a network path was resolved");
     std::puts("PASS Squirrel apps such as Discord match their install folder across updates");
 
+    // Microsoft Store apps such as Claude run from WindowsApps\<name>_<version>_<arch>_<resource>_<publisher>\,
+    // which each update replaces; the core compares that folder as <name>_<publisher>, its package family.
+    const std::wstring store = L"C:\\Program Files\\WindowsApps\\";
+    const auto family = store + L"Claude_pzs8sxrjxfjjc\\";
+    Require(ExecutableRule(store + L"Claude_4.23118.0.0_x64__pzs8sxrjxfjjc\\app\\Claude.exe") == family &&
+        ExecutableRule(store + L"Claude_4.24001.0.0_x64__pzs8sxrjxfjjc\\app\\Claude.exe") == family &&
+        // A bundle's resource id is ~.
+        ExecutableRule(store + L"5319275A.WhatsAppDesktop_2.2450.6.0_neutral_~_cv1g1gvanyjgm\\WhatsApp.exe") ==
+            store + L"5319275A.WhatsAppDesktop_cv1g1gvanyjgm\\",
+        "a Store app did not match its package family");
+    for (const auto& path : {store + L"Tools\\tool.exe", store + L"Claude_4.23118_x64__pzs8sxrjxfjjc\\Claude.exe",
+                             store + L"Claude_4.23118.0.0_x64__pzs8sxrjxfjj\\Claude.exe",
+                             std::wstring(L"C:\\Apps\\Claude_4.23118.0.0_x64__pzs8sxrjxfjjc\\Claude.exe")}) {
+      Require(ExecutableRule(path) == path, "a folder that is not a Store package lost its exact path");
+    }
+    Require(std::get<std::string>(RoutingApplication(family).at(EncodableValue("name"))) == "Claude" &&
+        std::get<std::string>(RoutingApplication(store + L"5319275A.WhatsAppDesktop_cv1g1gvanyjgm\\")
+            .at(EncodableValue("name"))) == "WhatsAppDesktop",
+        "a Store app was not named after its package");
+    std::puts("PASS Store apps such as Claude match their package across updates");
+
+    // Claude Code as the Claude app installs it: <root>\claude-code\<version>\<build>\claude.exe, a new
+    // version folder with each update, beside the previous one. A version folder matches the folder of
+    // versions only when that folder holds nothing else.
+    const auto versions = std::wstring(squirrel_temp) + L"elarni-versions-check-" + std::to_wstring(GetCurrentProcessId());
+    const auto claude = versions + L"\\claude-code", node = versions + L"\\node", mixed = versions + L"\\Mixed";
+    const std::wstring version_folders[] = {versions, claude, claude + L"\\2.1.309", claude + L"\\2.1.309\\9078b9c1d466",
+        claude + L"\\2.1.317", claude + L"\\2.1.317\\a33aa5518497", node, node + L"\\22.1.0", mixed, mixed + L"\\1.0",
+        mixed + L"\\plugins"};
+    const std::wstring version_files[] = {claude + L"\\2.1.309\\9078b9c1d466\\claude.exe",
+        claude + L"\\2.1.317\\a33aa5518497\\claude.exe", node + L"\\22.1.0\\node.exe", mixed + L"\\1.0\\tool.exe"};
+    created = true;
+    for (const auto& folder : version_folders) created = CreateDirectoryW(folder.c_str(), nullptr) && created;
+    for (const auto& file : version_files) {
+      const HANDLE handle = CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+      created = handle != INVALID_HANDLE_VALUE && created;
+      if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+    }
+    std::wstring version_rules[std::size(version_files)];
+    for (size_t index = 0; index < std::size(version_files); ++index) version_rules[index] = ExecutableRule(version_files[index]);
+    for (const auto& file : version_files) DeleteFileW(file.c_str());
+    for (auto folder = std::rbegin(version_folders); folder != std::rend(version_folders); ++folder) RemoveDirectoryW(folder->c_str());
+    Require(created, "could not create the versioned fixture");
+    const std::wstring version_expected[] = {claude + L"\\", claude + L"\\", node + L"\\", version_files[3]};
+    for (size_t index = 0; index < std::size(version_files); ++index) {
+      if (version_rules[index] != version_expected[index]) std::fwprintf(stderr, L"%ls -> %ls\n",
+          version_files[index].c_str(), version_rules[index].c_str());
+    }
+    Require(version_rules[0] == version_expected[0] && version_rules[1] == version_expected[1],
+        "Claude Code did not match its folder of versions");
+    Require(version_rules[2] == version_expected[2], "an executable in a version folder did not match its folder of versions");
+    Require(version_rules[3] == version_expected[3], "a version folder beside other folders widened the rule");
+    std::puts("PASS apps in version folders, such as Claude Code, match every version");
+
     auto lookup = std::make_shared<RoutingApplicationLookup>();
     bool complete = false, failed = false;
     DWORD reply_thread = 0;
@@ -177,7 +231,7 @@ int main() {
         !IsLaunchCommand(L"C:\\Program Files\\Elarni\\elarni.exe", L"C:\\Program Files\\Elarni\\elarni.exe"),
         "launch at login compares the Run value with the wrong case rule");
     std::puts("PASS launch at login matches its Run value in any letter case");
-    std::puts("9 native routing metadata checks passed");
+    std::puts("11 native routing metadata checks passed");
   } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL %s\n", error.what()); return 1;
   } catch (...) { std::fputs("FAIL native routing metadata check\n", stderr); return 1; }

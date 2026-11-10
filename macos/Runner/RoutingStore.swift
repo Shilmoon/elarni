@@ -1170,3 +1170,45 @@ private struct RoutingRecord: Codable {
   var managedRevision: String?
   var publicationGeneration: UUID?
 }
+
+// Apps that keep each version beside the previous one, such as Claude Code that the Claude app
+// installs (~/Library/Application Support/Claude/claude-code/<version>/<build>/claude.app), get a
+// new path with every update. Their rule is that folder of versions when it holds nothing else: the
+// nearest version among the app's four parents.
+enum RoutingApplicationRule {
+  static func versionsFolder(of path: String, fileManager: FileManager = .default,
+                             home: String = userHome) -> String? {
+    var folder = URL(fileURLWithPath: path)
+    for _ in 0..<4 {
+      folder = folder.deletingLastPathComponent()
+      guard folder.path != "/" else { return nil }
+      guard isVersion(folder.lastPathComponent) else { continue }
+      let root = folder.deletingLastPathComponent()
+      // At least two folders deep, so a version never widens to /opt/.
+      guard root.pathComponents.count >= 3 else { return nil }
+      do {
+        let entries = try fileManager.contentsOfDirectory(atPath: root.path)
+        guard entries.allSatisfy({ $0.hasPrefix(".") || isVersion($0) }) else { return nil }
+      } catch let error as CocoaError where error.code == .fileReadNoPermission {
+        // The App Sandbox lists no folder in the user's Library, where the Claude app keeps
+        // Claude Code. A folder of versions there belongs to the app that updates it.
+        guard root.path.hasPrefix(home + "/Library/") else { return nil }
+      } catch {
+        return nil
+      }
+      return root.path + "/"
+    }
+    return nil
+  }
+
+  // NSHomeDirectory() names the app's container inside the App Sandbox.
+  static let userHome: String = {
+    guard let entry = getpwuid(getuid()), let directory = entry.pointee.pw_dir else { return NSHomeDirectory() }
+    return String(cString: directory)
+  }()
+
+  static func isVersion(_ name: String) -> Bool {
+    name.contains(".") && !name.hasPrefix(".") && !name.hasSuffix(".") && !name.contains("..") &&
+      name.allSatisfy { $0 == "." || ("0"..."9").contains($0) }
+  }
+}

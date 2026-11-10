@@ -321,7 +321,7 @@ func NewProcessNameMatcher(names []string) *ProcessNameMatcher {
 		}
 		name := filepath.ToSlash(name)
 		if runtime.GOOS == "windows" {
-			name = strings.ToLower(name)
+			name = windowsPackageFamilyPath(strings.ToLower(name))
 		}
 		// /usr/bin/
 		if strings.HasSuffix(name, "/") {
@@ -342,6 +342,46 @@ func NewProcessNameMatcher(names []string) *ProcessNameMatcher {
 		Folders:       folders,
 		MatchXraySelf: matchXraySelf,
 	}
+}
+
+// Elarni: Microsoft Store (MSIX) apps run from <volume>\WindowsApps\<name>_<version>_<arch>_<resource>_<publisher>\,
+// a new folder with every update. Rules and process paths compare that folder as <name>_<publisher>, its
+// package family, so a rule saved for one version matches the next. Only Windows can install there: the
+// folder is writable by the system alone. Takes a lowercased path with forward slashes.
+func windowsPackageFamilyPath(path string) string {
+	const parent = "/windowsapps/"
+	start := strings.Index(path, parent)
+	if start < 0 {
+		return path
+	}
+	start += len(parent)
+	end := strings.IndexByte(path[start:], '/')
+	if end < 0 {
+		end = len(path)
+	} else {
+		end += start
+	}
+	parts := strings.Split(path[start:end], "_")
+	if len(parts) != 5 || !packageName(parts[0]) || !packageVersion(parts[1]) ||
+		!slices.Contains([]string{"x86", "x64", "arm", "arm64", "neutral", "x86a64"}, parts[2]) ||
+		len(parts[4]) != 13 || strings.Trim(parts[4], "abcdefghijklmnopqrstuvwxyz0123456789") != "" {
+		return path
+	}
+	return path[:start] + parts[0] + "_" + parts[4] + path[end:]
+}
+
+func packageName(name string) bool {
+	return name != "" && strings.Trim(name, "abcdefghijklmnopqrstuvwxyz0123456789.-") == ""
+}
+
+func packageVersion(version string) bool {
+	fields := strings.Split(version, ".")
+	for _, field := range fields {
+		if field == "" || strings.Trim(field, "0123456789") != "" {
+			return false
+		}
+	}
+	return len(fields) == 4
 }
 
 // lookupProcess finds the owner of a local socket; tests replace it.
@@ -424,7 +464,7 @@ func (m *ProcessNameMatcher) Apply(ctx routing.Context) (matched bool) {
 	}
 	if runtime.GOOS == "windows" {
 		name = strings.TrimSuffix(strings.ToLower(name), ".exe")
-		absPath = strings.ToLower(absPath)
+		absPath = windowsPackageFamilyPath(strings.ToLower(absPath))
 	}
 	if slices.Contains(m.ProcessNames, name) {
 		return true

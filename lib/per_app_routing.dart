@@ -399,7 +399,10 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
     final parts = process
         .replaceAll('\\', '/')
         .split('/')
-        .where((part) => part.isNotEmpty);
+        .where((part) => part.isNotEmpty)
+        .toList();
+    // A folder of versions, such as Claude Code's .../claude/versions/, is named after its owner.
+    if (parts.length > 1 && parts.last == 'versions') parts.removeLast();
     final name = parts.lastOrNull ?? process;
     return name.endsWith('.app') ? name.substring(0, name.length - 4) : name;
   }
