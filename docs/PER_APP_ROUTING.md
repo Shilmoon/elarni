@@ -34,6 +34,13 @@ The app list shows running programs and installed apps: on Windows the Start men
 programs and installed Microsoft Store apps, such as Claude, on macOS the Applications
 folders, and on Linux the apps with a desktop entry. **Choose app file** adds any other program.
 
+**Presets** under the app list add a group of apps at once: Discord, Telegram, Claude
+(the app with the programs it starts, and Claude Code), Steam with the games it starts,
+and browsers. A preset finds its apps in the app list, by name or by Flatpak app ID or
+Snap, so each gets the same rule as when picked from the list; an app it does not find is
+shown as not found. Apps that show web pages through WebView2 on Windows run
+`msedgewebview2.exe`, which the browsers preset does not include.
+
 Apps picked from the list get a rule that still matches after the app updates. On
 desktop platforms an app that keeps each version in its own folder beside the
 previous one matches that folder of versions, when it holds nothing else. Claude

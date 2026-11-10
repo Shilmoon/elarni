@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:elarni/desktop_integration.dart';
 import 'package:elarni/elarni_widgets.dart';
+import 'package:elarni/per_app_presets.dart';
 import 'package:elarni/per_app_routing.dart';
 import 'package:elarni/tunnel_channel.dart';
 
@@ -533,6 +534,8 @@ void main() {
   testWidgets(
     'discovery and invalid icons preserve rules; cancel discards draft',
     (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1000, 1800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
       final messenger = tester.binding.defaultBinaryMessenger;
       bool unavailable = false;
       messenger.setMockMethodCallHandler(DesktopIntegration.channel, (_) async {
@@ -596,6 +599,8 @@ void main() {
   testWidgets('Windows chooser matches saved paths without case duplicates', (
     tester,
   ) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final messenger = tester.binding.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(
       DesktopIntegration.channel,
@@ -1376,6 +1381,8 @@ void main() {
   testWidgets('a launcher chosen on Linux explains why it is refused', (
     tester,
   ) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final messenger = tester.binding.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(DesktopIntegration.channel, (
       call,
@@ -1415,5 +1422,161 @@ void main() {
       find.textContaining('Snap, Flatpak and script launchers'),
       findsOneWidget,
     );
+  });
+
+  test('presets find their apps by name or rule and take the host rules', () {
+    AppPreset preset(String id) => appPresets.firstWhere((p) => p.id == id);
+    Map<String, List<String>> found(
+      String id,
+      List<({String name, String process})> hosted,
+    ) => {
+      for (final (:app, :rules) in preset(id).find(hosted)) app.name: rules,
+    };
+    // Names compare without case, spaces or punctuation; the rule is the host's.
+    expect(
+      found('discord', [
+        (name: 'DISCORD', process: r'C:\Users\u\AppData\Local\Discord\'),
+        (name: 'Discord Helper', process: '/opt/helper'),
+      ]),
+      {
+        'Discord': [r'C:\Users\u\AppData\Local\Discord\'],
+      },
+    );
+    expect(
+      found('browsers', [
+        (name: 'Firefox Web Browser', process: '/usr/lib/firefox/firefox'),
+        (name: 'Brave', process: 'flatpak:com.brave.Browser'),
+        (name: 'Chromium', process: '/usr/bin/chromium'),
+      ]),
+      containsPair('Firefox', ['/usr/lib/firefox/firefox']),
+    );
+    expect(
+      found('browsers', [
+        (name: 'com.brave.Browser', process: 'flatpak:com.brave.Browser'),
+      ])['Brave'],
+      ['flatpak:com.brave.Browser'],
+      reason: 'a Flatpak app is found by its ID',
+    );
+    // Claude takes the programs it starts; Claude Code, named after its
+    // folder "claude", is Claude Code and not the Claude app.
+    expect(
+      found('claude', [
+        (name: 'Claude', process: '/Applications/Claude.app/'),
+        (name: 'claude', process: '/home/u/.local/share/claude/versions/'),
+        (
+          name: 'claude-code',
+          process: r'C:\Users\u\AppData\Roaming\Claude\claude-code\',
+        ),
+      ]),
+      {
+        'Claude': ['children:/Applications/Claude.app/'],
+        'Claude Code': [
+          '/home/u/.local/share/claude/versions/',
+          r'C:\Users\u\AppData\Roaming\Claude\claude-code\',
+        ],
+      },
+    );
+    expect(
+      found('steam', [
+        (name: 'Steam', process: r'C:\Program Files (x86)\Steam\steam.exe'),
+      ]),
+      {
+        'Steam': [r'children:C:\Program Files (x86)\Steam\steam.exe'],
+      },
+    );
+    expect(found('telegram', []), {'Telegram': <String>[]});
+  });
+
+  testWidgets('a preset adds the apps the list has, once, after the listed', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 2400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(DesktopIntegration.channel, (
+      call,
+    ) async {
+      if (call.method != 'routingApplications') return null;
+      return [
+        {'name': 'Google Chrome', 'process': '/opt/google/chrome/chrome'},
+        {'name': 'Firefox', 'process': '/usr/lib/firefox/firefox'},
+        {'name': 'Vivaldi', 'process': '/opt/vivaldi/vivaldi-bin'},
+        {'name': 'Claude', 'process': '/opt/claude/claude'},
+      ];
+    });
+    addTearDown(
+      () =>
+          messenger.setMockMethodCallHandler(DesktopIntegration.channel, null),
+    );
+    TunnelSettings? saved;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: PerAppRoutingEditor(
+              settings: const TunnelSettings(
+                xrayTunEnabled: true,
+                perAppMode: 'bypass',
+                perAppProcesses: ['/usr/bin/curl', '/usr/lib/firefox/firefox'],
+              ),
+              windows: false,
+              linux: true,
+              onSave: (value) async => saved = value,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add apps'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('per-app-preset:browsers')));
+    await tester.pumpAndSettle();
+    // A listed app shows as added; one the list lacks, as not found.
+    final firefox = find.byKey(
+      const Key('per-app-preset-app:/usr/lib/firefox/firefox'),
+    );
+    expect(
+      find.descendant(of: firefox, matching: find.text('Added')),
+      findsOneWidget,
+    );
+    expect(tester.widget<CheckboxListTile>(firefox).onChanged, isNull);
+    expect(
+      tester
+          .widget<ListTile>(
+            find.byKey(const Key('per-app-preset-missing:Microsoft Edge')),
+          )
+          .enabled,
+      isFalse,
+    );
+    expect(find.text('Add 2 apps'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const Key('per-app-preset-app:/opt/vivaldi/vivaldi-bin')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add 1 app'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('per-app-preset-add')), findsNothing);
+
+    // Claude takes the programs it starts.
+    await tester.tap(find.byKey(const Key('per-app-preset:claude')));
+    await tester.pumpAndSettle();
+    expect(find.text('With the programs it starts'), findsOneWidget);
+    expect(
+      find.byKey(const Key('per-app-preset-missing:Claude Code')),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Add 1 app'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+    expect(saved!.perAppProcesses, [
+      '/usr/bin/curl',
+      '/usr/lib/firefox/firefox',
+      '/opt/google/chrome/chrome',
+      'children:/opt/claude/claude',
+    ]);
   });
 }

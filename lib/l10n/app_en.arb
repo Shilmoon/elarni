@@ -403,6 +403,21 @@
   "perAppIncludeChildren": "Include programs it starts",
   "perAppIncludeChildrenHelp": "Also routes the programs this app starts, and theirs, such as helpers, updaters and command-line tools. A program listed on its own keeps its own target. A browser the app starts is included too, but not one that was already running.",
   "perAppWithChildren": "with the programs it starts",
+  "perAppPresets": "Presets",
+  "perAppPresetSteam": "Steam and games",
+  "perAppPresetBrowsers": "Browsers",
+  "perAppPresetAdded": "Added",
+  "perAppPresetNotFound": "Not found",
+  "perAppPresetWithChildren": "With the programs it starts",
+  "perAppPresetsHelp": "A preset offers the apps the app list found, each with the rule this computer gives it. For an app it does not find, use Choose app file.",
+  "perAppAddPresetApps": "{count, plural, =1{Add 1 app} other{Add {count} apps}}",
+  "@perAppAddPresetApps": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "perAppConnectionStartedBy": "Started by {name}",
   "@perAppConnectionStartedBy": {
     "placeholders": {

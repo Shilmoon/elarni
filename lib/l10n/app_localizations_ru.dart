@@ -886,6 +886,41 @@ class AppLocalizationsRu extends AppLocalizations {
   String get perAppWithChildren => 'вместе с запущенными им программами';
 
   @override
+  String get perAppPresets => 'Наборы';
+
+  @override
+  String get perAppPresetSteam => 'Steam и игры';
+
+  @override
+  String get perAppPresetBrowsers => 'Браузеры';
+
+  @override
+  String get perAppPresetAdded => 'Добавлено';
+
+  @override
+  String get perAppPresetNotFound => 'Не найдено';
+
+  @override
+  String get perAppPresetWithChildren => 'Вместе с запущенными им программами';
+
+  @override
+  String get perAppPresetsHelp =>
+      'Набор предлагает приложения, найденные в списке приложений, каждое с правилом, которое дает этот компьютер. Если приложение не найдено, нажмите «Выбрать файл приложения».';
+
+  @override
+  String perAppAddPresetApps(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Добавить $count приложения',
+      many: 'Добавить $count приложений',
+      few: 'Добавить $count приложения',
+      one: 'Добавить $count приложение',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String perAppConnectionStartedBy(String name) {
     return 'Запущено из $name';
   }
