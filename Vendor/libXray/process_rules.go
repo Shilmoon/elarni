@@ -23,7 +23,8 @@ type ProcessRuleCheckRequest struct {
 }
 
 type ProcessRuleWarning struct {
-	// missing, folder, notFolder, script, symlink, case, launcher or bundleName.
+	// missing, folder, notFolder, script, symlink, case, launcher or bundleName. Flatpak, AppImage
+	// and service rules can be missing; an AppImage rule's path can also need a fix.
 	Code       string `json:"code"`
 	Suggestion string `json:"suggestion,omitempty"`
 }
@@ -83,6 +84,35 @@ func checkProcessRules(rules []string) ProcessRuleCheckResponse {
 func processRuleWarnings(rule string) []ProcessRuleWarning {
 	warn := func(code, suggestion string) []ProcessRuleWarning {
 		return []ProcessRuleWarning{{Code: code, Suggestion: suggestion}}
+	}
+	// Rules of another system's kind match nothing here; the editor refuses them.
+	if id, ok := strings.CutPrefix(rule, "flatpak:"); ok {
+		if runtime.GOOS != "linux" || flatpakInstalled(id) {
+			return nil
+		}
+		return warn("missing", "")
+	}
+	if image, ok := strings.CutPrefix(rule, "appimage:"); ok {
+		if runtime.GOOS != "linux" || !strings.HasPrefix(image, "/") {
+			return nil
+		}
+		// The image is a file the app runs from; its suggestions stay AppImage rules.
+		warnings := processRuleWarnings(image)
+		for i := range warnings {
+			if warnings[i].Code == "script" {
+				return nil
+			}
+			if warnings[i].Suggestion != "" {
+				warnings[i].Suggestion = "appimage:" + warnings[i].Suggestion
+			}
+		}
+		return warnings
+	}
+	if service, ok := strings.CutPrefix(rule, "service:"); ok {
+		if runtime.GOOS != "windows" || serviceInstalled(service) {
+			return nil
+		}
+		return warn("missing", "")
 	}
 	windows := runtime.GOOS == "windows"
 	slashed := rule
@@ -154,6 +184,34 @@ func processRuleWarnings(rule string) []ProcessRuleWarning {
 
 // ruleLstat is swapped by tests to see which paths a check opens.
 var ruleLstat = os.Lstat
+
+// flatpakInstallations lists the Flatpak installations: the user's and the system's.
+var flatpakInstallations = func() []string {
+	var dirs []string
+	if dir := os.Getenv("FLATPAK_USER_DIR"); dir != "" {
+		dirs = append(dirs, dir)
+	} else if home, err := os.UserHomeDir(); err == nil {
+		dirs = append(dirs, filepath.Join(home, ".local", "share", "flatpak"))
+	}
+	if dir := os.Getenv("FLATPAK_SYSTEM_DIR"); dir != "" {
+		return append(dirs, dir)
+	}
+	return append(dirs, "/var/lib/flatpak")
+}
+
+// flatpakInstalled reports an app installed in a Flatpak installation, or one this check cannot
+// see.
+func flatpakInstalled(id string) bool {
+	if !xnet.ValidFlatpakApp(id) {
+		return false
+	}
+	for _, dir := range flatpakInstallations() {
+		if _, err := os.Stat(filepath.Join(dir, "app", id)); !errors.Is(err, fs.ErrNotExist) {
+			return true
+		}
+	}
+	return false
+}
 
 func windowsLauncher(name string) bool {
 	for _, extension := range []string{".lnk", ".url", ".bat", ".cmd", ".ps1", ".vbs"} {

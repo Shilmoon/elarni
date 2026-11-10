@@ -17,3 +17,22 @@ func localRulePath(path string) bool {
 	root, err := windows.UTF16PtrFromString(path[:2] + `\`)
 	return err == nil && windows.GetDriveType(root) == windows.DRIVE_FIXED
 }
+
+// serviceInstalled reports a service by its name, or one this check may not look up.
+func serviceInstalled(name string) bool {
+	manager, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
+	if err != nil {
+		return true
+	}
+	defer windows.CloseServiceHandle(manager)
+	wide, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return false
+	}
+	service, err := windows.OpenService(manager, wide, windows.SERVICE_QUERY_STATUS)
+	if err != nil {
+		return err != windows.ERROR_SERVICE_DOES_NOT_EXIST && err != windows.ERROR_INVALID_NAME
+	}
+	windows.CloseServiceHandle(service)
+	return true
+}

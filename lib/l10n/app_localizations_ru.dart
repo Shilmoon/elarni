@@ -814,7 +814,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get perAppLauncherRule =>
-      'Snap, Flatpak и скрипты-лаунчеры запускают другую программу, поэтому их правила ничего не находят. Запустите приложение и выберите его в списке приложений.';
+      'Snap, Flatpak и скрипты-лаунчеры запускают другую программу, поэтому их правила ничего не находят. Выберите приложение в списке приложений; Snap-приложение или скрипт сначала запустите.';
 
   @override
   String get useProxy => 'Использовать прокси';
@@ -853,6 +853,30 @@ class AppLocalizationsRu extends AppLocalizations {
   String perAppWindowsPathsElsewhere(Object platform) {
     return 'Пути исполняемых файлов Windows нельзя использовать в профиле $platform. Выберите приложения на этом устройстве.';
   }
+
+  @override
+  String perAppLinuxRulesElsewhere(Object platform) {
+    return 'Правила Flatpak и AppImage называют приложения Linux и не подходят для профиля $platform.';
+  }
+
+  @override
+  String perAppServiceRulesElsewhere(Object platform) {
+    return 'Правила служб называют службы Windows и не подходят для профиля $platform.';
+  }
+
+  @override
+  String get perAppFlatpakRule =>
+      'Приложение Flatpak: и другие его программы в песочнице';
+
+  @override
+  String get perAppAppImageRule => 'AppImage: программы из этого файла образа';
+
+  @override
+  String get perAppServiceRule =>
+      'Служба Windows: и службы, которые работают в том же процессе';
+
+  @override
+  String get perAppKindService => 'Служба Windows';
 
   @override
   String get perAppAndroidPackages =>

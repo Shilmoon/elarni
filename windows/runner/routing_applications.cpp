@@ -5,6 +5,7 @@
 #include <wrl/client.h>
 #include <wincodec.h>
 #include <algorithm>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <vector>
@@ -201,8 +202,50 @@ flutter::EncodableMap RoutingApplication(const std::wstring& path, bool running,
   return app;
 }
 
+namespace {
+struct RunningService {
+  std::wstring name, display;
+};
+
+// The services each process runs. svchost runs most of them, one per process on most PCs; a rule
+// for svchost.exe would take every service's connections. Listing needs no administrator.
+std::map<DWORD, std::vector<RunningService>> RunningServices() {
+  std::map<DWORD, std::vector<RunningService>> services;
+  const SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_ENUMERATE_SERVICE);
+  if (!manager) return services;
+  std::vector<BYTE> buffer;
+  DWORD needed = 0, returned = 0;
+  bool listed = false;
+  for (int attempt = 0; attempt < 4 && !listed; ++attempt) {
+    listed = EnumServicesStatusExW(manager, SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_ACTIVE,
+        buffer.empty() ? nullptr : buffer.data(), static_cast<DWORD>(buffer.size()), &needed, &returned,
+        nullptr, nullptr) != 0;
+    if (!listed && GetLastError() != ERROR_MORE_DATA) break;
+    if (!listed) buffer.resize(buffer.size() + needed);
+  }
+  CloseServiceHandle(manager);
+  if (!listed || returned == 0) return services;
+  const auto* entries = reinterpret_cast<const ENUM_SERVICE_STATUS_PROCESSW*>(buffer.data());
+  for (DWORD index = 0; index < returned; ++index) {
+    const auto& entry = entries[index];
+    if (entry.ServiceStatusProcess.dwProcessId == 0 || !entry.lpServiceName) continue;
+    services[entry.ServiceStatusProcess.dwProcessId].push_back(
+        {entry.lpServiceName, entry.lpDisplayName && *entry.lpDisplayName ? entry.lpDisplayName : entry.lpServiceName});
+  }
+  return services;
+}
+
+// Vendor/Xray-core/app/router matches "service:<name>" in the process that runs the service.
+flutter::EncodableMap ServiceApplication(const RunningService& service) {
+  using flutter::EncodableValue;
+  return {{EncodableValue("name"), EncodableValue(RoutingUTF8(service.display.c_str()))},
+      {EncodableValue("process"), EncodableValue(RoutingUTF8((L"service:" + service.name).c_str()))}};
+}
+}
+
 flutter::EncodableList RunningApplications() {
   flutter::EncodableList apps;
+  const auto services = RunningServices();
   const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
   if (snapshot == INVALID_HANDLE_VALUE) throw std::runtime_error("Process list unavailable");
   struct SnapshotOwner {
@@ -213,6 +256,15 @@ flutter::EncodableList RunningApplications() {
   PROCESSENTRY32W entry{};
   entry.dwSize = sizeof(entry);
   if (Process32FirstW(snapshot, &entry)) do {
+    // A service host is listed by the services it runs, also when it cannot be opened.
+    const auto hosted = _wcsicmp(entry.szExeFile, L"svchost.exe") == 0 ? services.find(entry.th32ProcessID) : services.end();
+    if (hosted != services.end()) {
+      for (const auto& service : hosted->second) {
+        std::wstring key = L"service:" + service.name;
+        CharLowerBuffW(key.data(), static_cast<DWORD>(key.size()));
+        if (service.name.size() <= 256 && seen.insert(key).second) apps.emplace_back(ServiceApplication(service));
+      }
+    }
     const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
     if (!process) continue;
     wchar_t path[32768]{};
@@ -263,6 +315,8 @@ winrt::fire_and_forget RoutingApplicationLookup::Load(flutter::EncodableList sel
     for (const auto& value : selected) {
       const auto* path = std::get_if<std::string>(&value);
       if (!path || path->empty() || path->size() > 1024 || path->find('\0') != std::string::npos) continue;
+      // A service that is not running is named by Dart.
+      if (path->rfind("service:", 0) == 0) continue;
       const auto wide = std::wstring(winrt::to_hstring(*path));
       auto key = wide;
       CharLowerBuffW(key.data(), static_cast<DWORD>(key.size()));

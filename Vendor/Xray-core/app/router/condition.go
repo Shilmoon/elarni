@@ -302,16 +302,42 @@ type ProcessNameMatcher struct {
 	// (Android's finder already returns that name). Such a flow may belong to a listed
 	// app, so "Only listed" keeps it in the tunnel.
 	MatchUnknown bool
+	// Elarni: apps that a path does not name. "flatpak:<app id>" is a Flatpak sandbox,
+	// "appimage:<file>" an AppImage, or every AppImage in "appimage:<folder>/" (Linux), and
+	// "service:<name>" a Windows service by its name, the process that runs it.
+	FlatpakApps []string
+	AppImages   []string
+	Services    []string
 }
+
+// Elarni: what the system knows of a process beyond its path; tests replace these.
+var (
+	processFlatpakApp = net.FlatpakApp
+	processAppImage   = net.AppImage
+	processServices   = net.ProcessServices
+)
 
 func NewProcessNameMatcher(names []string) *ProcessNameMatcher {
 	processNames := []string{}
 	folders := []string{}
 	absPaths := []string{}
+	var flatpakApps, appImages, services []string
 	matchXraySelf := false
 	for _, name := range names {
 		if name == "self/" {
 			matchXraySelf = true
+			continue
+		}
+		if id, ok := strings.CutPrefix(name, "flatpak:"); ok {
+			flatpakApps = append(flatpakApps, id)
+			continue
+		}
+		if image, ok := strings.CutPrefix(name, "appimage:"); ok {
+			appImages = append(appImages, image)
+			continue
+		}
+		if service, ok := strings.CutPrefix(name, "service:"); ok {
+			services = append(services, strings.ToLower(service))
 			continue
 		}
 		// replace xray/ with self executable path
@@ -346,6 +372,9 @@ func NewProcessNameMatcher(names []string) *ProcessNameMatcher {
 		Folders:       folders,
 		MatchXraySelf: matchXraySelf,
 		MatchUnknown:  slices.Contains(processNames, "-1"),
+		FlatpakApps:   flatpakApps,
+		AppImages:     appImages,
+		Services:      services,
 	}
 }
 
@@ -475,6 +504,8 @@ func (m *ProcessNameMatcher) MatchesProcess(pid int, name, absPath string) bool 
 	if m.MatchXraySelf && pid == os.Getpid() {
 		return true
 	}
+	// Identity lookups take the process as the lookup reported it.
+	reportedName, reportedPath := name, absPath
 	if runtime.GOOS == "windows" {
 		name = strings.TrimSuffix(strings.ToLower(name), ".exe")
 		absPath = windowsPackageFamilyPath(strings.ToLower(absPath))
@@ -488,6 +519,30 @@ func (m *ProcessNameMatcher) MatchesProcess(pid int, name, absPath string) bool 
 	for _, f := range m.Folders {
 		if strings.HasPrefix(absPath, f) {
 			return true
+		}
+	}
+	if pid <= 0 {
+		return false
+	}
+	if len(m.FlatpakApps) > 0 {
+		if id := processFlatpakApp(pid); id != "" && slices.Contains(m.FlatpakApps, id) {
+			return true
+		}
+	}
+	if len(m.AppImages) > 0 {
+		if image := processAppImage(pid, reportedPath); image != "" {
+			for _, rule := range m.AppImages {
+				if image == rule || strings.HasSuffix(rule, "/") && strings.HasPrefix(image, rule) {
+					return true
+				}
+			}
+		}
+	}
+	if len(m.Services) > 0 {
+		for _, service := range processServices(pid, reportedName) {
+			if slices.Contains(m.Services, strings.ToLower(service)) {
+				return true
+			}
 		}
 	}
 	return false

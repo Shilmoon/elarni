@@ -1445,7 +1445,7 @@ abstract class AppLocalizations {
   /// No description provided for @perAppLauncherRule.
   ///
   /// In en, this message translates to:
-  /// **'Snap, Flatpak and script launchers start another program, so their rules match nothing. Start the app, then choose it from the app list.'**
+  /// **'Snap, Flatpak and script launchers start another program, so their rules match nothing. Choose the app from the app list; start a Snap or script app first.'**
   String get perAppLauncherRule;
 
   /// No description provided for @useProxy.
@@ -1507,6 +1507,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Windows executable paths cannot be used in a {platform} profile. Select the apps on this device.'**
   String perAppWindowsPathsElsewhere(Object platform);
+
+  /// No description provided for @perAppLinuxRulesElsewhere.
+  ///
+  /// In en, this message translates to:
+  /// **'Flatpak and AppImage rules name Linux apps and cannot be used in a {platform} profile.'**
+  String perAppLinuxRulesElsewhere(Object platform);
+
+  /// No description provided for @perAppServiceRulesElsewhere.
+  ///
+  /// In en, this message translates to:
+  /// **'Service rules name Windows services and cannot be used in a {platform} profile.'**
+  String perAppServiceRulesElsewhere(Object platform);
+
+  /// No description provided for @perAppFlatpakRule.
+  ///
+  /// In en, this message translates to:
+  /// **'Flatpak app: also its other programs in the sandbox'**
+  String get perAppFlatpakRule;
+
+  /// No description provided for @perAppAppImageRule.
+  ///
+  /// In en, this message translates to:
+  /// **'AppImage: the programs in that image file'**
+  String get perAppAppImageRule;
+
+  /// No description provided for @perAppServiceRule.
+  ///
+  /// In en, this message translates to:
+  /// **'Windows service: also the services that share its process'**
+  String get perAppServiceRule;
+
+  /// No description provided for @perAppKindService.
+  ///
+  /// In en, this message translates to:
+  /// **'Windows service'**
+  String get perAppKindService;
 
   /// No description provided for @perAppAndroidPackages.
   ///

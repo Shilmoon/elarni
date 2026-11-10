@@ -53,6 +53,17 @@ final class PerAppProfile {
     ).validPerApp) {
       return l10n.perAppInvalidProfile;
     }
+    // Flatpak and AppImage rules name Linux apps, service rules Windows services.
+    if (platform != 'linux' &&
+        processes.any(
+          (rule) => rule.startsWith('flatpak:') || rule.startsWith('appimage:'),
+        )) {
+      return l10n.perAppLinuxRulesElsewhere(platformName);
+    }
+    if (platform != 'windows' &&
+        processes.any((rule) => rule.startsWith('service:'))) {
+      return l10n.perAppServiceRulesElsewhere(platformName);
+    }
     if (platform == 'android' &&
         processes.any(
           (package) => !RegExp(
@@ -433,6 +444,21 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
 
   String _name(String process) {
     if (process == unknownOwnerRule) return l10n.perAppUnknownOwner;
+    for (final kind in ['flatpak:', 'service:']) {
+      if (process.startsWith(kind)) return process.substring(kind.length);
+    }
+    if (process.startsWith('appimage:')) {
+      // An image, or a folder of images, is named after its file.
+      final parts = process
+          .substring(9)
+          .split('/')
+          .where((part) => part.isNotEmpty)
+          .toList();
+      final file = parts.lastOrNull ?? process;
+      return file.toLowerCase().endsWith('.appimage') && file.length > 9
+          ? file.substring(0, file.length - 9)
+          : file;
+    }
     final parts = process
         .replaceAll('\\', '/')
         .split('/')
@@ -443,6 +469,25 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
     final name = parts.lastOrNull ?? process;
     return name.endsWith('.app') ? name.substring(0, name.length - 4) : name;
   }
+
+  /// What kind of app a rule names, when its path does not.
+  String? _kind(String process) => process.startsWith('flatpak:')
+      ? 'Flatpak'
+      : process.startsWith('appimage:')
+      ? 'AppImage'
+      : process.startsWith('service:')
+      ? l10n.perAppKindService
+      : null;
+
+  String _ruleKind(String process) => process.startsWith('flatpak:')
+      ? l10n.perAppFlatpakRule
+      : process.startsWith('appimage:')
+      ? l10n.perAppAppImageRule
+      : process.startsWith('service:')
+      ? l10n.perAppServiceRule
+      : process.endsWith('.app/')
+      ? l10n.appBundleIncludesHelpers
+      : l10n.executableRule;
 
   Future<List<_RoutingApp>> _nativeApps(
     String method, {
@@ -601,14 +646,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          [
-            app.process.endsWith('.app/')
-                ? l10n.appBundleIncludesHelpers
-                : l10n.executableRule,
-            ?running,
-          ].join(' · '),
-        ),
+        Text([_ruleKind(app.process), ?running].join(' · ')),
         for (final (code, suggestion) in warnings)
           Padding(
             padding: const EdgeInsets.only(top: 4),
@@ -745,6 +783,8 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
 
   String _connectionApp(RecentConnection connection) =>
       switch (connection.owner) {
+        // A sandbox, a mount or a shared service host names its app by rule.
+        'found' when connection.app.isNotEmpty => _app(connection.app).name,
         // A program in a folder of versions, such as Claude Code's
         // .../claude/versions/2.1.300, is named after the folder's owner.
         'found' when connection.path.isNotEmpty => _name(
@@ -760,9 +800,12 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
         _ => l10n.perAppConnectionNoApp,
       };
 
-  // The rule a connection's program gets: the host's update-proof rule, as
-  // for a picked app, else the program's bundle on macOS, else its path.
-  Future<String> _connectionRule(String path) async {
+  // The rule a connection's program gets: the app's rule when its path does
+  // not name it, the host's update-proof rule, as for a picked app, else the
+  // program's bundle on macOS, else its path.
+  Future<String> _connectionRule(RecentConnection connection) async {
+    if (connection.app.isNotEmpty) return connection.app;
+    final path = connection.path;
     final rule = widget.windows ? path.replaceAll('/', r'\') : path;
     try {
       final hosted = await _nativeApps(
@@ -786,7 +829,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
 
   Future<void> _addConnectionApp(RecentConnection connection) =>
       _operation(() async {
-        final rule = await _connectionRule(connection.path);
+        final rule = await _connectionRule(connection);
         if (!mounted) return;
         setState(() {
           selections = _rules([...selections, rule].join('\n'));
@@ -799,9 +842,23 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
         }
       });
 
-  // Whether a listed rule already names the program: its path, a folder
-  // holding it, or its file name. The core's own matcher decides routing.
-  bool _covers(String rule, String path) {
+  // Whether a listed rule already names the program: its app's rule, its
+  // path, a folder holding it, or its file name. The core's own matcher
+  // decides routing.
+  bool _covers(String rule, RecentConnection connection) {
+    final app = connection.app;
+    if (app.isNotEmpty) {
+      if (identity(rule) == identity(app)) return true;
+      // A folder of AppImages holds the image.
+      if (app.startsWith('appimage:') &&
+          rule.startsWith('appimage:') &&
+          rule.endsWith('/') &&
+          app.startsWith(rule)) {
+        return true;
+      }
+    }
+    final path = connection.path;
+    if (path.isEmpty) return false;
     final windows = widget.windows;
     String normal(String value) =>
         identity(windows ? value.replaceAll('/', r'\') : value);
@@ -834,9 +891,9 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
     String two(int value) => value.toString().padLeft(2, '0');
     final canAdd =
         connection.owner == 'found' &&
-        connection.path.isNotEmpty &&
+        (connection.path.isNotEmpty || connection.app.isNotEmpty) &&
         !connection.listed &&
-        !selections.any((rule) => _covers(rule, connection.path));
+        !selections.any((rule) => _covers(rule, connection));
     final address = connection.host.contains(':')
         ? '[${connection.host}]:${connection.port}'
         : '${connection.host}:${connection.port}';
@@ -1474,9 +1531,11 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
                   itemCount: visible.length,
                   itemBuilder: (context, index) {
                     final app = visible[index];
+                    final kind = _kind(app.process);
                     return CheckboxListTile(
                       secondary: _icon(app),
                       title: Text(app.name),
+                      subtitle: kind == null ? null : Text(kind),
                       controlAffinity: ListTileControlAffinity.trailing,
                       value: selected.contains(identity(app.process)),
                       onChanged: enabled

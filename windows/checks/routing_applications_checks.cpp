@@ -150,6 +150,21 @@ int main() {
     Require(stale == claude + L"\\", "a rule saved for a removed version was not offered the folder of versions");
     std::puts("PASS apps in version folders, such as Claude Code, match every version");
 
+    // svchost runs most services; each is listed by its own rule, named by its display name. The
+    // RPC service runs on every Windows.
+    bool rpc = false;
+    size_t services = 0;
+    for (const auto& app : RunningApplications()) {
+      const auto& map = std::get<flutter::EncodableMap>(app);
+      const auto& process = std::get<std::string>(map.at(EncodableValue("process")));
+      if (process.rfind("service:", 0) != 0) continue;
+      ++services;
+      Require(!std::get<std::string>(map.at(EncodableValue("name"))).empty(), "a service has no name");
+      rpc = rpc || _stricmp(process.c_str(), "service:RpcSs") == 0;
+    }
+    Require(rpc && services > 1, "running services were not listed by their rules");
+    std::puts("PASS svchost services are listed by their own rules");
+
     auto lookup = std::make_shared<RoutingApplicationLookup>();
     bool complete = false, failed = false;
     DWORD reply_thread = 0;
@@ -240,7 +255,7 @@ int main() {
         !IsLaunchCommand(L"C:\\Program Files\\Elarni\\elarni.exe", L"C:\\Program Files\\Elarni\\elarni.exe"),
         "launch at login compares the Run value with the wrong case rule");
     std::puts("PASS launch at login matches its Run value in any letter case");
-    std::puts("11 native routing metadata checks passed");
+    std::puts("12 native routing metadata checks passed");
   } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL %s\n", error.what()); return 1;
   } catch (...) { std::fputs("FAIL native routing metadata check\n", stderr); return 1; }

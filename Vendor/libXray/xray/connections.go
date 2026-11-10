@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/xtls/xray-core/app/dispatcher"
+	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/features/routing"
 )
 
@@ -31,6 +32,21 @@ func ReadConnections(epoch int64, after uint64) (ConnectionsResult, error) {
 	}
 	if entries == nil {
 		entries = []dispatcher.RecentConnection{}
+	}
+	// A sandbox, a mount or a shared service host hides the app behind its path. The reader
+	// names it once per process and read; a program that has exited keeps its path.
+	apps := map[int]string{}
+	for i := range entries {
+		entry := &entries[i]
+		if entry.Owner != "found" || entry.PID <= 0 {
+			continue
+		}
+		app, ok := apps[entry.PID]
+		if !ok {
+			app = xnet.AppRule(entry.PID, entry.Name, entry.Path)
+			apps[entry.PID] = app
+		}
+		entry.App = app
 	}
 	return ConnectionsResult{Epoch: current, Seq: seq, Connections: entries}, nil
 }

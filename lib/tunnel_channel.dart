@@ -789,6 +789,7 @@ final class RecentConnection {
     this.pid = 0,
     this.name = '',
     this.path = '',
+    this.app = '',
   });
 
   static RecentConnection? fromMap(Object? value) {
@@ -815,12 +816,17 @@ final class RecentConnection {
       pid: number('pid'),
       name: text('name'),
       path: text('path'),
+      app: text('app'),
     );
   }
 
   final int key, seq, port, pid;
   final DateTime time;
   final String network, host, inbound, outbound, name, path;
+
+  /// The rule for the app when its path does not name it: "flatpak:<app id>",
+  /// "appimage:<file>" or "service:<name>"; else empty.
+  final String app;
 
   /// direct, block, proxy, dns, or routing while it waits for its next decision.
   final String kind;

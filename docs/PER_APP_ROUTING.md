@@ -23,8 +23,8 @@ This is routing, not a firewall or kill switch.
 | Platform | Rules match |
 |---|---|
 | macOS | `.app/` bundles, including their helpers |
-| Windows | exact `.exe` paths, case-insensitive; Squirrel apps such as Discord by install folder; Microsoft Store apps such as Claude by package |
-| Linux | resolved binary paths, case-sensitive; pick Snap/Flatpak apps from running processes; Snap apps by `/snap/<name>/` |
+| Windows | exact `.exe` paths, case-insensitive; Squirrel apps such as Discord by install folder; Microsoft Store apps such as Claude by package; services by name |
+| Linux | resolved binary paths, case-sensitive; Snap apps by `/snap/<name>/`; Flatpak apps by app ID; AppImages by image file |
 | Android | package names; apps sharing a UID share a rule |
 
 A bare name matches in any folder, and a path ending in `/` matches everything
@@ -39,6 +39,24 @@ folder `WindowsApps\<name>_<version>_<arch>_<resource>_<publisher>\` matches as
 `WindowsApps\<name>_<publisher>\`, its package family, so rules saved for an earlier
 version match too.
 
+## Apps a path does not name
+
+Some apps run from a path that says nothing about them. Their rules name the app instead,
+and the app list gives them these rules:
+
+- `flatpak:<app id>` (Linux), such as `flatpak:org.mozilla.firefox`: a Flatpak app's
+  programs run inside its sandbox, from paths like `/app/bin/...`. The rule matches every
+  program in that app's sandbox, found as the desktop portal finds it.
+- `appimage:<file>` (Linux): an AppImage mounts itself at a new `/tmp/.mount_...` folder each
+  time it starts. The rule names the image file and matches the programs in its mount,
+  not programs it starts from elsewhere, such as a browser it opens. `appimage:<folder>/`
+  matches every AppImage in that folder.
+- `service:<name>` (Windows), such as `service:DoSvc` for Delivery Optimization: svchost runs
+  most Windows services, so a rule for `svchost.exe` would take all of them. The rule matches
+  the process that runs the service. Most PCs run each service in its own process; where
+  services share one, they are routed together. The app list shows running services by
+  their display names.
+
 ## Checking rules
 
 On desktop, each listed rule shows how many running programs it matches now, counted
@@ -50,7 +68,8 @@ with the same matcher routing uses, and warns when it may match nothing:
   `.exe`), so another program makes the connections;
 - the letter case differs from the disk (macOS and Linux compare it);
 - a bare `Example.app` on macOS, which names no program;
-- the rule names one version of an app that keeps each version in its own folder.
+- the rule names one version of an app that keeps each version in its own folder;
+- a Flatpak app or Windows service that is not installed, or an AppImage file that is gone.
 
 Where a better rule exists, **Use suggested rule** replaces it, keeping its target.
 On Windows only rules on local fixed drives are checked, so a network path in an
@@ -64,7 +83,9 @@ Elarni is connected, newest first: the app per-app routing found for each, its a
 and where it went (direct, through a server, blocked or DNS), with **Per-app rule** when a
 listed app's rule took it and **Not listed** when it was passed on. It shows which program
 makes an app's connections, such as a helper, updater or a new version's folder, and
-**Add to list** adds that program with the same update-proof rule as the app list gives it.
+**Add to list** adds that program with the same update-proof rule as the app list gives it,
+including a Flatpak, AppImage or service rule. A svchost process that runs several services
+has no service rule to add.
 
 The app is the one routing already looked up, so the list adds no lookups: with per-app
 routing off, or for connections through the local SOCKS or HTTP listener, no app is named.
