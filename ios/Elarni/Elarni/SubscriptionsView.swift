@@ -272,6 +272,10 @@ struct SubscriptionFetchView: View {
   @State private var httpHost: String
   @State private var length: String
   @State private var interval: String
+  private var fields: [String] { [hosts, refresh, agent, address, httpHost, length, interval] }
+  // What the page opened with, moved along by each save: leaving saves only when the page differs from it.
+  @State private var opened: [String]?
+  private var dirty: Bool { opened != nil && fields != opened }
   init(source: ServerSubscription) {
     self.source = source
     let options = source.raw["fetchOptions"] as? [String: String] ?? [:]
@@ -300,14 +304,15 @@ struct SubscriptionFetchView: View {
         TextField("Connect address", text: $address); TextField("HTTP Host", text: $httpHost)
         TextField("Fragment length", text: $length); TextField("Fragment interval", text: $interval)
       }.textInputAutocapitalization(.never).autocorrectionDisabled()
-    }.navigationTitle("Download options").navigationBarTitleDisplayMode(.inline)
-    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Save") {
+    }.onAppear { if opened == nil { opened = fields } }
+    .draftPage("Download options", dirty: dirty, valid: true, cancel: { opened = fields; dismiss() }) { leaving in
+      let sent = fields
       model.launch {
         var options: [String: Any] = ["fallbackHosts": lines(hosts)]
         for (key, value) in [("refreshHours", refresh), ("userAgent", agent), ("connectAddress", address), ("httpHost", httpHost), ("fragmentLength", length), ("fragmentInterval", interval)] where !value.isEmpty { options[key] = value }
-        try model.updateFetch(source.id, options: options); dismiss()
+        try model.updateFetch(source.id, options: options); opened = sent; if !leaving { dismiss() }
       }
-    }.disabled(model.busy) } }
+    }
   }
 }
 

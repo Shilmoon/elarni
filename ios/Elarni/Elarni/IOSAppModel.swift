@@ -40,6 +40,8 @@ final class IOSAppModel {
   var incomingText: String?
   var linkStopRequested = false
   var selectedTab = 0
+  /// Set while a setting saves itself and for a moment after; the page title shows it.
+  var saveStatus: SaveStatus?
   @ObservationIgnored private var store: SubscriptionStore?
   @ObservationIgnored private var startup: Task<Void, Never>?
   @ObservationIgnored private var directory: URL?
@@ -249,6 +251,17 @@ final class IOSAppModel {
 
   func launch(_ action: @escaping @MainActor () async throws -> Void) {
     Task { await perform(action) }
+  }
+
+  /// A save the page title reports: "Saving…", then "Saved" for a moment. `failed` runs when the save is refused.
+  func launchShown(_ action: @escaping @MainActor () async throws -> Void, failed: @escaping @MainActor () -> Void = {}) {
+    saveStatus = .saving
+    Task {
+      guard await perform(action) else { saveStatus = nil; failed(); return }
+      saveStatus = .saved
+      try? await Task.sleep(for: savedNoteDuration)
+      if saveStatus == .saved { saveStatus = nil }
+    }
   }
 
   /// Runs a tunnel change to its end or rollback even when backgrounding, a network change,
@@ -765,6 +778,19 @@ final class IOSAppModel {
   }
 
   func savePreferences(_ next: IOSPreferences) throws {
+    try validatePreferences(next)
+    try write(next, name: "ios-preferences.json")
+    if preferences.automation != next.automation {
+      recovery.invalidate(configuration: true)
+      if !next.automation.enabled { recovery.stop() }
+      recoveryStatus = next.automation.enabled ? String(localized: "Ready while app is open") : String(localized: "Off")
+      try saveEpisode()
+    }
+    preferences = next
+  }
+
+  /// What `savePreferences` requires; a settings page asks before it lets its draft be left.
+  func validatePreferences(_ next: IOSPreferences) throws {
     guard next.version == 1, (1...168).contains(next.autoUpdateHours), (1...15).contains(next.probeTimeout),
           ["GET", "HEAD"].contains(next.probeMethod), next.probeMethod != "HEAD" || next.probeExpectedBody.isEmpty else { throw IOSAppError.invalidSettings }
     try AutomationConfiguration.Target(id: "manual", url: next.probeURL, expectedStatus: next.probeExpectedStatus, expectedBody: next.probeExpectedBody).validate()
@@ -774,14 +800,6 @@ final class IOSAppModel {
             next.automation.policy == .fixed || (next.automation.targets.count == 2 && next.automation.nodeIDs.count > 1)
       else { throw IOSAppError.invalidRecovery }
     }
-    try write(next, name: "ios-preferences.json")
-    if preferences.automation != next.automation {
-      recovery.invalidate(configuration: true)
-      if !next.automation.enabled { recovery.stop() }
-      recoveryStatus = next.automation.enabled ? String(localized: "Ready while app is open") : String(localized: "Off")
-      try saveEpisode()
-    }
-    preferences = next
   }
 
   func setReminders(_ enabled: Bool) async throws {

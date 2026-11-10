@@ -363,6 +363,16 @@
         }
       }
     },
+    "A value on this page can’t be saved. Correct it, or tap Cancel to drop your changes." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Значение на этой странице нельзя сохранить. Исправьте его или нажмите «Отмена», чтобы отказаться от изменений."
+          }
+        }
+      }
+    },
     "Accent color" : {
       "localizations" : {
         "ru" : {
@@ -4874,12 +4884,32 @@
         }
       }
     },
+    "Saved" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранено"
+          }
+        }
+      }
+    },
     "Saving these settings reconnects an active VPN." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Сохранение этих настроек переподключит активный VPN."
+          }
+        }
+      }
+    },
+    "Saving…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранение…"
           }
         }
       }

@@ -542,13 +542,18 @@ class AndroidUIE2E {
             }
             click("Connection")
             editSetting("SOCKS port", "12345")
+            // Opening a page from this one leaves it, which saves what was typed here.
             click("Proxy login")
+            ui.waitUntil(5000) { ui.onAllNodesWithText("Username").fetchSemanticsNodes().isNotEmpty() }
+            assertEquals(12345, snapshot().settings.getInt("socksPort"))
             ui.runOnIdle { ui.activity.onBackPressedDispatcher.onBackPressed() }
             ui.onNodeWithText("SOCKS port").assertTextContains("12345")
+            editSetting("SOCKS port", "12346")
             ui.activityRule.scenario.recreate()
-            ui.onNodeWithText("SOCKS port").assertTextContains("12345")
+            ui.onNodeWithText("SOCKS port").assertTextContains("12346")
+            // Cancel drops what is not saved yet.
             click("Cancel")
-            assertEquals(10890, snapshot().settings.getInt("socksPort"))
+            assertEquals(12345, snapshot().settings.getInt("socksPort"))
             click("Server tests")
             click("Proxy"); click("Direct TCP")
             editSetting("Timeout in seconds · 1–15", "7")
@@ -564,6 +569,14 @@ class AndroidUIE2E {
             ui.onNodeWithContentDescription("Dismiss").performClick()
             ui.activityRule.scenario.recreate()
             ui.onNodeWithContentDescription("Dismiss").assertDoesNotExist()
+            // Leaving would save the rejected draft, so the page stays open with the error until the value is corrected.
+            val rejected = repo.state.value.event
+            click("Open server list")
+            ui.waitUntil(5000) { repo.state.value.event != rejected }
+            ui.onNodeWithText("Timeout in seconds · 1–15").assertTextContains("0")
+            assertEquals(7, snapshot().settings.getInt("probeTimeout"))
+            ui.onNodeWithContentDescription("Dismiss").performClick()
+            editSetting("Timeout in seconds · 1–15", "7")
             click("Open server list")
             ui.onNodeWithContentDescription("Server options").performClick()
             ui.onNode(hasText("Germany") and hasAnyAncestor(isPopup())).performClick()
@@ -711,6 +724,8 @@ class AndroidUIE2E {
         list.performScrollToNode(hasText("Search installed apps"))
         val next = available.last()
         ui.onNodeWithText("Search installed apps").performTextReplacement(next.string("package"))
+        // What the search finds shows under its field without scrolling, above the keyboard too.
+        ui.waitUntil(5_000) { runCatching { ui.onNodeWithTag("per-app-${next.string("package")}").assertIsDisplayed() }.isSuccess }
         dismissKeyboard()
         list.performScrollToNode(hasTestTag("per-app-${selected.string("package")}"))
         ui.onNodeWithTag("per-app-${selected.string("package")}").assertIsDisplayed()
@@ -1443,6 +1458,77 @@ class AndroidUIE2E {
         click("Save changes")
         Thread.sleep(1000); ui.waitUntil(5000) { !repo.state.value.busy }
         assertEquals(opened, snapshot().settings.getInt("subscriptionAutoUpdateHours"))
+    }
+    // A switch saves itself after a short pause; what is typed on its page still waits for Save changes or for leaving.
+    @Test fun switchesSaveThemselvesAndTypedValuesWait() {
+        call("saveRouting", obj("text" to obj("Name" to "Switch fixture", "GlobalProxy" to "true", "RemoteDNSType" to "DoU", "RemoteDNSIP" to "1.1.1.1", "DomesticDNSType" to "DoU", "DomesticDNSIP" to "8.8.8.8").toString()))
+        val id = snapshot().routes.single().getString("id")
+        val idle = snapshot().settings.getInt("idleTimeoutSeconds")
+        assertFalse(snapshot().settings.getBoolean("muxEnabled"))
+        autoApplyMillis = 100
+        try {
+            ui.onNode(hasText("Settings") and hasClickAction()).performClick()
+            click("Advanced")
+            editSetting("Idle timeout (seconds)", "${idle + 60}")
+            click("Multiplexing")
+            ui.waitUntil(5000) { snapshot().settings.getBoolean("muxEnabled") }
+            ui.waitUntil(5000) { ui.onAllNodesWithText("Saved").fetchSemanticsNodes().isNotEmpty() }
+            assertEquals(idle, snapshot().settings.getInt("idleTimeoutSeconds"))
+            // Cancel drops the typed value; the switch is already saved.
+            click("Cancel")
+            ui.waitUntil(5000) { ui.onAllNodesWithText("Appearance").fetchSemanticsNodes().isNotEmpty() }
+            assertEquals(idle, snapshot().settings.getInt("idleTimeoutSeconds"))
+            assertTrue(snapshot().settings.getBoolean("muxEnabled"))
+            // A saved routing profile's switch goes onto the stored profile without the rules typed beside it.
+            ui.onNode(hasText("Routing") and hasClickAction()).performClick()
+            click("Switch fixture"); click("Edit rules and DNS")
+            ui.onAllNodesWithText("Domains").onFirst().performScrollTo().performTextInput("domain:typed.test")
+            click("Proxy unmatched traffic")
+            ui.waitUntil(5000) { snapshot().route(id).mapObject("profile").string("GlobalProxy") == "false" }
+            assertEquals(emptyList<String>(), snapshot().route(id).mapObject("profile").strings("DirectSites"))
+            click("Save changes")
+            ui.waitUntil(5000) { snapshot().route(id).mapObject("profile").strings("DirectSites") == listOf("domain:typed.test") }
+            assertEquals("false", snapshot().route(id).mapObject("profile").string("GlobalProxy"))
+        } finally { autoApplyMillis = 1000 }
+    }
+    // Back, another tab and a page opened from this one all save what was typed or picked; only Cancel drops it.
+    @Test fun leavingAPageSavesItsDraftAndARejectedDraftStays() {
+        call("import", obj("text" to "socks://127.0.0.1:18100#Leave%20A\nsocks://127.0.0.1:18101#Leave%20B"))
+        val first = snapshot().nodes.single { it.string("name") == "Leave A" }.string("id")
+        val second = snapshot().nodes.single { it.string("name") == "Leave B" }.string("id")
+        call("select", obj("id" to first))
+        // prepare() keeps the recovery an earlier test saved, and its servers are gone.
+        call("automation", obj("configuration" to Automation.defaults()))
+        val hours = snapshot().settings.getInt("subscriptionAutoUpdateHours")
+        ui.onNode(hasText("Settings") and hasClickAction()).performClick()
+        click("General")
+        editSetting("Refresh interval", "${hours + 4}")
+        ui.onNodeWithContentDescription("Back").performClick()
+        ui.waitUntil(5000) { ui.onAllNodesWithText("Appearance").fetchSemanticsNodes().isNotEmpty() }
+        assertEquals(hours + 4, snapshot().settings.getInt("subscriptionAutoUpdateHours"))
+        click("Server tests")
+        editSetting("Timeout in seconds · 1–15", "7")
+        ui.onNode(hasText("Home") and hasClickAction()).performClick()
+        ui.waitUntil(5000) { ui.onAllNodesWithContentDescription("Server options").fetchSemanticsNodes().isNotEmpty() }
+        assertEquals(7, snapshot().settings.getInt("probeTimeout"))
+        // A value the app rejects keeps its page open with the error; Cancel is the way out without it.
+        ui.onNode(hasText("Settings") and hasClickAction()).performClick()
+        editSetting("Timeout in seconds · 1–15", "0")
+        val rejected = repo.state.value.event
+        ui.runOnIdle { ui.activity.onBackPressedDispatcher.onBackPressed() }
+        ui.waitUntil(5000) { repo.state.value.event != rejected }
+        assertEquals("invalid_settings", repo.state.value.error)
+        ui.onNodeWithText("Timeout in seconds · 1–15").assertTextContains("0")
+        ui.onNodeWithContentDescription("Dismiss").performClick()
+        click("Cancel")
+        ui.waitUntil(5000) { ui.onAllNodesWithText("Appearance").fetchSemanticsNodes().isNotEmpty() }
+        assertEquals(7, snapshot().settings.getInt("probeTimeout"))
+        // An editor that closes on Save changes closes the same way when left.
+        click("General"); click("Connection recovery")
+        ui.onNode(isToggleable() and hasText("Leave B")).performScrollTo().performClick()
+        ui.onNodeWithContentDescription("Back").performClick()
+        ui.waitUntil(5000) { ui.onAllNodesWithText("Refresh interval").fetchSemanticsNodes().isNotEmpty() }
+        assertEquals(listOf(first, second), snapshot().data.mapObject("automation").strings("nodeIDs"))
     }
 
     // Russian comes from res/values-ru; on Android 13+ the app's own language setting reaches every screen through tr().

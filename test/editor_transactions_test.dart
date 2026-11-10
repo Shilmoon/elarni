@@ -93,7 +93,7 @@ void main() {
     }
 
     testWidgets(
-      'app and network draft survives navigation, rejects, retries and cancels ($windows)',
+      'leaving the per-app page saves its draft, and a rejected draft stays open until cancelled ($windows)',
       (tester) async {
         final control = RejectableEditors();
         await mount(tester, control);
@@ -110,78 +110,100 @@ void main() {
           'Executable names or full paths',
         );
         await tester.enterText(rules, 'browser.exe');
+        // Another page and the other tab both save first; the rejected draft
+        // keeps this page open with what was typed and the reason.
         await openSettings(tester);
-        await openRouting(tester);
+        expect(control.writes, 1);
+        expect(find.textContaining('draft is kept'), findsOneWidget);
         expect(tester.widget<TextField>(rules).controller!.text, 'browser.exe');
+        // The app-wide message lies over the page's buttons until dismissed.
+        await tester.tap(find.byTooltip('Dismiss message'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(Tab, 'Routing profiles'));
+        await tester.pumpAndSettle();
+        expect(control.writes, 2);
+        expect(tester.widget<TextField>(rules).controller!.text, 'browser.exe');
+        await tester.tap(find.byTooltip('Dismiss message'));
+        await tester.pumpAndSettle();
         await tester.tap(find.text('Update draft'));
         await tester.pumpAndSettle();
         await tester.tap(find.text('Done'));
         await tester.pumpAndSettle();
-        await openSettings(tester);
-        await openRouting(tester);
         expect(find.text('Example Browser'), findsOneWidget);
-        await tester.tap(find.text('Advanced network routes'));
-        await tester.pumpAndSettle();
-        await reveal(tester, find.text(routeToggle));
-        await tester.tap(find.text(routeToggle));
-        await tester.pumpAndSettle();
-        await reveal(tester, find.text('Included routes'));
-        await tester.tap(find.text('Included routes'));
-        await tester.pumpAndSettle();
-        await tester.enterText(find.byType(TextField), '10.0.0.0/8');
-        await tester.tap(find.text('Save'));
-        await tester.pumpAndSettle();
-        expect(control.writes, 0);
-        await tester.tap(find.byKey(const Key('nav-home')));
-        await tester.pumpAndSettle();
-        // Simulate another setting being saved while this draft is retained.
+        // A setting saved elsewhere while this draft is open stays as saved.
         control.settings = control.settings.copyWith(
           resolveServer: true,
           excludedRoutes: ['192.168.0.0/16'],
         );
         control.importListener?.call(null);
         await tester.pumpAndSettle();
-        await openRouting(tester);
-        await reveal(tester, find.text('Save changes'));
-        await tester.tap(find.text('Save changes'));
-        await tester.pumpAndSettle();
-        expect(control.writes, 1);
-        expect(find.text('Example Browser'), findsOneWidget);
-        expect(find.textContaining('draft is kept'), findsOneWidget);
         control.reject = false;
-        await tester.tap(find.text('Save changes'));
+        await tester.tap(find.byKey(const Key('nav-home')));
         await tester.pumpAndSettle();
+        expect(control.writes, 3);
+        expect(find.text('Example Browser'), findsNothing);
         expect(control.settings.perAppProcesses, ['browser.exe']);
-        expect(
-          windows
-              ? control.settings.includeAllNetworks
-              : control.settings.enforceRoutes,
-          isTrue,
-        );
-        expect(control.settings.includedRoutes, ['10.0.0.0/8']);
         expect(control.settings.resolveServer, isTrue);
         expect(control.settings.excludedRoutes, ['192.168.0.0/16']);
-        await reveal(tester, find.text('Advanced network routes'));
-        // Expansion state need not survive navigation.
+        // Nothing is left to save on the way out again.
+        await openRouting(tester);
+        await openSettings(tester);
+        expect(control.writes, 3);
+        await openRouting(tester);
+        await tester.tap(find.text('Advanced network routes'));
+        await tester.pumpAndSettle();
+        bool checked() => tester
+            .widget<ElarniCheckboxTile>(
+              find.widgetWithText(ElarniCheckboxTile, routeToggle),
+            )
+            .value;
+        // Cancel within the pause drops a flipped checkbox.
+        await reveal(tester, find.text(routeToggle));
+        await tester.tap(find.text(routeToggle));
+        await tester.pump();
+        expect(checked(), isTrue);
+        await reveal(tester, find.text('Cancel'));
+        await tester.tap(find.text('Cancel'));
+        await tester.pump(settingsAutoApplyDelay);
+        await tester.pumpAndSettle();
+        expect(checked(), isFalse);
+        expect(control.writes, 3);
+        // Left alone, it saves itself. Enforced routes cannot be saved before
+        // specific routes are named, so that checkbox waits for the routes.
+        await reveal(tester, find.text(routeToggle));
+        await tester.tap(find.text(routeToggle));
+        await tester.pump(settingsAutoApplyDelay);
+        await tester.pumpAndSettle();
+        expect(checked(), isTrue);
+        expect(control.writes, windows ? 4 : 3);
+        expect(control.settings.includeAllNetworks, windows);
+        expect(control.settings.enforceRoutes, isFalse);
+        await reveal(tester, find.text('Included routes'));
+        await tester.tap(find.text('Included routes'));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField), '10.0.0.0/8');
+        await tester.tap(find.text('Save'));
+        await tester.pumpAndSettle();
+        expect(control.writes, windows ? 4 : 3);
+        await tester.tap(find.byKey(const Key('nav-home')));
+        await tester.pumpAndSettle();
+        expect(control.writes, windows ? 5 : 4);
+        expect(control.settings.includedRoutes, ['10.0.0.0/8']);
+        expect(control.settings.enforceRoutes, !windows);
+        // A refused checkbox goes back to what is saved.
+        control.reject = true;
+        await openRouting(tester);
         if (find.text(routeToggle).hitTestable().evaluate().isEmpty) {
+          await reveal(tester, find.text('Advanced network routes'));
           await tester.tap(find.text('Advanced network routes'));
           await tester.pumpAndSettle();
         }
         await reveal(tester, find.text(routeToggle));
         await tester.tap(find.text(routeToggle));
+        await tester.pump(settingsAutoApplyDelay);
         await tester.pumpAndSettle();
-        await reveal(tester, find.text('Cancel'));
-        await tester.tap(find.text('Cancel'));
-        await tester.pumpAndSettle();
-        expect(
-          tester
-              .widget<ElarniCheckboxTile>(
-                find.widgetWithText(ElarniCheckboxTile, routeToggle),
-              )
-              .value,
-          isTrue,
-        );
-        expect(control.writes, 2);
+        expect(control.writes, windows ? 6 : 5);
+        expect(checked(), isTrue);
         expect(control.connectCalls + control.disconnectCalls, 0);
         await tester.pumpWidget(const SizedBox());
       },

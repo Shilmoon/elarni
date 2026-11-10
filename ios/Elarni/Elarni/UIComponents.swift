@@ -276,6 +276,58 @@ func approvalText(_ warning: SubscriptionSafetyWarning?) -> String {
   return (descriptions + [String(localized: "Destinations: \(warning.destinations.joined(separator: ", "))."),
     String(localized: "Continue only if you trust this subscription provider. Approval applies to this destination chain.")]).joined(separator: " ")
 }
+enum SaveStatus { case saving, saved }
+/// How long a flipped switch waits before it saves, so several flipped in a row make one save. UI tests do not wait it out.
+let autoApplyDelay: Duration = ProcessInfo.processInfo.arguments.contains("--ui-testing") ? .milliseconds(100) : .seconds(1)
+/// How long the page title keeps "Saved". A UI test needs longer than one accessibility snapshot to see it.
+let savedNoteDuration: Duration = ProcessInfo.processInfo.arguments.contains("--ui-testing") ? .seconds(6) : .seconds(2)
+/// Copies a field into `next` only when the draft changed it since `base`, so a value saved elsewhere since stays.
+func carry<Root, Value: Equatable>(_ key: WritableKeyPath<Root, Value>, from draft: Root, since base: Root, to next: inout Root) {
+  if draft[keyPath: key] != base[keyPath: key] { next[keyPath: key] = draft[keyPath: key] }
+}
+/// A settings page with a draft. Switches save themselves; what is typed or picked is saved by Save and by leaving the page
+/// (Back, another tab, a page opened from it), and Cancel drops it. A draft the app would refuse hides Back until it is
+/// corrected or cancelled, so leaving never loses it unseen.
+private struct DraftPage: ViewModifier {
+  @Environment(IOSAppModel.self) private var model
+  let title: LocalizedStringKey
+  let dirty: Bool
+  let valid: Bool
+  let canSave: Bool
+  let cancel: () -> Void
+  let save: (_ leaving: Bool) -> Void
+  func body(content: Content) -> some View {
+    content.navigationTitle(title).navigationBarTitleDisplayMode(.inline)
+      .navigationBarBackButtonHidden(dirty && !valid)
+      .toolbar {
+        // Always present: a toolbar item added while the page is open does not reach the bar.
+        ToolbarItem(placement: .principal) {
+          VStack(spacing: 0) {
+            Text(title).font(.headline)
+            if let status = model.saveStatus {
+              Text(status == .saving ? "Saving…" : "Saved").font(.caption2).foregroundStyle(AppPalette.secondary).accessibilityIdentifier("saveStatus")
+            }
+          }
+        }
+        if dirty { ToolbarItem(placement: .topBarTrailing) { Button("Cancel", action: cancel).disabled(model.busy) } }
+        ToolbarItem(placement: .confirmationAction) { Button("Save") { save(false) }.disabled(model.busy || !canSave) }
+      }
+      .onDisappear {
+        if dirty && valid { save(true) }
+        // A switch still waiting out its pause stays in the draft.
+        else if model.saveStatus == .saving { model.saveStatus = nil }
+      }
+  }
+}
+extension View {
+  func draftPage(_ title: LocalizedStringKey, dirty: Bool, valid: Bool, canSave: Bool = true, cancel: @escaping () -> Void, save: @escaping (_ leaving: Bool) -> Void) -> some View {
+    modifier(DraftPage(title: title, dirty: dirty, valid: valid, canSave: canSave, cancel: cancel, save: save))
+  }
+}
+/// The last row of a page whose draft cannot be saved as it stands.
+struct InvalidDraftNote: View {
+  var body: some View { Section { Text("A value on this page can’t be saved. Correct it, or tap Cancel to drop your changes.").font(.footnote).foregroundStyle(.red) } }
+}
 struct NumberField: View {
   let title: LocalizedStringKey
   @Binding var value: Int

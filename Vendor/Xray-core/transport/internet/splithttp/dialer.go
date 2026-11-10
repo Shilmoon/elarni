@@ -193,12 +193,18 @@ func (p *pathConns) remove(conn any) {
 	delete(p.all, conn)
 }
 
+// check closes the connections that receive nothing in the last four fifths of bound. The
+// first fifth passes unchecked: what the old path had delivered is still being read when the
+// change is reported, and counted as an answer it kept a dead connection until its timeout.
 func (p *pathConns) check(bound time.Duration) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for _, check := range p.all {
-		check(bound)
-	}
+	settle := bound / 5
+	time.AfterFunc(settle, func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		for _, check := range p.all {
+			check(bound - settle)
+		}
+	})
 }
 
 // releasableConn is closed when its dialer is released.

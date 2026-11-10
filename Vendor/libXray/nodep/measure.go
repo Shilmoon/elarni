@@ -113,14 +113,6 @@ func coreHTTPClient(timeout time.Duration, proxy string, keepAlive bool) (*http.
 	return c, nil
 }
 
-func PingHTTPRequest(c *http.Client, url string, timeout int) (int64, error) {
-	return PingHTTPRequestMethod(c, url, timeout, "HEAD")
-}
-
-func PingHTTPRequestMethod(c *http.Client, url string, timeout int, method string) (int64, error) {
-	return pingHTTPRequestContext(context.Background(), c, url, timeout, method)
-}
-
 // PingHTTPRequestContext checks one request with the caller's client, such as one that dials through a running core.
 func PingHTTPRequestContext(ctx context.Context, c *http.Client, url string, timeout int, method string, expected ...*ExpectedResponse) (int64, error) {
 	return pingHTTPRequestContext(ctx, c, url, timeout, method, expected...)

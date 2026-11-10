@@ -258,14 +258,37 @@ private val LocalReselect = compositionLocalOf { 0 }
         detail = previous?.string("detail").orEmpty(); id = previous?.string("id").orEmpty(); history = history.dropLast(1)
         activity.interaction.restore = null
     }
+    /** Makes a move: "back", "top" (close the tab's open pages), "tab <page>" or "open <detail> <id>". [saved] is set when an editor stored its draft for it. */
+    fun go(move: String, saved: Boolean = false) {
+        val parts = move.split(' ', limit = 3)
+        when (parts[0]) {
+            "back" -> back()
+            "top" -> while (detail.isNotEmpty()) back()
+            // A settings section saves in place and stays open in its tab; other editors close once saved, as with Save changes.
+            "tab" -> { if (saved && detail != "settingsEditor") back(); primary(parts[1]) }
+            "open" -> navigate(parts[1], parts.getOrElse(2) { "" })
+        }
+    }
+    /** Leaving an editor saves its unsaved edits first and moves only once they are stored; a rejected draft stays open with its error. Cancel drops it. */
+    fun leave(move: String) {
+        val save = activity.interaction.leaveSave
+        // A second tap while that save runs, or while its review waits for an answer, starts nothing new.
+        if (save == null) go(move) else if (!state.busy && state.approval == null) save(move)
+    }
     // Tapping the current tab closes its open pages, then scrolls its list to the top.
     fun tab(destination: String) {
-        if (destination != page) primary(destination)
-        else if (detail.isNotEmpty()) while (detail.isNotEmpty()) back()
+        if (destination != page) leave("tab $destination")
+        else if (detail.isNotEmpty()) leave("top")
         else reselect++
     }
     LaunchedEffect(activity.interaction.dismissEditor) {
         if (activity.interaction.dismissEditor) { activity.interaction.dismissEditor = false; back() }
+    }
+    LaunchedEffect(activity.interaction.leave) {
+        activity.interaction.leave?.let { move -> activity.interaction.leave = null; go(move, saved = true) }
+    }
+    LaunchedEffect(activity.interaction.saveStatus) {
+        if (activity.interaction.saveStatus == "saved") { delay(2000); activity.interaction.saveStatus = "" }
     }
     LaunchedEffect(activity.interaction.notice) {
         activity.interaction.notice?.let { notice ->
@@ -300,7 +323,7 @@ private val LocalReselect = compositionLocalOf { 0 }
             }
         }
     }
-    BackHandler(detail.isNotEmpty() || page != "home") { if (detail.isNotEmpty()) back() else primary("home") }
+    BackHandler(detail.isNotEmpty() || page != "home") { if (detail.isNotEmpty()) leave("back") else primary("home") }
     ElarniTheme(activity, catalog.settings) {
         Surface(Modifier.fillMaxSize()) {
             BoxWithConstraints {
@@ -315,9 +338,13 @@ private val LocalReselect = compositionLocalOf { 0 }
                     }
                     Scaffold(Modifier.weight(1f),
                         topBar = { TopAppBar(title = { if (page == "home" && detail.isEmpty()) Image(painterResource(R.drawable.elarni_icon), "Elarni", Modifier.size(36.dp).clip(MaterialTheme.shapes.small)) else Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            navigationIcon = { if (detail.isNotEmpty()) IconButton({ back() }) { RouteIcon("back", tr(R.string.back)) } },
+                            navigationIcon = { if (detail.isNotEmpty()) IconButton({ leave("back") }) { RouteIcon("back", tr(R.string.back)) } },
                             colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
                             actions = {
+                                activity.interaction.saveStatus.takeIf(String::isNotEmpty)?.let { status ->
+                                    Text(if (status == "saving") tr(R.string.saving) else tr(R.string.saved), Modifier.padding(horizontal = 16.dp).testTag("save-status"),
+                                        style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                                 if (detail.isEmpty() && page == "home") ImportMenu(activity, !state.loading && !state.busy) { navigate("scanQR") }
                                 if (detail.isEmpty() && page == "routing") TextButton({ navigate("route", "") }, enabled = !state.loading && !state.busy, modifier = Modifier.heightIn(min = 48.dp)) { RouteIcon("add", color = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(8.dp)); Text(tr(R.string.new_profile)) }
                                 if (detail == "scanQR") IconButton({ activity.pick("qr") }, enabled = !state.busy) { RouteIcon("image", tr(R.string.choose_qr_image), MaterialTheme.colorScheme.primary) }
@@ -330,7 +357,8 @@ private val LocalReselect = compositionLocalOf { 0 }
                             }) }
                         } },
                         snackbarHost = { SnackbarHost(snackbar) }) { padding ->
-                        Box(Modifier.fillMaxSize().padding(padding).imePadding()) {
+                        // The keyboard covers the navigation bar; without consuming its padding the content lost that height twice.
+                        Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
                             Box(Modifier.widthIn(max = if (page == "home" && detail.isEmpty()) androidx.compose.ui.unit.Dp.Infinity else 760.dp).fillMaxSize().align(Alignment.TopCenter)) {
                             if (state.loading) Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) { CircularProgressIndicator(); Text(tr(R.string.opening_your_catalog), Modifier.padding(16.dp)) }
                             else screenStates.SaveableStateProvider("$page/$detail/$id") { when (detail) {
@@ -343,7 +371,7 @@ private val LocalReselect = compositionLocalOf { 0 }
                                 "routeDetail" -> RoutingDetailScreen(catalog, id, state.busy, activity, ::navigate) { titleText, text, action -> confirmation = Confirmation(titleText, text, action) }
                                 "perApp" -> PerAppEditor(catalog.settings, catalog.nodes.filter { it.string("format") == "xrayProfile" }.map { it.string("id") to it.string("name") }, state.busy, activity) { back() }
                                 "automation" -> AutomationEditor(catalog, state.busy, activity) { back() }
-                                "settingsEditor" -> SettingsEditor(catalog, id, state.busy, activity, ::navigate, { primary("home") }) { back() }
+                                "settingsEditor" -> SettingsEditor(catalog, id, state.busy, activity, { destination, target -> leave("open $destination $target") }, { leave("tab home") }) { back() }
                                 "credentials" -> CredentialsEditor(state.busy, activity) { back() }
                                 "backup", "restore" -> BackupEditor(detail == "restore", state.busy, activity) { back() }
                                 "ping" -> PingEditor(id, state, activity)
