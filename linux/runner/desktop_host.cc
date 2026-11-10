@@ -338,6 +338,18 @@ bool appimage_file(const char* path) {
   const auto head = read_small(path, 11);
   return head.size() == 11 && head.compare(8, 2, "AI") == 0 && (head[10] == 1 || head[10] == 2);
 }
+// PNGs by icon, on the main thread. Every program without artwork has the same generic icon, and the
+// tab asks for the whole list each time it opens. A new icon theme starts over.
+std::map<std::string, std::string>& icon_pngs() {
+  static std::map<std::string, std::string> pngs;
+  static bool watching = false;
+  if (!watching && gdk_screen_get_default()) {
+    watching = true;
+    g_signal_connect(gtk_icon_theme_get_default(), "changed",
+        G_CALLBACK(+[](GtkIconTheme*, gpointer) { icon_pngs().clear(); }), nullptr);
+  }
+  return pngs;
+}
 void set_icon(FlValue* item, GIcon* icon, const char* path) {
   // Installed desktop entries provide their own artwork. For custom binaries,
   // use the file's native icon; failure simply leaves Flutter's app fallback.
@@ -345,16 +357,32 @@ void set_icon(FlValue* item, GIcon* icon, const char* path) {
   g_autoptr(GFileInfo) file_info = icon || !file ? nullptr : g_file_query_info(file,
       G_FILE_ATTRIBUTE_STANDARD_ICON, G_FILE_QUERY_INFO_NONE, nullptr, nullptr);
   if (!icon && file_info) icon = g_file_info_get_icon(file_info);
-  g_autoptr(GtkIconInfo) icon_info = icon && gdk_screen_get_default() ? gtk_icon_theme_lookup_by_gicon(
-      gtk_icon_theme_get_default(), icon, 64, GTK_ICON_LOOKUP_FORCE_SIZE) : nullptr;
-  g_autoptr(GdkPixbuf) pixbuf = icon_info ? gtk_icon_info_load_icon(icon_info, nullptr) : nullptr;
-  if (pixbuf) {
+  if (!icon || !gdk_screen_get_default()) return;
+  auto& pngs = icon_pngs();
+  g_autofree gchar* key = g_icon_to_string(icon);
+  auto kept = key ? pngs.find(key) : pngs.end();
+  if (kept == pngs.end()) {
+    std::string encoded;
+    g_autoptr(GtkIconInfo) icon_info = gtk_icon_theme_lookup_by_gicon(
+        gtk_icon_theme_get_default(), icon, 64, GTK_ICON_LOOKUP_FORCE_SIZE);
+    g_autoptr(GdkPixbuf) pixbuf = icon_info ? gtk_icon_info_load_icon(icon_info, nullptr) : nullptr;
     g_autofree gchar* png = nullptr;
     gsize length = 0;
-    if (gdk_pixbuf_save_to_buffer(pixbuf, &png, &length, "png", nullptr, nullptr) && length <= 65536) {
-      fl_value_set_string_take(item, "iconPng", fl_value_new_uint8_list(
-          reinterpret_cast<const uint8_t*>(png), length));
+    if (pixbuf && gdk_pixbuf_save_to_buffer(pixbuf, &png, &length, "png", nullptr, nullptr) && length <= 65536) {
+      encoded.assign(png, length);
     }
+    if (!key) {
+      if (!encoded.empty()) fl_value_set_string_take(item, "iconPng", fl_value_new_uint8_list(
+          reinterpret_cast<const uint8_t*>(encoded.data()), encoded.size()));
+      return;
+    }
+    if (pngs.size() >= 4096) pngs.clear();
+    // An icon that could not be drawn is kept too, as empty, and not tried again.
+    kept = pngs.emplace(key, std::move(encoded)).first;
+  }
+  if (!kept->second.empty()) {
+    fl_value_set_string_take(item, "iconPng", fl_value_new_uint8_list(
+        reinterpret_cast<const uint8_t*>(kept->second.data()), kept->second.size()));
   }
 }
 // An app for the list. The list is gathered off the main thread; its icons are made on it, as

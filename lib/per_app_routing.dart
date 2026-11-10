@@ -45,7 +45,6 @@ final class PerAppProfile {
   };
 
   String get platformName => platformLabel(platform);
-  bool get valid => validationError == null;
 
   String? get validationError {
     if (!{'macos', 'windows', 'linux', 'android'}.contains(platform)) {

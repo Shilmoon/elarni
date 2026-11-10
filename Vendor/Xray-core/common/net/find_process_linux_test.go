@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -138,6 +139,57 @@ func TestLinuxWildcardUDPProcess(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Java, .NET and Go open IPv6 sockets that also carry IPv4. Such a socket is listed only in the
+// IPv6 table, bound to [::] or to the IPv4-mapped address, while its flow has IPv4 addresses.
+func TestLinuxDualStackSocketProcess(t *testing.T) {
+	t.Run("udp", func(t *testing.T) {
+		peer, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer peer.Close()
+		client, err := net.ListenUDP("udp", &net.UDPAddr{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close()
+		if _, err := client.WriteToUDP([]byte("fixture"), peer.LocalAddr().(*net.UDPAddr)); err != nil {
+			t.Skip("no dual-stack sockets here: ", err)
+		}
+		port := uint16(client.LocalAddr().(*net.UDPAddr).Port)
+		pid, _, _, err := FindProcess("udp", "127.0.0.1", port, "127.0.0.1", uint16(peer.LocalAddr().(*net.UDPAddr).Port))
+		if err != nil || pid != os.Getpid() {
+			t.Fatalf("pid=%d err=%v", pid, err)
+		}
+	})
+	t.Run("tcp", func(t *testing.T) {
+		listener, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer listener.Close()
+		peerPort := listener.Addr().(*net.TCPAddr).Port
+		fd, err := syscall.Socket(syscall.AF_INET6, syscall.SOCK_STREAM, 0)
+		if err != nil {
+			t.Skip("no IPv6 sockets here: ", err)
+		}
+		defer syscall.Close(fd)
+		mapped := syscall.SockaddrInet6{Port: peerPort}
+		copy(mapped.Addr[:], net.IPv4(127, 0, 0, 1).To16())
+		if err := syscall.Connect(fd, &mapped); err != nil {
+			t.Skip("no dual-stack sockets here: ", err)
+		}
+		local, err := syscall.Getsockname(fd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pid, _, _, err := FindProcess("tcp", "127.0.0.1", uint16(local.(*syscall.SockaddrInet6).Port), "127.0.0.1", uint16(peerPort))
+		if err != nil || pid != os.Getpid() {
+			t.Fatalf("pid=%d err=%v", pid, err)
+		}
+	})
 }
 
 type lookupResult struct {

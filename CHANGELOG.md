@@ -70,6 +70,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   methods no app calls. A routing link that starts with `://routing/`, without a scheme, is no
   longer imported on Windows, Linux, macOS and iOS; nothing writes such links and Android
   never took them.
+- The per-app app list opens faster the second time on macOS and Linux: app icons are drawn
+  once and kept until the app or the icon theme changes, and macOS builds the list off the
+  main thread, so the window no longer freezes while it loads.
 
 ### Fixed
 
