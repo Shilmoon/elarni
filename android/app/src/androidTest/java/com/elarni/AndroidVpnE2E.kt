@@ -424,6 +424,39 @@ class AndroidVpnE2E {
             assertTrue(Native.call("getXrayState").getBoolean("running"))
         } }
     }
+    // Android and the per-app rules take a listed app's UID when the tunnel starts; removing or installing it while
+    // connected builds the tunnel again, so the app installed meanwhile takes its route at once.
+    @Test fun listedAppRemovedAndInstalledWhileConnectedTakesItsRoute() {
+        fun tunnel() = NetworkInterface.getNetworkInterfaces().asSequence().firstOrNull { it.inetAddresses.asSequence().any { address -> address.hostAddress == "198.51.100.253" } }?.index
+        fun rebuilt(before: Int?) = ui.waitUntil(15_000) { repo.state.value.connection == "connected" && tunnel().let { it != null && it != before } }
+        val listed = "com.elarni.traffic.a"
+        val copy = "/data/local/tmp/elarni-listed-app.apk"
+        fun installed() = shell("pm list packages $listed").lines().any { it.trim() == "package:$listed" }
+        assertTrue(shell("cp ${shell("pm path $listed").trim().removePrefix("package:")} $copy").isBlank())
+        SocksFixture().use { upstream ->
+            call("import", obj("text" to "socks://127.0.0.1:${upstream.port}#Listed%20app"))
+            call("select", obj("id" to snapshot().nodes.single().getString("id")))
+            call("settings", obj("settings" to obj("perAppMode" to "proxyOnly", "perAppProcesses" to JSONArray(listOf(listed)))))
+            try {
+                connect()
+                assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
+                assertTrue(inTunnel)
+                var before = tunnel()
+                assertTrue(shell("pm uninstall $listed").contains("Success"))
+                rebuilt(before)
+                before = tunnel()
+                assertTrue(shell("pm install -r $copy").contains("Success"))
+                rebuilt(before)
+                assertTrue("The app installed while connected must take its route", traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
+                assertTrue("Only-listed mode must take the installed app into the tunnel", inTunnel)
+                assertTrue("Other apps must stay out", traffic("b", "tcp", httpPort).contains("direct:elarni-synthetic"))
+                assertFalse(inTunnel)
+            } finally {
+                if (!installed()) shell("pm install -r $copy")
+                shell("rm $copy")
+            }
+        }
+    }
     // A restore clears the connection intent, so it waits for Disconnect instead of leaving the running VPN unrecorded.
     @Test fun restoreWhileConnectedAsksToDisconnectFirst() {
         SocksFixture().use { upstream ->

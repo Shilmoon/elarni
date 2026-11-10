@@ -728,6 +728,10 @@ class Repository(private val app: ElarniApplication) {
             publish()
         }
     }
+    /** A listed app installed, removed or reinstalled while connected takes its route once the tunnel is built again. */
+    suspend fun packagesChanged() {
+        ready.await(); mutex.withLock { if (!stopRequested.get() && engine.listedAppsChanged()) { restart(epoch.get()); publish() } }
+    }
     /** Restarts the core on the current network; a Disconnect or Cancel meanwhile is no failure. */
     private fun restart(generation: Long) {
         try { state("connecting"); start(catalog, generation); automation.healthy(Automation.clock()); state("connected") }

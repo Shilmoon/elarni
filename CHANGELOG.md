@@ -82,6 +82,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   matches every version, on Windows, macOS and Linux; so are Snap apps on Linux, whose path
   changes with each refresh. Pick Claude Code and Snap apps again from the list to get the new
   rule; Store app rules need nothing.
+- On Android, an app listed for per-app routing that was installed or reinstalled while
+  connected missed its route until the next connect: in **Only listed** it stayed out of the
+  VPN, and in **Bypass** its traffic went through it. Elarni now builds the tunnel again when a
+  listed app is installed, removed or reinstalled; app updates change nothing.
 - In per-app **Only listed** mode on Windows, macOS and Linux, a connection whose app could not
   be found went direct, so a listed app's connection could leave outside the VPN. It now follows
   normal routing, as on Android. Such traffic can include WSL, virtual machines and containers:
