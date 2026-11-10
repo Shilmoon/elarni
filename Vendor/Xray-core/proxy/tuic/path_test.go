@@ -238,6 +238,25 @@ func TestPathChangeClosesAConnectionThatStoppedAnswering(t *testing.T) {
 	}
 }
 
+// The change is often reported while the old path still delivers what was in flight, or a
+// moment before it dies. What arrives then is no answer: counted as one, it kept the dead
+// connection and its flows until the idle timeout.
+func TestPathChangeIgnoresWhatTheOldPathStillDelivers(t *testing.T) {
+	r := newRelay(t, startService(t, endless{}))
+	c := tuicClient(t, r)
+	flow, old := dialFlow(t, c)
+	if _, err := flow.Write([]byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	go io.Copy(io.Discard, flow)
+	signalMove(t, c)
+	time.Sleep(30 * time.Millisecond)
+	r.cut.Store(true)
+	if !closesWithin(old, probeBound+time.Second) {
+		t.Fatal("a connection on a dead path stayed open")
+	}
+}
+
 // The outbound's Close ends the connections it retired, and its watch.
 func TestCloseEndsRetiredConnections(t *testing.T) {
 	c := tuicClient(t, newRelay(t, startService(t, echo{})))
