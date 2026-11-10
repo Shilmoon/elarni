@@ -1626,5 +1626,15 @@
         "type": "String"
       }
     }
+  },
+  "perAppConnectionOpenedReset": "Open before Elarni connected · Closed, so the app reconnects through per-app routing",
+  "perAppConnectionOpenedKept": "Open before Elarni connected · Skips per-app routing until the app reconnects",
+  "perAppConnectionsRestart": "Restart {apps}: their connections opened before Elarni connected skip per-app routing until they reconnect.",
+  "@perAppConnectionsRestart": {
+    "placeholders": {
+      "apps": {
+        "type": "String"
+      }
+    }
   }
 }

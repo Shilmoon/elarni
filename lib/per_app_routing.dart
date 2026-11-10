@@ -956,14 +956,15 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
                 '$address · ${connection.network.toUpperCase()}',
                 style: subtle,
               ),
-              Text(
-                [
+              Text(switch (connection.before) {
+                'reset' => l10n.perAppConnectionOpenedReset,
+                'kept' => l10n.perAppConnectionOpenedKept,
+                _ => [
                   _connectionRoute(connection),
                   if (connection.listed) l10n.perAppConnectionListed,
                   if (connection.unlisted) l10n.perAppConnectionNotListed,
                 ].join(' · '),
-                style: subtle,
-              ),
+              }, style: subtle),
               if (connection.via.isNotEmpty)
                 Text(
                   l10n.perAppConnectionStartedBy(_startedBy(connection.via)),
@@ -1016,12 +1017,30 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
     final subtle = TextStyle(
       color: Theme.of(context).colorScheme.onSurfaceVariant,
     );
+    // Listed apps whose connections from before connecting skip per-app
+    // routing: on macOS all of them, elsewhere those the system kept.
+    final restart = {
+      for (final connection in _connections.values)
+        if (connection.before == 'kept')
+          selections
+                  .where((rule) => _covers(rule, connection))
+                  .map((rule) => _app(rule).name)
+                  .firstOrNull ??
+              _connectionApp(connection),
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _heading(l10n.perAppConnections),
         const SizedBox(height: 8),
         Text(l10n.perAppConnectionsHelp, style: subtle),
+        if (restart.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            l10n.perAppConnectionsRestart(restart.join(', ')),
+            key: const Key('per-app-connections-restart'),
+          ),
+        ],
         if (widget.settings.perAppMode == 'off') ...[
           const SizedBox(height: 8),
           Text(

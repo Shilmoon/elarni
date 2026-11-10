@@ -40,6 +40,7 @@ const (
 	LibXrayMethodSetLogLevel                 LibXrayMethod = "setLogLevel"
 	LibXrayMethodReadLogs                    LibXrayMethod = "readLogs"
 	LibXrayMethodReadConnections             LibXrayMethod = "readConnections"
+	LibXrayMethodMoveOpenedConnections       LibXrayMethod = "moveOpenedConnections"
 	LibXrayMethodSocketPathChanged           LibXrayMethod = "socketPathChanged"
 )
 
@@ -65,6 +66,16 @@ type ReadLogsRequest struct {
 type ReadConnectionsRequest struct {
 	Epoch int64  `json:"epoch"`
 	After uint64 `json:"after"`
+}
+
+// MoveOpenedConnectionsRequest names the tunnel's own address ranges, such as "192.0.2.0/30".
+type MoveOpenedConnectionsRequest struct {
+	Tunnel []string `json:"tunnel"`
+}
+
+type MoveOpenedConnectionsResponse struct {
+	Reset int `json:"reset"`
+	Kept  int `json:"kept"`
 }
 
 type SetMemoryLimitResponse struct {

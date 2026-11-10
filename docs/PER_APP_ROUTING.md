@@ -73,6 +73,23 @@ it takes shows **Started by** with the listed app in **Recent connections**.
   program that did.
 - Android routes by package, so it has no such option.
 
+## Apps that were running before you connected
+
+A connection an app opened before Elarni connected can keep its old route: Windows keeps
+a connection on the network it was opened on. A listed app's such connections would skip
+per-app routing until the app reconnects. When the tunnel starts, Elarni looks for them:
+
+- On Windows (IPv4) and Linux it closes them, and the app reconnects through per-app
+  routing. Connections to this computer and to local networks are left alone, as are apps
+  whose target is Direct.
+- Windows cannot close IPv6 connections, macOS lets no program close another's, and some
+  Linux kernels are built without it. Those stay open, and **Recent connections** asks you to
+  restart those apps.
+
+**Recent connections** lists each such connection as open before Elarni connected, and
+whether it was closed. Android needs nothing: it closes the apps' connections itself when
+a VPN starts.
+
 ## Checking rules
 
 On desktop, each listed rule shows how many running programs it matches now, counted

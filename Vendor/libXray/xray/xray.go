@@ -167,6 +167,7 @@ func RunXrayFromJSON(configJSON string) (err error) {
 		return
 	}
 	coreServer = server
+	tunnelRules = perAppRules(configJSON)
 
 	debug.FreeOSMemory()
 	return nil
@@ -185,7 +186,7 @@ func StopXray() error {
 	defer coreServerMu.Unlock()
 	if coreServer != nil {
 		err := coreServer.Close()
-		coreServer = nil
+		coreServer, tunnelRules = nil, nil
 		if err != nil {
 			return err
 		}

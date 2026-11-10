@@ -26,6 +26,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   matches the programs the app starts, and theirs, such as helpers, updaters or a terminal's
   command-line tools. A program listed on its own keeps its own target, and **Recent
   connections** shows which listed app started a program.
+- Listed apps that were running before Elarni connected no longer keep connections that skip
+  per-app routing: on Windows (IPv4) and Linux, Elarni closes them when the tunnel starts, so
+  the app reconnects through it. Where the system does not allow that (IPv6 on Windows,
+  macOS), **Recent connections** lists them and asks you to restart the app.
 
 ### Changed
 

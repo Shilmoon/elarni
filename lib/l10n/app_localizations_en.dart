@@ -3068,4 +3068,17 @@ class AppLocalizationsEn extends AppLocalizations {
   String perAppConnectionAdded(String name) {
     return '$name added. Save changes to apply.';
   }
+
+  @override
+  String get perAppConnectionOpenedReset =>
+      'Open before Elarni connected · Closed, so the app reconnects through per-app routing';
+
+  @override
+  String get perAppConnectionOpenedKept =>
+      'Open before Elarni connected · Skips per-app routing until the app reconnects';
+
+  @override
+  String perAppConnectionsRestart(String apps) {
+    return 'Restart $apps: their connections opened before Elarni connected skip per-app routing until they reconnect.';
+  }
 }

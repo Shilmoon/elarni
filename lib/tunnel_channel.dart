@@ -791,6 +791,7 @@ final class RecentConnection {
     this.path = '',
     this.app = '',
     this.via = '',
+    this.before = '',
   });
 
   static RecentConnection? fromMap(Object? value) {
@@ -819,6 +820,7 @@ final class RecentConnection {
       path: text('path'),
       app: text('app'),
       via: text('via'),
+      before: text('before'),
     );
   }
 
@@ -833,6 +835,11 @@ final class RecentConnection {
   /// The listed program that started this one, when its "children:" rule
   /// took the connection; else empty.
   final String via;
+
+  /// A listed app's connection that was open before the tunnel started:
+  /// "reset" when the core closed it, so the app reconnects through the
+  /// tunnel; "kept" when the system did not let it. Else empty.
+  final String before;
 
   /// direct, block, proxy, dns, or routing while it waits for its next decision.
   final String kind;

@@ -654,6 +654,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       IOSConnectionAlerts.connected()
 #endif
       completionHandler(nil)
+#if os(macOS)
+      // Listed apps that were running keep their open connections outside the tunnel.
+      Task { [xray] in await xray.moveOpenedConnections() }
+#endif
     } catch {
       runtime.startupFinished(generation)
       ProviderBoundaryEvidence.finalFailure(attempt: attempt)
@@ -795,6 +799,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       _ = runtime.launchMonitor(generation: generation) { [weak self] in
         await self?.runMonitor(generation: generation, attempt: attempt)
       }
+#if os(macOS)
+      // A new core starts a new connections list.
+      Task { [xray] in await xray.moveOpenedConnections() }
+#endif
       return "switched"
     } catch {
       guard lifecycle.isActive(generation), !Task.isCancelled else { return "cancelled" }

@@ -864,6 +864,9 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 	if writeFrame(pipe, map[string]any{"ready": true, "adapter": iface.Alias()}) != nil {
 		return 1, true, true
 	}
+	// Windows keeps a connection on the network it was opened on: a listed app that was already
+	// running would skip per-app routing until it reconnects.
+	go moveOpenedConnections()
 	sleep := newResumeClock(windowsSuspended)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
