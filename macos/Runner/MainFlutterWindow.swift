@@ -158,6 +158,11 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
         }
         if let selected = arguments["processes"] as? [String], selected.count <= 256 {
           for path in selected where path.hasPrefix("/") && path.utf8.count <= 1024 {
+            if applications[path] == nil, let suggested = RoutingApplicationRule.suggestion(forSaved: path) {
+              let name = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+              applications[path] = ["name": name, "process": path, "suggested": suggested]
+              continue
+            }
             if let entry = self.routingApplication(URL(fileURLWithPath: path), followsUpdates: false) {
               let process = entry["process"] as! String
               if applications[process] == nil { applications[process] = entry }

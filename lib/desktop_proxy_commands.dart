@@ -26,6 +26,13 @@ extension _ProxyCommands on DesktopProxy {
       if (url is! String || !isHttpsURL(url)) throw desktopError('invalid_url');
       return _platformRequest('openURL', {'url': url});
     }
+    if (method == 'checkProcessRules') {
+      // Rule checks read this computer's programs, not the catalog.
+      final rules = arguments?['rules'];
+      if (rules is! List || rules.any((rule) => rule is! String))
+        throw desktopError('invalid_rules');
+      return _native('checkProcessRules', {'rules': rules});
+    }
     final readOnly = {
       'state',
       'subscriptions',

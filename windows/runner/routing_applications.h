@@ -15,6 +15,9 @@ flutter::EncodableMap RoutingApplication(const std::wstring& path, bool running 
 // Discord run from <root>\app-<version>\, which each update replaces, and start
 // through <root>\Update.exe or a stub, so they match their whole <root>\ folder.
 std::wstring ExecutableRule(const std::wstring& path);
+// For a saved rule that names one version of a local app, the rule that matches every
+// version; otherwise empty. Store paths need none: the core matches them by package.
+std::wstring UpdateProofRule(const std::wstring& path);
 
 class RoutingApplicationLookup : public std::enable_shared_from_this<RoutingApplicationLookup> {
  public:

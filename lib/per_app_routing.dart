@@ -216,9 +216,12 @@ class _ProxyDialogState extends State<_ProxyDialog> {
 /// Native metadata is optional. Rules remain usable when an app is not running
 /// or its icon cannot be read, and metadata never enters a routing profile.
 final class _RoutingApp {
-  const _RoutingApp(this.name, this.process, [this.icon]);
+  const _RoutingApp(this.name, this.process, [this.icon, this.suggested]);
   final String name, process;
   final Uint8List? icon;
+
+  /// The host's update-proof rule for a saved rule that names one version.
+  final String? suggested;
 }
 
 /// The rule for traffic whose app the lookup could not find: WSL, virtual
@@ -307,6 +310,7 @@ class PerAppRoutingEditor extends StatefulWidget {
     this.draft,
     this.onCancel,
     this.servers = const [],
+    this.checkRules,
   });
 
   final TunnelSettings settings;
@@ -318,6 +322,9 @@ class PerAppRoutingEditor extends StatefulWidget {
   final Widget? advancedRoutes;
   final PerAppRoutingDraft? draft;
   final VoidCallback? onCancel;
+
+  /// Counts running programs per rule and explains rules that match nothing.
+  final Future<ProcessRuleChecks> Function(List<String>)? checkRules;
 
   @override
   State<PerAppRoutingEditor> createState() => _PerAppRoutingEditorState();
@@ -341,6 +348,9 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
   set view(_AppView value) => draft.view = value;
   String? notice;
   bool loading = true, working = false, appListFailed = false;
+  ProcessRuleChecks? checks;
+  List<String>? _checkedRules;
+  bool _checking = false;
   bool get toolsExpanded => draft.toolsExpanded;
   set toolsExpanded(bool value) => draft.toolsExpanded = value;
 
@@ -430,6 +440,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
       final process = item['process'] as String;
       if (process.isEmpty) continue;
       final bytes = item['iconPng'];
+      final suggested = item['suggested'];
       result.add(
         _RoutingApp(
           item['name'] is String && (item['name'] as String).isNotEmpty
@@ -438,6 +449,9 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
           process,
           bytes is Uint8List && bytes.isNotEmpty && bytes.length <= 65536
               ? bytes
+              : null,
+          suggested is String && suggested.isNotEmpty && suggested != process
+              ? suggested
               : null,
         ),
       );
@@ -450,6 +464,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
       loading = true;
       notice = null;
       appListFailed = false;
+      _checkedRules = null; // a refresh counts the running programs again
     });
     final unknown = _RoutingApp(l10n.perAppUnknownOwner, unknownOwnerRule);
     try {
@@ -469,6 +484,160 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
     } finally {
       if (mounted) setState(() => loading = false);
     }
+  }
+
+  // Checks follow the list after each change; one runs at a time.
+  void _ensureChecks() {
+    if (widget.checkRules == null ||
+        _checking ||
+        listEquals(_checkedRules, selections))
+      return;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _runChecks());
+  }
+
+  Future<void> _runChecks() async {
+    final check = widget.checkRules;
+    final rules = List.of(selections);
+    if (check == null || _checking || !mounted) return;
+    if (listEquals(rules, _checkedRules)) return;
+    _checking = true;
+    _checkedRules = rules;
+    try {
+      final asked = rules.where((rule) => rule != unknownOwnerRule).toList();
+      final result = asked.isEmpty
+          ? const ProcessRuleChecks({})
+          : await check(asked);
+      if (mounted && listEquals(rules, _checkedRules)) {
+        setState(() => checks = result);
+      }
+    } on Object {
+      if (mounted) setState(() => checks = null);
+    } finally {
+      _checking = false;
+      if (mounted) _ensureChecks();
+    }
+  }
+
+  /// Replaces a rule in place; its target moves with it.
+  void _replaceRule(String old, String rule) {
+    final index = selections.indexWhere(
+      (value) => identity(value) == identity(old),
+    );
+    if (index < 0) return;
+    final present = selections.any(
+      (value) => identity(value) == identity(rule),
+    );
+    setState(() {
+      final next = List.of(selections);
+      if (present) {
+        next.removeAt(index);
+      } else {
+        next[index] = rule;
+      }
+      final target = targets[old];
+      targets = {
+        for (final MapEntry(:key, :value) in targets.entries)
+          if (key != old) key: value,
+        if (target != null && !targets.containsKey(rule)) rule: target,
+      };
+      selections = next;
+    });
+  }
+
+  String _warningText(String code) => switch (code) {
+    'missing' => l10n.perAppWarningMissing,
+    'folder' => l10n.perAppWarningFolder,
+    'notFolder' => l10n.perAppWarningNotFolder,
+    'script' => l10n.perAppWarningScript,
+    'symlink' => l10n.perAppWarningSymlink,
+    'case' => l10n.perAppWarningCase,
+    'launcher' => l10n.perAppWarningLauncher,
+    'bundleName' => l10n.perAppWarningBundleName,
+    'versioned' => l10n.perAppWarningVersioned,
+    _ => l10n.perAppWarningUnknown,
+  };
+
+  Widget _ruleStatus(_RoutingApp app) {
+    final muted = TextStyle(
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+    );
+    if (app.process == unknownOwnerRule) {
+      return Text(l10n.perAppUnknownOwnerHelp, style: muted);
+    }
+    final check = checks?.rules[app.process];
+    final running = checks?.listed == true && check != null
+        ? check.running > 0
+              ? l10n.perAppRunningNow(check.running)
+              : l10n.perAppNotRunning
+        : null;
+    final warnings = <(String, String?)>[
+      if (app.suggested != null) ('versioned', app.suggested),
+      ...?check?.warnings,
+    ];
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final warningColor = dark
+        ? const Color(0xFFF5D08A)
+        : const Color(0xFF6B4300);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          [
+            app.process.endsWith('.app/')
+                ? l10n.appBundleIncludesHelpers
+                : l10n.executableRule,
+            ?running,
+          ].join(' · '),
+        ),
+        for (final (code, suggestion) in warnings)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Icon(
+                    CupertinoIcons.exclamationmark_triangle,
+                    size: 14,
+                    color: warningColor,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _warningText(code),
+                        key: Key('per-app-warning:${app.process}:$code'),
+                        style: TextStyle(color: warningColor),
+                      ),
+                      if (suggestion != null)
+                        Wrap(
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Text(
+                              l10n.perAppSuggestedRule(suggestion),
+                              style: muted,
+                            ),
+                            TextButton(
+                              key: Key('per-app-use:${app.process}:$code'),
+                              onPressed: enabled
+                                  ? () => _replaceRule(app.process, suggestion)
+                                  : null,
+                              child: Text(l10n.perAppUseSuggested),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
   }
 
   Future<void> _operation(Future<void> Function() action) async {
@@ -768,6 +937,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
   }
 
   Widget _selected() {
+    _ensureChecks();
     final selectedApps =
         [for (final process in selections) (process, _app(process))]..sort(
           (a, b) => a.$2.name.toLowerCase().compareTo(b.$2.name.toLowerCase()),
@@ -851,11 +1021,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
                 ),
                 leading: _icon(app),
                 title: Text(app.name),
-                subtitle: Text(
-                  app.process.endsWith('.app/')
-                      ? l10n.appBundleIncludesHelpers
-                      : l10n.executableRule,
-                ),
+                subtitle: _ruleStatus(app),
                 trailing: Wrap(
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [

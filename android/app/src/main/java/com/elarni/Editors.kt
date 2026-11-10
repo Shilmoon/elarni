@@ -376,6 +376,8 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
         finally { loading = false }
     }
     val selectedApps = apps.filter { it.string("package") in packages }
+    // A listed package that is not installed matches nothing; it stays listed so it can be removed.
+    val missingApps = if (loading || error != null) emptyList() else packages.filter { name -> apps.none { it.string("package") == name } }
     val available = apps.filter { it.string("package") !in packages && (it.string("name").contains(query, true) || it.string("package").contains(query, true)) }
     fun select(name: String, selected: Boolean) { packages = if (selected) (packages + name).distinct() else packages - name }
     // An app without a target of its own follows the mode.
@@ -403,7 +405,8 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
         }
         }
         if (loading) item { Text(tr(R.string.loading_app_list), style = MaterialTheme.typography.bodySmall) }
-        if (selectedApps.isNotEmpty()) item { Text(tr(R.string.selected_apps, selectedApps.size), style = MaterialTheme.typography.titleMedium) }
+        if (selectedApps.isNotEmpty() || missingApps.isNotEmpty()) item { Text(tr(R.string.selected_apps, selectedApps.size + missingApps.size), style = MaterialTheme.typography.titleMedium) }
+        items(missingApps, key = { "missing-$it" }) { name -> MissingAppRow(name, !busy) { select(name, false) } }
         items(selectedApps, key = { it.string("package") }) { app ->
             val name = app.string("package")
             Column {
@@ -483,6 +486,18 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
             OutlinedTextField(text, { text = it }, label = { Text(tr(R.string.proxy_address)) }, singleLine = true, isError = error != null, modifier = Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         } })
+}
+
+@Composable private fun MissingAppRow(packageName: String, enabled: Boolean, remove: () -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).testTag("per-app-missing-$packageName").toggleable(true, enabled = enabled, role = Role.Checkbox) { if (!it) remove() },
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) { RouteIcon("apps", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        Column(Modifier.weight(1f)) {
+            Text(packageName, style = MaterialTheme.typography.bodyLarge)
+            Text(tr(R.string.app_not_installed), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        Checkbox(true, null, enabled = enabled)
+    }
 }
 
 @Composable private fun InstalledAppRow(app: JSONObject, selected: Boolean, enabled: Boolean, activity: MainActivity, change: (Boolean) -> Unit) {

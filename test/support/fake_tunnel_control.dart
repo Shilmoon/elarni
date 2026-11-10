@@ -69,6 +69,14 @@ class FakeTunnelControl implements TunnelControl {
   @override
   Future<String> subscriptionDeviceID(String id) async => deviceID;
 
+  final checkedRules = <List<String>>[];
+  ProcessRuleChecks ruleChecks = const ProcessRuleChecks({});
+  @override
+  Future<ProcessRuleChecks> checkProcessRules(List<String> rules) async {
+    checkedRules.add(rules);
+    return ruleChecks;
+  }
+
   @override
   Future<SubscriptionSnapshot> resetSubscriptionDeviceID(String id) async {
     resetDeviceIDs.add(id);

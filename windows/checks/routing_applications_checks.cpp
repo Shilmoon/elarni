@@ -73,6 +73,9 @@ int main() {
     std::wstring rules[std::size(files)];
     for (size_t index = 0; index < std::size(files); ++index) rules[index] = ExecutableRule(files[index]);
     const auto squirrel_app = RoutingApplication(files[2], false, rules[2]);
+    // A rule saved for app-1.0.9265 is offered the folder rule; an exact rule that survives is not.
+    const bool suggested = UpdateProofRule(files[2]) == squirrel + L"\\" && UpdateProofRule(files[3]).empty() &&
+        UpdateProofRule(squirrel + L"\\").empty();
     for (const auto& file : files) DeleteFileW(file.c_str());
     for (auto folder = std::rbegin(folders); folder != std::rend(folders); ++folder) RemoveDirectoryW(folder->c_str());
     Require(created, "could not create the Squirrel fixture");
@@ -85,6 +88,7 @@ int main() {
         "the Squirrel folder rule was not offered");
     const std::wstring remote = L"\\\\server.invalid\\share\\Discord\\app-1.0\\Discord.exe";
     Require(ExecutableRule(remote) == remote, "a network path was resolved");
+    Require(suggested && UpdateProofRule(remote).empty(), "a saved Squirrel version rule was not offered its folder");
     std::puts("PASS Squirrel apps such as Discord match their install folder across updates");
 
     // Microsoft Store apps such as Claude run from WindowsApps\<name>_<version>_<arch>_<resource>_<publisher>\,
@@ -97,6 +101,8 @@ int main() {
         ExecutableRule(store + L"5319275A.WhatsAppDesktop_2.2450.6.0_neutral_~_cv1g1gvanyjgm\\WhatsApp.exe") ==
             store + L"5319275A.WhatsAppDesktop_cv1g1gvanyjgm\\",
         "a Store app did not match its package family");
+    Require(UpdateProofRule(store + L"Claude_4.23118.0.0_x64__pzs8sxrjxfjjc\\app\\Claude.exe").empty(),
+        "a saved Store rule was offered a replacement it does not need");
     for (const auto& path : {store + L"Tools\\tool.exe", store + L"Claude_4.23118_x64__pzs8sxrjxfjjc\\Claude.exe",
                              store + L"Claude_4.23118.0.0_x64__pzs8sxrjxfjj\\Claude.exe",
                              std::wstring(L"C:\\Apps\\Claude_4.23118.0.0_x64__pzs8sxrjxfjjc\\Claude.exe")}) {
@@ -127,6 +133,8 @@ int main() {
     }
     std::wstring version_rules[std::size(version_files)];
     for (size_t index = 0; index < std::size(version_files); ++index) version_rules[index] = ExecutableRule(version_files[index]);
+    // A rule saved for a version that an update already removed.
+    const auto stale = UpdateProofRule(claude + L"\\2.1.300\\0f1e2d3c4b5a\\claude.exe");
     for (const auto& file : version_files) DeleteFileW(file.c_str());
     for (auto folder = std::rbegin(version_folders); folder != std::rend(version_folders); ++folder) RemoveDirectoryW(folder->c_str());
     Require(created, "could not create the versioned fixture");
@@ -139,6 +147,7 @@ int main() {
         "Claude Code did not match its folder of versions");
     Require(version_rules[2] == version_expected[2], "an executable in a version folder did not match its folder of versions");
     Require(version_rules[3] == version_expected[3], "a version folder beside other folders widened the rule");
+    Require(stale == claude + L"\\", "a rule saved for a removed version was not offered the folder of versions");
     std::puts("PASS apps in version folders, such as Claude Code, match every version");
 
     auto lookup = std::make_shared<RoutingApplicationLookup>();

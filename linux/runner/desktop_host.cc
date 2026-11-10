@@ -361,9 +361,21 @@ FlValue* applications(FlValue* args) {
       auto* value = fl_value_get_list_value(selected, index);
       if (fl_value_get_type(value) != FL_VALUE_TYPE_STRING) continue;
       const char* path = fl_value_get_string(value);
-      if (!g_path_is_absolute(path) || strlen(path) > 1024 ||
-          !g_file_test(path, G_FILE_TEST_IS_REGULAR) || !g_file_test(path, G_FILE_TEST_IS_EXECUTABLE)) continue;
+      if (!g_path_is_absolute(path) || strlen(path) > 1024 || !g_utf8_validate(path, -1, nullptr)) continue;
       g_autofree char* name = g_path_get_basename(path);
+      // A rule saved for one version, even one an update removed, is offered the rule that
+      // follows updates.
+      std::string rule_name;
+      const auto suggested = application_rule(path, rule_name);
+      if (suggested != path && seen.insert(path).second) {
+        auto* item = fl_value_new_map();
+        fl_value_set_string_take(item, "name", fl_value_new_string(rule_name.empty() ? name : rule_name.c_str()));
+        fl_value_set_string_take(item, "process", fl_value_new_string(path));
+        fl_value_set_string_take(item, "suggested", fl_value_new_string(suggested.c_str()));
+        fl_value_append_take(list, item);
+        continue;
+      }
+      if (!g_file_test(path, G_FILE_TEST_IS_REGULAR) || !g_file_test(path, G_FILE_TEST_IS_EXECUTABLE)) continue;
       add_app(list, seen, name, path);
     }
   }

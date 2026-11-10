@@ -256,6 +256,11 @@ struct NativeControlChecks {
                                                 fileManager: denied, home: home) == library + "/",
           RoutingApplicationRule.versionsFolder(of: home + "/Tools/1.0/Tool.app", fileManager: denied, home: home) == nil
     else { throw Failure(message: "a sandboxed listing did not keep the rule to the user's Library") }
+    // A rule saved for one version, here one an update removed, is offered the folder of versions.
+    guard RoutingApplicationRule.suggestion(forSaved: claude.path + "/2.1.300/0f1e2d3c4b5a/claude.app/") == claude.path + "/",
+          RoutingApplicationRule.suggestion(forSaved: claude.path + "/") == nil,
+          RoutingApplicationRule.suggestion(forSaved: apps[2].path + "/") == nil
+    else { throw Failure(message: "a saved rule for one version was not offered its folder of versions") }
     print("PASS apps in version folders, such as Claude Code, match every version")
   }
 

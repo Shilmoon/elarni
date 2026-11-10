@@ -1543,5 +1543,34 @@
   "perAppUnknownOwner": "Unidentified traffic",
   "@perAppUnknownOwner": {
     "description": "Per-app list entry for traffic whose app could not be identified (rule \"-1\")."
-  }
+  },
+  "perAppUnknownOwnerHelp": "Traffic without an app: WSL, virtual machines, closed connections",
+  "perAppRunningNow": "{count, plural, =1{1 program running} other{{count} programs running}}",
+  "@perAppRunningNow": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "perAppNotRunning": "Not running now",
+  "perAppWarningMissing": "Not found on this computer.",
+  "perAppWarningFolder": "This is a folder. A folder rule ends with a separator and matches the programs inside.",
+  "perAppWarningNotFolder": "This is a file, not a folder.",
+  "perAppWarningScript": "A script: its interpreter runs, not the script. Add the program it starts.",
+  "perAppWarningSymlink": "A link: the program runs as the file it points to.",
+  "perAppWarningCase": "The letter case differs from the file on disk, and rules compare it.",
+  "perAppWarningLauncher": "A launcher: it starts another program, which this rule does not match.",
+  "perAppWarningBundleName": "A bare name matches a program file, not an app bundle. Pick the app from the list.",
+  "perAppWarningVersioned": "Names one version of the app, so it stops matching after the next update.",
+  "perAppWarningUnknown": "This rule may not match any program.",
+  "perAppSuggestedRule": "Suggested rule: {rule}",
+  "@perAppSuggestedRule": {
+    "placeholders": {
+      "rule": {
+        "type": "String"
+      }
+    }
+  },
+  "perAppUseSuggested": "Use suggested rule"
 }

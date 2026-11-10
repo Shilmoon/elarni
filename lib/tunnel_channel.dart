@@ -116,6 +116,10 @@ abstract interface class TunnelControl {
   /// The X-HWID this subscription's provider gets.
   Future<String> subscriptionDeviceID(String id);
 
+  /// How many running programs each per-app rule matches, and why a rule may
+  /// match nothing (desktop only).
+  Future<ProcessRuleChecks> checkProcessRules(List<String> rules);
+
   /// Gives this subscription a new device ID; the others keep theirs.
   Future<SubscriptionSnapshot> resetSubscriptionDeviceID(String id);
   Future<Map<String, Object?>> configureAutomation(
@@ -278,6 +282,12 @@ final class NativeTunnelControl implements TunnelControl {
   Future<SubscriptionSnapshot> showNode(String nodeId) async =>
       SubscriptionSnapshot.fromMap(
         await _mapResult('showNode', {'nodeId': nodeId}),
+      );
+
+  @override
+  Future<ProcessRuleChecks> checkProcessRules(List<String> rules) async =>
+      ProcessRuleChecks.fromMap(
+        await _mapResult('checkProcessRules', {'rules': rules}),
       );
 
   @override
@@ -702,6 +712,50 @@ final class NativeTunnelControl implements TunnelControl {
       ? await _invoke(method, arguments)
       : await _channel.invokeMapMethod<String, Object?>(method, arguments) ??
             const <String, Object?>{};
+}
+
+/// A per-app rule's check: running programs it matches and warnings, each a
+/// code (missing, folder, notFolder, script, symlink, case, launcher,
+/// bundleName) with an optional suggested rule.
+final class ProcessRuleCheck {
+  const ProcessRuleCheck(this.rule, this.running, this.warnings);
+  final String rule;
+  final int running;
+  final List<(String code, String? suggestion)> warnings;
+}
+
+final class ProcessRuleChecks {
+  const ProcessRuleChecks(this.rules, {this.listed = true});
+
+  factory ProcessRuleChecks.fromMap(Map<String, Object?> value) {
+    final rules = <String, ProcessRuleCheck>{};
+    for (final item in value['rules'] as List? ?? const []) {
+      if (item is! Map || item['rule'] is! String) continue;
+      final warnings = <(String, String?)>[
+        for (final warning in item['warnings'] as List? ?? const [])
+          if (warning is Map && warning['code'] is String)
+            (
+              warning['code'] as String,
+              warning['suggestion'] is String &&
+                      (warning['suggestion'] as String).isNotEmpty
+                  ? warning['suggestion'] as String
+                  : null,
+            ),
+      ];
+      final rule = item['rule'] as String;
+      rules[rule] = ProcessRuleCheck(
+        rule,
+        item['running'] is int ? item['running'] as int : 0,
+        warnings,
+      );
+    }
+    return ProcessRuleChecks(rules, listed: value['listed'] == true);
+  }
+
+  final Map<String, ProcessRuleCheck> rules;
+
+  /// False when the running programs could not be listed.
+  final bool listed;
 }
 
 final class PingResult {

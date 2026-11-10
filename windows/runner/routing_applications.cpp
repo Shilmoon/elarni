@@ -182,6 +182,12 @@ std::wstring ExecutableRule(const std::wstring& path) {
   return path;
 }
 
+std::wstring UpdateProofRule(const std::wstring& path) {
+  if (!LocalApplicationPath(path) || !PackageRule(path).empty()) return {};
+  const auto rule = ExecutableRule(path);
+  return rule == path ? std::wstring{} : rule;
+}
+
 flutter::EncodableMap RoutingApplication(const std::wstring& path, bool running, const std::wstring& rule) {
   using flutter::EncodableValue;
   const auto& process = rule.empty() ? path : rule;
@@ -262,7 +268,12 @@ winrt::fire_and_forget RoutingApplicationLookup::Load(flutter::EncodableList sel
       CharLowerBuffW(key.data(), static_cast<DWORD>(key.size()));
       // A routing match is not permission to access that file. Reuse metadata
       // only for already enumerated processes; all other selections are names.
-      if (seen.insert(key).second) apps.emplace_back(RoutingApplication(wide));
+      // A local rule's folders are read to offer one that survives updates.
+      if (!seen.insert(key).second) continue;
+      auto app = RoutingApplication(wide);
+      const auto suggested = UpdateProofRule(wide);
+      if (!suggested.empty()) app[EncodableValue("suggested")] = EncodableValue(RoutingUTF8(suggested.c_str()));
+      apps.emplace_back(std::move(app));
     }
   } catch (...) { failed = true; }
   // The result and lookup outlive the window, but no reply may use a destroyed

@@ -510,6 +510,7 @@ class _ElarniHomeState extends State<ElarniHome> {
       ],
       enabled: !_busy,
       draft: _perAppDraft,
+      checkRules: widget.tunnelControl.checkProcessRules,
       onCancel: () => setState(() {}),
       onSave: (_) async {
         final settings = _perAppDraft!.applyTo(_settings);

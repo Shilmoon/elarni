@@ -7,6 +7,15 @@ system VPN mode.
 - **Only listed:** listed apps use normal routing; everything else connects directly.
 - **Off:** normal routing for all apps.
 
+Each listed app can also take a target of its own: Direct, Follow routing rules, Block,
+a server from any subscription, or a local SOCKS5 or HTTP proxy without a login (for
+example ByeByeDPI). Per-app routing covers only traffic that enters the VPN:
+
+- DNS queries are not per-app: every app's queries that enter the VPN go to the
+  resolver your routing profile sets. On Android, apps kept out of the VPN use the
+  system resolver.
+- Apps that use Elarni's own SOCKS or HTTP listener follow normal routing.
+
 Rules match the program's path or name, which any program can copy. In Bypass
 mode, list only apps you trust, by exact path in folders other users can't write.
 This is routing, not a firewall or kill switch.
@@ -29,6 +38,24 @@ Linux, so is `~/.local/share/claude/versions/`. On Windows, a Microsoft Store ap
 folder `WindowsApps\<name>_<version>_<arch>_<resource>_<publisher>\` matches as
 `WindowsApps\<name>_<publisher>\`, its package family, so rules saved for an earlier
 version match too.
+
+## Checking rules
+
+On desktop, each listed rule shows how many running programs it matches now, counted
+with the same matcher routing uses, and warns when it may match nothing:
+
+- the file or folder is not on this computer;
+- a folder rule lacks its trailing separator, or names a file;
+- the file is a script, a link or a launcher (`.lnk`, `.bat`, a Squirrel app's root
+  `.exe`), so another program makes the connections;
+- the letter case differs from the disk (macOS and Linux compare it);
+- a bare `Example.app` on macOS, which names no program;
+- the rule names one version of an app that keeps each version in its own folder.
+
+Where a better rule exists, **Use suggested rule** replaces it, keeping its target.
+On Windows only rules on local fixed drives are checked, so a network path in an
+imported profile is never opened. On Android, a listed app that is not installed is
+shown as such.
 
 ## Traffic without an app
 

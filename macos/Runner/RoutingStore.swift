@@ -1201,6 +1201,16 @@ enum RoutingApplicationRule {
     return nil
   }
 
+  // For a saved rule that names one version, even one an update removed, the rule that
+  // follows updates; otherwise nil.
+  static func suggestion(forSaved rule: String, fileManager: FileManager = .default,
+                         home: String = userHome) -> String? {
+    guard rule.hasPrefix("/") else { return nil }
+    let path = rule.hasSuffix("/") ? String(rule.dropLast()) : rule
+    guard let folder = versionsFolder(of: path, fileManager: fileManager, home: home), folder != rule else { return nil }
+    return folder
+  }
+
   // NSHomeDirectory() names the app's container inside the App Sandbox.
   static let userHome: String = {
     guard let entry = getpwuid(getuid()), let directory = entry.pointee.pw_dir else { return NSHomeDirectory() }

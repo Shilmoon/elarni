@@ -199,6 +199,14 @@ final class TunnelMethodChannel {
               }
             case "routeTable":
               result(try await Task.detached { try Self.routeTable() }.value)
+            case "checkProcessRules":
+              // The core counts running programs per per-app rule with its own matcher.
+              guard let rules = try Self.arguments(call)["rules"] as? [String] else {
+                throw RunnerTunnelError.invalidSettings
+              }
+              result(try await Task.detached {
+                try SubscriptionFeedFetcher.invoke("checkProcessRules", ["rules": rules])
+              }.value)
             case "updateTunnelSettings":
               let settings = try AppTunnelSettings(arguments: Self.arguments(call), base: self.settingsStore.current)
               let applied = try await self.apply(settings: settings)

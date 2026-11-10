@@ -463,6 +463,7 @@
     <string name="other_apps">Другие приложения</string>
     <string name="traffic">Трафик</string>
     <string name="local_proxy_2">Локальный прокси…</string>
+    <string name="app_not_installed">Не установлено на этом устройстве, поэтому правило ни к чему не применяется.</string>
     <string name="selected_apps">Выбранные приложения · %1$s</string>
     <string name="loading_app_list">Загрузка списка приложений…</string>
     <string name="search_installed_apps">Поиск установленных приложений</string>

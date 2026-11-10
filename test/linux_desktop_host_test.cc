@@ -87,6 +87,26 @@ int main(int argc, char** argv) {
   // A saved rule is listed as saved.
   add_app(versioned, versioned_seen, nullptr, (versions + "/2.1.314").c_str());
   assert(fl_value_get_length(versioned) == 2);
+  // A rule saved for one version, here one an update removed, is offered the folder of versions.
+  {
+    g_autoptr(FlValue) saved = fl_value_new_map();
+    g_autoptr(FlValue) rules = fl_value_new_list();
+    for (const std::string& rule : {versions + "/2.1.200", tools + "/1.0/tool"})
+      fl_value_append_take(rules, fl_value_new_string(rule.c_str()));
+    fl_value_set_string(saved, "processes", rules);
+    g_autoptr(FlValue) listed_saved = applications(saved);
+    bool offered = false, exact = false;
+    for (size_t index = 0; index < fl_value_get_length(listed_saved); ++index) {
+      auto* app = fl_value_get_list_value(listed_saved, index);
+      const std::string process = fl_value_get_string(fl_value_lookup_string(app, "process"));
+      auto* suggestion = fl_value_lookup_string(app, "suggested");
+      if (process == versions + "/2.1.200")
+        offered = suggestion && fl_value_get_string(suggestion) == versions + "/" &&
+            strcmp(fl_value_get_string(fl_value_lookup_string(app, "name")), "claude") == 0;
+      if (process == tools + "/1.0/tool") exact = !suggestion;
+    }
+    assert(offered && exact);
+  }
   for (const std::string& file : {versions + "/2.1.300", versions + "/2.1.314", tools + "/1.0/tool"})
     assert(g_unlink(file.c_str()) == 0);
   for (const std::string& folder : {versions, std::string(directory) + "/claude", tools + "/1.0", tools + "/plugins", tools})
