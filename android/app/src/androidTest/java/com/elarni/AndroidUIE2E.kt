@@ -757,7 +757,13 @@ class AndroidUIE2E {
         ui.onNode(hasText("Settings") and hasClickAction()).performClick()
         click("Apps & routes")
         click("Per-app routing")
-        ui.onNodeWithTag("per-app-connections").performScrollTo().performClick()
+        // The editor disables the button while it loads the installed apps; a tap in that window does nothing.
+        fun openConnections() {
+            ui.waitUntil(10_000) { ui.onAllNodes(hasTestTag("per-app-connections") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            ui.onNodeWithTag("per-app-connections").performScrollTo().performClick()
+            ui.waitUntil(10_000) { ui.onAllNodesWithTag("per-app-connections-done").fetchSemanticsNodes().isNotEmpty() }
+        }
+        openConnections()
         ui.waitUntil(10_000) { ui.onAllNodesWithTag("per-app-connections-disconnected").fetchSemanticsNodes().isNotEmpty() }
         ui.onNodeWithTag("per-app-connections-done").performClick()
         java.net.ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1")).use { echo ->
@@ -775,7 +781,7 @@ class AndroidUIE2E {
                     client.getOutputStream().write(7)
                     assertEquals(7, client.getInputStream().read())
                 }
-                ui.onNodeWithTag("per-app-connections").performScrollTo().performClick()
+                openConnections()
                 ui.waitUntil(10_000) { ui.onAllNodesWithTag("per-app-connections-list").fetchSemanticsNodes().isNotEmpty() }
                 ui.onNodeWithText("Unidentified traffic").assertIsDisplayed()
                 ui.onNodeWithText("Direct · Per-app rule").assertIsDisplayed()
