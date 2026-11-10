@@ -48,6 +48,7 @@ func TestRecentConnectionsJoinARoutedAgainConnection(t *testing.T) {
 	destination := net.TCPDestination(net.ParseAddress("192.0.2.1"), 443)
 
 	found := appContext(50000, func() (int, string, string, error) { return 42, "claude", "/opt/claude/claude", nil })
+	found.NoteProcessAncestor("/opt/claude/launcher")
 	recent.record(7, found, destination, reentry, "elarni-per-app-listed")
 	recent.record(7, appContext(50000, nil), destination, proxy, "")
 	recent.record(8, appContext(50001, func() (int, string, string, error) { return 0, "", "", errors.New("not found") }), destination, block, "elarni-per-app-other")
@@ -64,7 +65,8 @@ func TestRecentConnectionsJoinARoutedAgainConnection(t *testing.T) {
 	joined := entries[0]
 	if joined.Key != 1 || joined.Seq != 2 || joined.Owner != "found" || joined.PID != 42 || joined.Path != "/opt/claude/claude" ||
 		joined.Outbound != "elarni-proxy" || joined.Kind != "proxy" || joined.Host != "example.com" || joined.Port != 443 ||
-		joined.Network != "tcp" || len(joined.Rules) != 1 || joined.Rules[0] != "elarni-per-app-listed" {
+		joined.Network != "tcp" || len(joined.Rules) != 1 || joined.Rules[0] != "elarni-per-app-listed" ||
+		joined.Via != "/opt/claude/launcher" {
 		t.Fatalf("joined %+v", joined)
 	}
 	if unknown := entries[1]; unknown.Owner != "unknown" || unknown.Kind != "block" || unknown.Name != "" {

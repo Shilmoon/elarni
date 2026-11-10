@@ -401,6 +401,17 @@
   "perAppAppImageRule": "AppImage: the programs in that image file",
   "perAppServiceRule": "Windows service: also the services that share its process",
   "perAppKindService": "Windows service",
+  "perAppIncludeChildren": "Include programs it starts",
+  "perAppIncludeChildrenHelp": "Also routes the programs this app starts, and theirs, such as helpers, updaters and command-line tools. A program listed on its own keeps its own target. A browser the app starts is included too, but not one that was already running.",
+  "perAppWithChildren": "with the programs it starts",
+  "perAppConnectionStartedBy": "Started by {name}",
+  "@perAppConnectionStartedBy": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "perAppAndroidPackages": "Use Android package names such as com.example.app. Select the apps on this device.",
   "perAppInvalidProfile": "Use a supported mode and up to 256 names or paths, each at most 1024 bytes without control characters, with targets only for listed apps. An active mode needs at least one app.",
   "perAppUnsupportedPlatform": "Unsupported profile platform.",

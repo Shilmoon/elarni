@@ -32,9 +32,11 @@ func TestListProcessesSandboxHelper(t *testing.T) {
 	t.Fatalf("the parent (pid %s) is not among %d listed processes", parent, len(processes))
 }
 
-// The macOS app is sandboxed, and its per-app editor counts running programs: the listing
-// must see other processes with their paths from the App Sandbox.
-func TestListProcessesFromAppSandbox(t *testing.T) {
+// sandboxedTestBinary copies this test binary into a signed App Sandbox app named name, so a
+// helper test can run there as the sandboxed macOS app does. It returns the copy and this
+// binary's resolved path.
+func sandboxedTestBinary(t *testing.T, ctx context.Context, name, bundleID string) (binary, executable string) {
+	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -43,8 +45,8 @@ func TestListProcessesFromAppSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	app := filepath.Join(root, "ListFixture.app")
-	binary := filepath.Join(app, "Contents", "MacOS", "ListFixture")
+	app := filepath.Join(root, name+".app")
+	binary = filepath.Join(app, "Contents", "MacOS", name)
 	if err := os.MkdirAll(filepath.Dir(binary), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +63,8 @@ func TestListProcessesFromAppSandbox(t *testing.T) {
 	if closeErr := output.Close(); copyErr != nil || closeErr != nil {
 		t.Fatalf("copy test executable: %v %v", copyErr, closeErr)
 	}
-	info := `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.elarni.process-list-checks</string><key>CFBundleExecutable</key><string>ListFixture</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`
+	info := `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>` + bundleID +
+		`</string><key>CFBundleExecutable</key><string>` + name + `</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`
 	if err := os.WriteFile(filepath.Join(app, "Contents", "Info.plist"), []byte(info), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -69,11 +72,18 @@ func TestListProcessesFromAppSandbox(t *testing.T) {
 	if err := os.WriteFile(entitlements, []byte(`<?xml version="1.0"?><plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/></dict></plist>`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 	if output, err := exec.CommandContext(ctx, "codesign", "--force", "--sign", "-", "--entitlements", entitlements, app).CombinedOutput(); err != nil {
 		t.Fatalf("sign sandbox fixture: %v\n%s", err, output)
 	}
+	return binary, executable
+}
+
+// The macOS app is sandboxed, and its per-app editor counts running programs: the listing
+// must see other processes with their paths from the App Sandbox.
+func TestListProcessesFromAppSandbox(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	binary, executable := sandboxedTestBinary(t, ctx, "ListFixture", "com.elarni.process-list-checks")
 	cmd := exec.CommandContext(ctx, binary, "-test.run=^TestListProcessesSandboxHelper$", "-test.v")
 	cmd.Env = append(os.Environ(), "ELARNI_SANDBOX_LIST_PARENT="+strconv.Itoa(os.Getpid()), "ELARNI_SANDBOX_LIST_PATH="+executable)
 	if output, err := cmd.CombinedOutput(); err != nil {

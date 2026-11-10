@@ -85,6 +85,19 @@ func processRuleWarnings(rule string) []ProcessRuleWarning {
 	warn := func(code, suggestion string) []ProcessRuleWarning {
 		return []ProcessRuleWarning{{Code: code, Suggestion: suggestion}}
 	}
+	// "children:" also takes the programs a rule's program starts; the rule is checked as is.
+	if inner, ok := strings.CutPrefix(rule, "children:"); ok {
+		if inner == "" || inner == "-1" || strings.HasPrefix(inner, "children:") {
+			return nil
+		}
+		warnings := processRuleWarnings(inner)
+		for i := range warnings {
+			if warnings[i].Suggestion != "" {
+				warnings[i].Suggestion = "children:" + warnings[i].Suggestion
+			}
+		}
+		return warnings
+	}
 	// Rules of another system's kind match nothing here; the editor refuses them.
 	if id, ok := strings.CutPrefix(rule, "flatpak:"); ok {
 		if runtime.GOOS != "linux" || flatpakInstalled(id) {

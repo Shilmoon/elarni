@@ -1544,6 +1544,30 @@ abstract class AppLocalizations {
   /// **'Windows service'**
   String get perAppKindService;
 
+  /// No description provided for @perAppIncludeChildren.
+  ///
+  /// In en, this message translates to:
+  /// **'Include programs it starts'**
+  String get perAppIncludeChildren;
+
+  /// No description provided for @perAppIncludeChildrenHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Also routes the programs this app starts, and theirs, such as helpers, updaters and command-line tools. A program listed on its own keeps its own target. A browser the app starts is included too, but not one that was already running.'**
+  String get perAppIncludeChildrenHelp;
+
+  /// No description provided for @perAppWithChildren.
+  ///
+  /// In en, this message translates to:
+  /// **'with the programs it starts'**
+  String get perAppWithChildren;
+
+  /// No description provided for @perAppConnectionStartedBy.
+  ///
+  /// In en, this message translates to:
+  /// **'Started by {name}'**
+  String perAppConnectionStartedBy(String name);
+
   /// No description provided for @perAppAndroidPackages.
   ///
   /// In en, this message translates to:

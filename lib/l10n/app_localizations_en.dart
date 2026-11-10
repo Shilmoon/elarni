@@ -869,6 +869,21 @@ class AppLocalizationsEn extends AppLocalizations {
   String get perAppKindService => 'Windows service';
 
   @override
+  String get perAppIncludeChildren => 'Include programs it starts';
+
+  @override
+  String get perAppIncludeChildrenHelp =>
+      'Also routes the programs this app starts, and theirs, such as helpers, updaters and command-line tools. A program listed on its own keeps its own target. A browser the app starts is included too, but not one that was already running.';
+
+  @override
+  String get perAppWithChildren => 'with the programs it starts';
+
+  @override
+  String perAppConnectionStartedBy(String name) {
+    return 'Started by $name';
+  }
+
+  @override
   String get perAppAndroidPackages =>
       'Use Android package names such as com.example.app. Select the apps on this device.';
 

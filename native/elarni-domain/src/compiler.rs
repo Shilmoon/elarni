@@ -1116,6 +1116,10 @@ pub(crate) fn apply_per_app_routing(
                 || name.len() > 1024
                 || name.trim() != name
                 || name.chars().any(char::is_control)
+                // "children:" wraps one rule of a program.
+                || name.strip_prefix("children:").is_some_and(|inner| {
+                    inner.is_empty() || inner == "-1" || inner.starts_with("children:")
+                })
         })
     {
         return Err(CompileError::InvalidRoute);
@@ -1245,11 +1249,33 @@ pub(crate) fn apply_per_app_routing(
         json!({"type":"field", "inboundTag":[tun_tag], "network":"tcp,udp",
         "port":53, "outboundTag":reentry, "ruleTag":"elarni-per-app-dns"}),
     ];
-    gate.extend(groups.iter().enumerate().map(|(index, (tag, processes))| {
-        json!({"type":"field", "inboundTag":[tun_tag],
+    // A listed program takes its own target before a rule that matches the program that started
+    // it ("children:"): Claude Code listed on its own, started by a listed Claude.
+    let direct = groups.iter().map(|(tag, processes)| {
+        let own: Vec<&str> = processes
+            .iter()
+            .map(|process| process.strip_prefix("children:").unwrap_or(process))
+            .collect();
+        (tag, own)
+    });
+    let started = groups.iter().filter_map(|(tag, processes)| {
+        let children: Vec<&str> = processes
+            .iter()
+            .copied()
+            .filter(|process| process.starts_with("children:"))
+            .collect();
+        (!children.is_empty()).then_some((tag, children))
+    });
+    gate.extend(
+        direct
+            .chain(started)
+            .enumerate()
+            .map(|(index, (tag, processes))| {
+                json!({"type":"field", "inboundTag":[tun_tag],
         "network":"tcp,udp", "process":processes, "outboundTag":tag,
         "ruleTag":format!("elarni-per-app-listed-{index}")})
-    }));
+            }),
+    );
     gate.push(
         json!({"type":"field", "inboundTag":[tun_tag], "network":"tcp,udp",
         "outboundTag":remaining, "ruleTag":"elarni-per-app-other"}),

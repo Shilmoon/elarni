@@ -22,6 +22,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   runs it, so Delivery Optimization or Windows Update can take a target of its own. The app list
   offers them and **Recent connections** adds them. Before, a running AppImage was listed by its
   mount path, which the next start changes, and Flatpak apps could not be listed until running.
+- **Include programs it starts** for a listed app on Windows, macOS and Linux: its rule also
+  matches the programs the app starts, and theirs, such as helpers, updaters or a terminal's
+  command-line tools. A program listed on its own keeps its own target, and **Recent
+  connections** shows which listed app started a program.
 
 ### Changed
 

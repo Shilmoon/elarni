@@ -879,6 +879,21 @@ class AppLocalizationsRu extends AppLocalizations {
   String get perAppKindService => 'Служба Windows';
 
   @override
+  String get perAppIncludeChildren => 'Включать запущенные им программы';
+
+  @override
+  String get perAppIncludeChildrenHelp =>
+      'Направляет и программы, которые запускает это приложение, и запущенные ими: вспомогательные процессы, обновления, инструменты командной строки. Программа, добавленная в список отдельно, сохраняет свою цель. Браузер, который запустит приложение, тоже попадёт под правило, а уже запущенный — нет.';
+
+  @override
+  String get perAppWithChildren => 'вместе с запущенными им программами';
+
+  @override
+  String perAppConnectionStartedBy(String name) {
+    return 'Запущено из $name';
+  }
+
+  @override
   String get perAppAndroidPackages =>
       'Используйте имена пакетов Android, например com.example.app. Выберите приложения на этом устройстве.';
 
