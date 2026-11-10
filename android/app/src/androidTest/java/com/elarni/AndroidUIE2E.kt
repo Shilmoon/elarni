@@ -751,6 +751,40 @@ class AndroidUIE2E {
         ui.waitUntil(10_000) { snapshot().settings.strings("perAppProcesses") == listOf(installed) }
     }
 
+    // The list reads this process's core; without the VPN its lookup names no owner ("-1").
+    @Test fun perAppConnectionsListTheCoresRecentConnections() {
+        call("settings", obj("settings" to obj("perAppMode" to "bypass", "perAppProcesses" to JSONArray(listOf(call("apps").objects("apps").first().string("package"))), "xrayTunEnabled" to true)))
+        ui.onNode(hasText("Settings") and hasClickAction()).performClick()
+        click("Apps & routes")
+        click("Per-app routing")
+        ui.onNodeWithTag("per-app-connections").performScrollTo().performClick()
+        ui.waitUntil(10_000) { ui.onAllNodesWithTag("per-app-connections-disconnected").fetchSemanticsNodes().isNotEmpty() }
+        ui.onNodeWithTag("per-app-connections-done").performClick()
+        java.net.ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1")).use { echo ->
+            kotlin.concurrent.thread { runCatching { echo.accept().use { it.getOutputStream().write(it.getInputStream().read()) } } }
+            val inbound = java.net.ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1")).use { it.localPort }
+            val config = obj(
+                "inbounds" to JSONArray(listOf(obj("tag" to "elarni-tun", "listen" to "127.0.0.1", "port" to inbound, "protocol" to "dokodemo-door", "settings" to obj("network" to "tcp")))),
+                "outbounds" to JSONArray(listOf(obj("tag" to "elarni-direct", "protocol" to "freedom", "settings" to obj("redirect" to "127.0.0.1:${echo.localPort}")))),
+                "routing" to obj("rules" to JSONArray(listOf(obj("type" to "field", "inboundTag" to JSONArray(listOf("elarni-tun")), "process" to JSONArray(listOf("-1")),
+                    "outboundTag" to "elarni-direct", "ruleTag" to "elarni-per-app-listed")))))
+            Native.call("runXrayFromJson", obj("configJSON" to config.toString()))
+            try {
+                java.net.Socket("127.0.0.1", inbound).use { client ->
+                    client.soTimeout = 5000
+                    client.getOutputStream().write(7)
+                    assertEquals(7, client.getInputStream().read())
+                }
+                ui.onNodeWithTag("per-app-connections").performScrollTo().performClick()
+                ui.waitUntil(10_000) { ui.onAllNodesWithTag("per-app-connections-list").fetchSemanticsNodes().isNotEmpty() }
+                ui.onNodeWithText("Unidentified traffic").assertIsDisplayed()
+                ui.onNodeWithText("Direct · Per-app rule").assertIsDisplayed()
+                ui.onNodeWithText("127.0.0.1:$inbound · TCP", substring = true).assertIsDisplayed()
+                ui.onNodeWithTag("per-app-connections-done").performClick()
+            } finally { Native.call("stopXray") }
+        }
+    }
+
     @Test fun perAppEachAppTakesItsOwnTargetAndOtherAppsKeepTheMode() {
         call("import", obj("text" to "vless://00000000-0000-4000-8000-000000000001@127.0.0.1:18080?encryption=none#Target%20server"))
         val (first, second) = call("apps").objects("apps").distinctBy { it.getInt("uid") }.take(2).map { it.string("package") }

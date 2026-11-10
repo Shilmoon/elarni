@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,6 +122,23 @@ func TestCompiledProviderReentryMatchesIPRulesForHostnames(t *testing.T) {
 	for _, network := range []string{"tcp", "udp"} {
 		trafficRoundTripFromInbound(t, instance, network, "127.0.0.1", "elarni-socks", "loopback-range.test")
 	}
+}
+
+// Xray refuses two routing rules with one tag, so per-app routing with several targets, each
+// with a rule of its own, must still start.
+func TestCompiledPerAppRoutingWithSeveralTargetsStarts(t *testing.T) {
+	config := compiledRoutingFixture(t, "per-app")
+	listed := 0
+	for _, rule := range config["routing"].(map[string]any)["rules"].([]any) {
+		if tag, _ := rule.(map[string]any)["ruleTag"].(string); strings.HasPrefix(tag, "elarni-per-app-listed") {
+			listed++
+		}
+	}
+	if listed != 3 {
+		t.Fatalf("%d per-app rules for three targets", listed)
+	}
+	_, stop := startTrafficCore(t, config)
+	stop()
 }
 
 // Per-app routing sends a listed app's TUN traffic through a loopback back into

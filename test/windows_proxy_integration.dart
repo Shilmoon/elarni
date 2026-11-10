@@ -3427,11 +3427,36 @@ for line in sys.stdin:
       expect(metrics['metricsAvailable'], true);
       expect(catalogMap(metrics['counters'])['uplinkBytes'], greaterThan(0));
       expect(catalogMap(metrics['counters'])['downlinkBytes'], greaterThan(0));
+      // The connections view gets the core's routing decisions as events.
+      RecentConnection? routed;
+      var recent = const RecentConnections(0, 0, []);
+      for (var i = 0; i < 50 && routed == null; i++) {
+        recent = await backend.control.readConnections();
+        routed = recent.connections
+            .where((c) => c.inbound == 'elarni-socks' && c.port == target.port)
+            .firstOrNull;
+        if (routed == null) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+      }
+      expect(recent.epoch, isNot(0));
+      expect(routed, isNotNull, reason: '${recent.connections}');
+      expect(routed!.host, '127.0.0.1');
+      expect(routed.network, 'tcp');
+      expect(routed.kind, isNot('routing'));
+      // No per-app rule asks for the app of a listener's connection.
+      expect(routed.owner, '');
+      final later = await backend.control.readConnections(
+        epoch: recent.epoch,
+        after: recent.seq,
+      );
+      expect(later.connections.map((c) => c.key), isNot(contains(routed.key)));
       await backend.control.disconnect();
       expect(
         (await backend.control.runtimeMetrics())['metricsAvailable'],
         false,
       );
+      expect((await backend.control.readConnections()).epoch, 0);
       await expectClosed(settings.socksPort);
     },
   );

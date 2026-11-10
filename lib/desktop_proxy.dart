@@ -166,6 +166,10 @@ final class DesktopProxy {
   // Each core numbers its own lines; these keep one sequence across cores.
   final List<CatalogMap> _logs = [];
   int _logSeq = 0;
+  // The running core's recent connections by key, in the order of their last
+  // change; a new core (epoch) starts over. Cleared when the tunnel stops.
+  int _connectionsEpoch = 0;
+  final Map<int, CatalogMap> _connections = {};
   DesktopAutomation _automation = DesktopAutomation({});
   final Stopwatch _clock = Stopwatch()..start();
   Timer? _automationTimer;

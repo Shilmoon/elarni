@@ -12,6 +12,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   version of an app. **Use suggested rule** fixes it where it can, including rules for one
   Squirrel or Claude Code version saved before. On Android, listed apps that are not installed
   are shown and can be removed.
+- **Recent connections** in the per-app editor, on Windows, macOS, Linux and Android, lists the
+  connections apps opened while connected: which program made each one, its address, and
+  whether a per-app rule took it and where it went. **Add to list** adds a program that is not
+  listed, such as an app's helper or updater. The list stays in memory until you disconnect.
 
 ### Changed
 

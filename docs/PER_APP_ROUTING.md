@@ -57,6 +57,20 @@ On Windows only rules on local fixed drives are checked, so a network path in an
 imported profile is never opened. On Android, a listed app that is not installed is
 shown as such.
 
+## Recent connections
+
+**Recent connections** in the per-app editor lists the connections apps opened while
+Elarni is connected, newest first: the app per-app routing found for each, its address,
+and where it went (direct, through a server, blocked or DNS), with **Per-app rule** when a
+listed app's rule took it and **Not listed** when it was passed on. It shows which program
+makes an app's connections, such as a helper, updater or a new version's folder, and
+**Add to list** adds that program with the same update-proof rule as the app list gives it.
+
+The app is the one routing already looked up, so the list adds no lookups: with per-app
+routing off, or for connections through the local SOCKS or HTTP listener, no app is named.
+It keeps the last 500 connections in memory and empties when the tunnel stops; nothing is
+written to disk. On Android, apps are named by their user ID.
+
 ## Traffic without an app
 
 Some traffic reaches the VPN without an app Elarni can find: connections that closed

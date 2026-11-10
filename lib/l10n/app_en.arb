@@ -1572,5 +1572,28 @@
       }
     }
   },
-  "perAppUseSuggested": "Use suggested rule"
+  "perAppUseSuggested": "Use suggested rule",
+  "perAppConnections": "Recent connections",
+  "perAppConnectionsHelp": "Connections apps opened while Elarni is connected, newest first, with where each one went. It names the program behind an app's traffic, such as a helper or updater, so you can add it. Kept in memory until you disconnect.",
+  "perAppConnectionsDisconnected": "Connect to see which apps open connections and where they go.",
+  "perAppConnectionsOff": "Per-app routing is off, so apps are not named. Turn it on and save to see them.",
+  "perAppConnectionsEmpty": "No connections yet.",
+  "perAppConnectionsSearch": "Search apps and addresses",
+  "perAppConnectionNoApp": "App not looked up",
+  "perAppConnectionDirect": "Direct",
+  "perAppConnectionProxy": "Through a server",
+  "perAppConnectionBlocked": "Blocked",
+  "perAppConnectionDns": "DNS",
+  "perAppConnectionRouting": "Routing",
+  "perAppConnectionListed": "Per-app rule",
+  "perAppConnectionNotListed": "Not listed",
+  "perAppConnectionAdd": "Add to list",
+  "perAppConnectionAdded": "{name} added. Save changes to apply.",
+  "@perAppConnectionAdded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  }
 }

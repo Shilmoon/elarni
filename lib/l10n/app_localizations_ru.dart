@@ -3020,4 +3020,57 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get perAppUseSuggested => 'Использовать';
+
+  @override
+  String get perAppConnections => 'Недавние подключения';
+
+  @override
+  String get perAppConnectionsHelp =>
+      'Подключения, которые приложения открыли, пока Elarni подключён, — сначала новые, и куда ушло каждое. Здесь видно, какая программа стоит за трафиком приложения, например вспомогательный процесс или программа обновления, и её можно добавить. Хранится в памяти до отключения.';
+
+  @override
+  String get perAppConnectionsDisconnected =>
+      'Подключитесь, чтобы увидеть, какие приложения открывают подключения и куда они идут.';
+
+  @override
+  String get perAppConnectionsOff =>
+      'Маршрутизация по приложениям выключена, поэтому приложения не определяются. Включите её и сохраните.';
+
+  @override
+  String get perAppConnectionsEmpty => 'Подключений пока нет.';
+
+  @override
+  String get perAppConnectionsSearch => 'Поиск по приложениям и адресам';
+
+  @override
+  String get perAppConnectionNoApp => 'Приложение не определялось';
+
+  @override
+  String get perAppConnectionDirect => 'Напрямую';
+
+  @override
+  String get perAppConnectionProxy => 'Через сервер';
+
+  @override
+  String get perAppConnectionBlocked => 'Заблокировано';
+
+  @override
+  String get perAppConnectionDns => 'DNS';
+
+  @override
+  String get perAppConnectionRouting => 'Маршрутизация';
+
+  @override
+  String get perAppConnectionListed => 'Правило приложения';
+
+  @override
+  String get perAppConnectionNotListed => 'Не в списке';
+
+  @override
+  String get perAppConnectionAdd => 'Добавить в список';
+
+  @override
+  String perAppConnectionAdded(String name) {
+    return '$name добавлено. Сохраните изменения, чтобы применить.';
+  }
 }

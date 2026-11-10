@@ -21,6 +21,7 @@ type Context struct {
 // processLookup memoizes the owner of the connection's socket for one routing decision.
 type processLookup struct {
 	once       sync.Once
+	done       bool
 	pid        int
 	name, path string
 	err        error
@@ -30,8 +31,16 @@ type processLookup struct {
 // rule asked again, and on Windows each lookup scans every TCP row of the host.
 func (ctx *Context) LookupProcess(find func() (int, string, string, error)) (int, string, string, error) {
 	p := &ctx.process
-	p.once.Do(func() { p.pid, p.name, p.path, p.err = find() })
+	p.once.Do(func() { p.pid, p.name, p.path, p.err = find(); p.done = true })
 	return p.pid, p.name, p.path, p.err
+}
+
+// LookedUpProcess returns the lookup a process rule made for this decision, without making one
+// (Elarni: the connections view names the app routing found). ok is false when no rule asked.
+// Call it after routing, from the goroutine that routed.
+func (ctx *Context) LookedUpProcess() (pid int, name, path string, err error, ok bool) {
+	p := &ctx.process
+	return p.pid, p.name, p.path, p.err, p.done
 }
 
 // GetInboundTag implements routing.Context.

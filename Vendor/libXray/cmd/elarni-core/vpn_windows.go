@@ -79,7 +79,9 @@ type vpnReply struct {
 	Error   string               `json:"error,omitempty"`
 	Metrics *xray.RuntimeMetrics `json:"metrics,omitempty"`
 	Logs    []xray.LogEntry      `json:"logs,omitempty"`
-	Lost    bool                 `json:"lost,omitempty"` // the tunnel ended without a stop; the child waits
+	// The connections view's entries that changed since the last frame.
+	Connections *xray.ConnectionsResult `json:"connections,omitempty"`
+	Lost        bool                    `json:"lost,omitempty"` // the tunnel ended without a stop; the child waits
 }
 
 // SHELLEXECUTEINFOW is pointer-aligned by Go on the supported Windows x64 build.
@@ -383,14 +385,15 @@ func connectVPN() error {
 			if readFrame(pipe, &reply) != nil {
 				return
 			}
-			// Metrics, log lines and a tunnel loss are events, not replies.
-			event := reply.Metrics != nil || len(reply.Logs) > 0 || reply.Lost
+			// Metrics, log lines, connections and a tunnel loss are events, not replies.
+			event := reply.Metrics != nil || len(reply.Logs) > 0 || reply.Connections != nil || reply.Lost
 			vpnBroker.Lock()
 			if vpnBroker.pipe == pipe && !vpnBroker.closed {
 				if reply.Metrics != nil || reply.Lost {
 					vpnBroker.metrics = reply.Metrics
 				}
 				xray.AppendLogs(reply.Logs)
+				relayedConnections.add(reply.Connections)
 				if reply.Lost {
 					vpnBroker.up = false
 				} else if !event {
@@ -865,6 +868,7 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	var gate metricsGate
+	var connections connectionsCursor
 	for {
 		select {
 		case <-closed:
@@ -897,8 +901,9 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 				if metrics, err := xray.GetRuntimeMetrics(); err == nil && gate.due(metrics, reply.Logs != nil, now) {
 					reply.Metrics = &metrics
 				}
+				reply.Connections = connections.read()
 			}
-			if (reply.Metrics != nil || reply.Logs != nil) && writeFrame(pipe, reply) != nil {
+			if (reply.Metrics != nil || reply.Logs != nil || reply.Connections != nil) && writeFrame(pipe, reply) != nil {
 				return 1, true, true
 			}
 		}

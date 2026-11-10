@@ -5161,6 +5161,102 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Use suggested rule'**
   String get perAppUseSuggested;
+
+  /// No description provided for @perAppConnections.
+  ///
+  /// In en, this message translates to:
+  /// **'Recent connections'**
+  String get perAppConnections;
+
+  /// No description provided for @perAppConnectionsHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Connections apps opened while Elarni is connected, newest first, with where each one went. It names the program behind an app\'s traffic, such as a helper or updater, so you can add it. Kept in memory until you disconnect.'**
+  String get perAppConnectionsHelp;
+
+  /// No description provided for @perAppConnectionsDisconnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect to see which apps open connections and where they go.'**
+  String get perAppConnectionsDisconnected;
+
+  /// No description provided for @perAppConnectionsOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Per-app routing is off, so apps are not named. Turn it on and save to see them.'**
+  String get perAppConnectionsOff;
+
+  /// No description provided for @perAppConnectionsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No connections yet.'**
+  String get perAppConnectionsEmpty;
+
+  /// No description provided for @perAppConnectionsSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Search apps and addresses'**
+  String get perAppConnectionsSearch;
+
+  /// No description provided for @perAppConnectionNoApp.
+  ///
+  /// In en, this message translates to:
+  /// **'App not looked up'**
+  String get perAppConnectionNoApp;
+
+  /// No description provided for @perAppConnectionDirect.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct'**
+  String get perAppConnectionDirect;
+
+  /// No description provided for @perAppConnectionProxy.
+  ///
+  /// In en, this message translates to:
+  /// **'Through a server'**
+  String get perAppConnectionProxy;
+
+  /// No description provided for @perAppConnectionBlocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Blocked'**
+  String get perAppConnectionBlocked;
+
+  /// No description provided for @perAppConnectionDns.
+  ///
+  /// In en, this message translates to:
+  /// **'DNS'**
+  String get perAppConnectionDns;
+
+  /// No description provided for @perAppConnectionRouting.
+  ///
+  /// In en, this message translates to:
+  /// **'Routing'**
+  String get perAppConnectionRouting;
+
+  /// No description provided for @perAppConnectionListed.
+  ///
+  /// In en, this message translates to:
+  /// **'Per-app rule'**
+  String get perAppConnectionListed;
+
+  /// No description provided for @perAppConnectionNotListed.
+  ///
+  /// In en, this message translates to:
+  /// **'Not listed'**
+  String get perAppConnectionNotListed;
+
+  /// No description provided for @perAppConnectionAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add to list'**
+  String get perAppConnectionAdd;
+
+  /// No description provided for @perAppConnectionAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} added. Save changes to apply.'**
+  String perAppConnectionAdded(String name);
 }
 
 class _AppLocalizationsDelegate

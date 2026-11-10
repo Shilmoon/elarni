@@ -175,6 +175,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         completionHandler?(try? JSONSerialization.data(withJSONObject: lines ?? [:]))
         return
       }
+      if messageData.count <= 256,
+         let request = try? JSONSerialization.jsonObject(with: messageData) as? [String: Any],
+         request["operation"] as? String == "connections" {
+        // The connections view: recent routing decisions with the app per-app routing found.
+        let list = try? NativeXrayCore.invokeObject(method: "readConnections", payload: [
+          "epoch": (request["epoch"] as? NSNumber)?.int64Value ?? 0,
+          "after": (request["after"] as? NSNumber)?.uint64Value ?? 0,
+        ])
+        completionHandler?(try? JSONSerialization.data(withJSONObject: list ?? [:]))
+        return
+      }
       if messageData.count <= 1024,
          let request = try? JSONSerialization.jsonObject(with: messageData) as? [String: Any],
          request["operation"] as? String == "prepareStop" {

@@ -38,7 +38,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -363,6 +367,7 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
     var packages by rememberSaveable { mutableStateOf(saved.strings("perAppProcesses")) }
     var targets by rememberSaveable { mutableStateOf(targetMap(saved.optJSONObject("perAppTargets"))) }
     var proxyFor by rememberSaveable { mutableStateOf<String?>(null) }
+    var showConnections by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var visibleCount by rememberSaveable(query) { mutableIntStateOf(8) }
     var apps by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
@@ -396,6 +401,9 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
         item {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         ChoiceField(tr(R.string.mode), mode, listOf("off", "bypass", "proxyOnly"), listOf(tr(R.string.off), tr(R.string.bypass_listed_apps), tr(R.string.only_listed_apps)), enabled = !busy) { mode = it }
+        OutlinedButton({ showConnections = true }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("per-app-connections")) {
+            Text(tr(R.string.recent_connections))
+        }
         // Only listed apps already sends the others directly.
         if (mode != "proxyOnly") RussianAppsPreset(apps, packages, !busy && !loading) { added ->
             packages = (packages + added).distinct()
@@ -470,6 +478,7 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
             }
         }
     }
+    if (showConnections) ConnectionsDialog(apps, packages, saved.string("perAppMode") == "off", { select(it, true) }) { showConnections = false }
     proxyFor?.let { app ->
         ProxyDialog(targets[app]?.takeIf { it.startsWith("proxy:") }?.substring(6) ?: "socks5://127.0.0.1:1080", saved, { proxyFor = null }) { setTarget(app, "proxy:$it"); proxyFor = null }
     }
@@ -486,6 +495,80 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
             OutlinedTextField(text, { text = it }, label = { Text(tr(R.string.proxy_address)) }, singleLine = true, isError = error != null, modifier = Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         } })
+}
+
+// The core runs in this process, so the list reads its recent routing decisions directly. An entry
+// names its app by UID: the lookup per-app routing already made for it.
+@Composable private fun ConnectionsDialog(apps: List<JSONObject>, packages: List<String>, perAppOff: Boolean, add: (String) -> Unit, dismiss: () -> Unit) {
+    var epoch by remember { mutableLongStateOf(0L) }
+    var seq by remember { mutableLongStateOf(0L) }
+    var read by remember { mutableStateOf(false) }
+    var entries by remember { mutableStateOf(mapOf<Long, JSONObject>()) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                val result = withContext(Dispatchers.IO) { runCatching { Native.call("readConnections", obj("epoch" to epoch, "after" to seq)) }.getOrNull() }
+                if (result == null) {
+                    entries = emptyMap(); epoch = 0; seq = 0
+                } else {
+                    // Another core's list starts over; an entry changed again replaces its older copy.
+                    val kept = if (result.optLong("epoch") == epoch) entries else emptyMap()
+                    val merged = kept + result.objects("connections").associateBy { it.optLong("key") }
+                    entries = if (merged.size > 500) merged.toSortedMap().entries.drop(merged.size - 500).associate { it.key to it.value } else merged
+                    epoch = result.optLong("epoch"); seq = result.optLong("seq")
+                }
+                read = true
+                delay(1000)
+            }
+        }
+    }
+    val byUid = apps.groupBy { it.optInt("uid").toString() }
+    val clock = remember { java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM) }
+    AlertDialog(onDismissRequest = dismiss, title = { Text(tr(R.string.recent_connections)) },
+        confirmButton = { TextButton(dismiss, modifier = Modifier.testTag("per-app-connections-done")) { Text(tr(R.string.done)) } },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(tr(R.string.recent_connections_help), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (perAppOff) Text(tr(R.string.per_app_off_connections), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                when {
+                    !read -> LinearProgressIndicator(Modifier.fillMaxWidth())
+                    epoch == 0L -> Text(tr(R.string.connect_to_see_connections), Modifier.testTag("per-app-connections-disconnected"))
+                    entries.isEmpty() -> Text(tr(R.string.no_connections_yet))
+                    else -> LazyColumn(Modifier.heightIn(max = 480.dp).testTag("per-app-connections-list")) {
+                        items(entries.values.sortedByDescending { it.optLong("key") }.take(200), key = { it.optLong("key") }) { entry ->
+                            val rules = entry.strings("rules")
+                            val app = if (entry.string("owner") == "found") byUid[entry.string("name")]?.firstOrNull() else null
+                            val title = when (entry.string("owner")) {
+                                "found" -> app?.string("name") ?: tr(R.string.connection_uid, entry.string("name"))
+                                "unknown" -> tr(R.string.unidentified_traffic)
+                                else -> tr(R.string.app_not_looked_up)
+                            }
+                            val host = entry.string("host").let { if (':' in it) "[$it]" else it }
+                            val route = listOfNotNull(when (entry.string("kind")) {
+                                "direct" -> tr(R.string.direct); "block" -> tr(R.string.connection_blocked); "dns" -> tr(R.string.connection_dns)
+                                "routing" -> tr(R.string.connection_routing); else -> tr(R.string.connection_through_server)
+                            }, tr(R.string.connection_per_app_rule).takeIf { "elarni-per-app-listed" in rules },
+                                tr(R.string.connection_not_listed).takeIf { "elarni-per-app-other" in rules }).joinToString(" · ")
+                            val key = entry.optLong("key")
+                            val pkg = app?.string("package")
+                            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("per-app-connection-$key"), verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(title, style = MaterialTheme.typography.bodyLarge)
+                                    Text("$host:${entry.optInt("port")} · ${entry.string("network").uppercase()} · ${clock.format(java.util.Date(entry.optLong("time")))}",
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(route, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                if (pkg != null && pkg !in packages && "elarni-per-app-listed" !in rules) {
+                                    TextButton({ add(pkg) }, modifier = Modifier.testTag("per-app-add-connection-$key")) { Text(tr(R.string.add_to_list)) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        })
 }
 
 @Composable private fun MissingAppRow(packageName: String, enabled: Boolean, remove: () -> Unit) {

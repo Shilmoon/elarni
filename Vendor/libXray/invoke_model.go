@@ -39,6 +39,7 @@ const (
 	LibXrayMethodGetRuntimeMetrics           LibXrayMethod = "getRuntimeMetrics"
 	LibXrayMethodSetLogLevel                 LibXrayMethod = "setLogLevel"
 	LibXrayMethodReadLogs                    LibXrayMethod = "readLogs"
+	LibXrayMethodReadConnections             LibXrayMethod = "readConnections"
 	LibXrayMethodSocketPathChanged           LibXrayMethod = "socketPathChanged"
 )
 
@@ -58,6 +59,12 @@ type SetLogLevelRequest struct {
 
 type ReadLogsRequest struct {
 	After int64 `json:"after"`
+}
+
+// ReadConnectionsRequest names the list a reader holds: its epoch and newest seq.
+type ReadConnectionsRequest struct {
+	Epoch int64  `json:"epoch"`
+	After uint64 `json:"after"`
 }
 
 type SetMemoryLimitResponse struct {

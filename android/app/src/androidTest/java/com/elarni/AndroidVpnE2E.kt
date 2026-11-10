@@ -315,6 +315,14 @@ class AndroidVpnE2E {
             call("settings", obj("settings" to obj("perAppMode" to "proxyOnly")))
             assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
             assertTrue(inTunnel)
+            // The connections view names the app per-app routing found, by UID, and the rule that took it.
+            val listedUid = ui.activity.packageManager.getApplicationInfo("com.elarni.traffic.a", 0).uid.toString()
+            val listed = Native.call("readConnections", obj("epoch" to 0, "after" to 0)).objects("connections")
+                .lastOrNull { it.string("name") == listedUid && it.optInt("port") == httpPort }
+            assertNotNull("The connections view must name the listed app", listed)
+            assertEquals("found", listed!!.string("owner"))
+            assertTrue(listed.strings("rules").contains("elarni-per-app-listed"))
+            assertEquals("proxy", listed.string("kind"))
             assertTrue("Only-listed mode must send other apps directly", traffic("b", "tcp", httpPort).contains("direct:elarni-synthetic"))
             assertFalse("Only-listed mode must keep other apps out of the tunnel", inTunnel)
             assertEquals("direct:elarni-udp-fixture", traffic("b", "udp", udpPort))

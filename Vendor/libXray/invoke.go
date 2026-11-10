@@ -171,6 +171,16 @@ func Invoke(requestJSON string) string {
 		}
 		logs := xray.ReadLogs(request.After)
 		return encodeInvokeResponse(&logs, nil)
+	case LibXrayMethodReadConnections:
+		request, err := decodePayload[ReadConnectionsRequest](request.Payload)
+		if err != nil {
+			return encodeInvokeResponse(nil, err)
+		}
+		connections, err := xray.ReadConnections(request.Epoch, request.After)
+		if err != nil {
+			return encodeInvokeResponse(nil, err)
+		}
+		return encodeInvokeResponse(&connections, nil)
 	case LibXrayMethodSocketPathChanged:
 		// The Apple path monitor: sockets would now leave through another interface.
 		internet.SocketPathChanged()
