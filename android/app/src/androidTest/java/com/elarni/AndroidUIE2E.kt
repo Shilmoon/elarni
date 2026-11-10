@@ -1492,7 +1492,11 @@ class AndroidUIE2E {
     // Back, another tab and a page opened from this one all save what was typed or picked; only Cancel drops it.
     @Test fun leavingAPageSavesItsDraftAndARejectedDraftStays() {
         call("import", obj("text" to "socks://127.0.0.1:18100#Leave%20A\nsocks://127.0.0.1:18101#Leave%20B"))
-        call("select", obj("id" to snapshot().nodes.single { it.string("name") == "Leave A" }.string("id")))
+        val first = snapshot().nodes.single { it.string("name") == "Leave A" }.string("id")
+        val second = snapshot().nodes.single { it.string("name") == "Leave B" }.string("id")
+        call("select", obj("id" to first))
+        // prepare() keeps the recovery an earlier test saved, and its servers are gone.
+        call("automation", obj("configuration" to Automation.defaults()))
         val hours = snapshot().settings.getInt("subscriptionAutoUpdateHours")
         ui.onNode(hasText("Settings") and hasClickAction()).performClick()
         click("General")
@@ -1522,7 +1526,7 @@ class AndroidUIE2E {
         ui.onNode(isToggleable() and hasText("Leave B")).performScrollTo().performClick()
         ui.onNodeWithContentDescription("Back").performClick()
         ui.waitUntil(5000) { ui.onAllNodesWithText("Refresh interval").fetchSemanticsNodes().isNotEmpty() }
-        assertEquals(2, snapshot().data.mapObject("automation").strings("nodeIDs").size)
+        assertEquals(listOf(first, second), snapshot().data.mapObject("automation").strings("nodeIDs"))
     }
 
     // Russian comes from res/values-ru; on Android 13+ the app's own language setting reaches every screen through tr().
