@@ -767,7 +767,7 @@ class AndroidUIE2E {
                 "inbounds" to JSONArray(listOf(obj("tag" to "elarni-tun", "listen" to "127.0.0.1", "port" to inbound, "protocol" to "dokodemo-door", "settings" to obj("network" to "tcp")))),
                 "outbounds" to JSONArray(listOf(obj("tag" to "elarni-direct", "protocol" to "freedom", "settings" to obj("redirect" to "127.0.0.1:${echo.localPort}")))),
                 "routing" to obj("rules" to JSONArray(listOf(obj("type" to "field", "inboundTag" to JSONArray(listOf("elarni-tun")), "process" to JSONArray(listOf("-1")),
-                    "outboundTag" to "elarni-direct", "ruleTag" to "elarni-per-app-listed")))))
+                    "outboundTag" to "elarni-direct", "ruleTag" to "elarni-per-app-listed-0")))))
             Native.call("runXrayFromJson", obj("configJSON" to config.toString()))
             try {
                 java.net.Socket("127.0.0.1", inbound).use { client ->

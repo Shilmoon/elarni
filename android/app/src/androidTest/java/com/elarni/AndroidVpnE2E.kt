@@ -321,7 +321,7 @@ class AndroidVpnE2E {
                 .lastOrNull { it.string("name") == listedUid && it.optInt("port") == httpPort }
             assertNotNull("The connections view must name the listed app", listed)
             assertEquals("found", listed!!.string("owner"))
-            assertTrue(listed.strings("rules").contains("elarni-per-app-listed"))
+            assertTrue(listed.strings("rules").any { it.startsWith("elarni-per-app-listed-") })
             assertEquals("proxy", listed.string("kind"))
             assertTrue("Only-listed mode must send other apps directly", traffic("b", "tcp", httpPort).contains("direct:elarni-synthetic"))
             assertFalse("Only-listed mode must keep other apps out of the tunnel", inTunnel)
