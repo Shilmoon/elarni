@@ -4,6 +4,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+## 0.6.0 - 2026-11-10
+
 ### Added
 
 - The per-app rule list shows, on Windows, macOS and Linux, how many running programs each rule
