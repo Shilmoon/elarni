@@ -56,6 +56,11 @@ class Engine(private val app: ElarniApplication, private val assets: RoutingAsse
     var network: Network? = null
         private set
     private var activeAssets = ""
+    /** The listed apps' UIDs the running tunnel and per-app rules took, or null when per-app routing does not apply. */
+    private var listedUids: Map<String, Int?>? = null
+    private fun uid(name: String) = runCatching { app.packageManager.getApplicationInfo(name, 0).uid }.getOrNull()
+    /** Whether a listed app was installed, removed or reinstalled since the running tunnel started. */
+    fun listedAppsChanged() = running && listedUids?.let { it != it.keys.associateWith(::uid) } == true
     private val dns = Executors.newFixedThreadPool(32)
     private val connectivity get() = app.getSystemService(ConnectivityManager::class.java)
     private fun isPhysical(network: Network): Boolean =
@@ -112,6 +117,8 @@ class Engine(private val app: ElarniApplication, private val assets: RoutingAsse
     // instead of leaving the device while automatic recovery retries.
     fun start(catalog: Catalog, keepTunnel: Boolean = false, valid: () -> Unit) = synchronized(Native.runtimeLock) {
         val owner = service ?: throw AppFailure("service_unavailable")
+        // Read before the tunnel and rules resolve them, so an install meanwhile shows up as a change.
+        val uids = if (catalog.settings.getBoolean("xrayTunEnabled")) Catalog.listedUids(catalog.settings, ::uid) else null
         // A recording that cannot start must not block the connection.
         if (BuildConfig.ELARNI_RECORDING) runCatching { record(catalog.settings.optBoolean("recordDiagnostics")) }
         val network = physical()
@@ -145,13 +152,13 @@ class Engine(private val app: ElarniApplication, private val assets: RoutingAsse
             // installing the new VPN network and UID routes after reconfiguration.
             if (vpn) owner.awaitTunnelReady(valid)
             valid()
-            activeAssets = directory; running = true; sessionAuth = auth; fetchProxy = socksProxy(catalog); this.network = network
+            activeAssets = directory; running = true; sessionAuth = auth; fetchProxy = socksProxy(catalog); this.network = network; listedUids = uids
         } catch (error: Exception) { stop(releaseTunnel = !keepTunnel); throw error }
     }
     fun stop(releaseTunnel: Boolean = true) = synchronized(Native.runtimeLock) {
         try { Native.call("stopXray") }
         finally {
-            running = false; activeAssets = ""; fetchProxy = null; sessionAuth = null
+            running = false; activeAssets = ""; fetchProxy = null; sessionAuth = null; listedUids = null
             runCatching { LibXray.setTunFD(-1) }
             if (releaseTunnel) service?.closeTunnel()
             LibXray.resetDNS()
@@ -180,7 +187,24 @@ class Engine(private val app: ElarniApplication, private val assets: RoutingAsse
             return file.readBytes()
         } finally { file.delete() }
     }
-    fun probe(catalog: Catalog, id: String, args: JSONObject): JSONObject {
+    // Where a direct test finds a server: its endpoint and the host mapping, kept until the catalog changes.
+    private val probeTargets = HashMap<String, Pair<JSONObject, JSONObject>>()
+    private var probeEpoch = -1L
+    private fun probeTarget(catalog: Catalog, id: String, epoch: Long?): Pair<JSONObject, JSONObject> {
+        // A per-app rule compiles to the UIDs of installed apps, which change without the catalog.
+        val keep = epoch != null && catalog.settings.getString("perAppMode") == "off"
+        if (keep) synchronized(probeTargets) {
+            if (probeEpoch != epoch) { probeTargets.clear(); probeEpoch = epoch!! }
+            probeTargets[id]
+        }?.let { return it }
+        val config = catalog.compile(id, app)
+        val endpoint = Native.domain("profileEndpoints", obj("config" to config)).objects("endpoints").firstOrNull { it.optBoolean("physical") } ?: throw AppFailure("unsupported_ping_method")
+        val target = endpoint to mappings(config, listOf(endpoint)).mapObject(endpoint.getString("host"))
+        if (keep) synchronized(probeTargets) { if (probeEpoch == epoch) probeTargets[id] = target }
+        return target
+    }
+    /** [epoch] counts the catalog's changes; with it a direct test reuses what the last one learned about the server. */
+    fun probe(catalog: Catalog, id: String, args: JSONObject, epoch: Long? = null): JSONObject {
         val method = args.string("protocol", "proxy")
         if (method !in listOf("tcp", "icmp", "proxy", "activeProxy")) throw AppFailure("unsupported_ping_method")
         val timeout = args.optInt("timeout", 5)
@@ -189,12 +213,11 @@ class Engine(private val app: ElarniApplication, private val assets: RoutingAsse
         val delay: Long
         var exit: JSONObject? = null
         if (method == "tcp" || method == "icmp") {
-            val config = catalog.compile(id, app)
-            val endpoint = Native.domain("profileEndpoints", obj("config" to config)).objects("endpoints").firstOrNull { it.optBoolean("physical") } ?: throw AppFailure("unsupported_ping_method")
+            val (endpoint, mapping) = probeTarget(catalog, id, epoch)
             if (method == "tcp" && !endpoint.optBoolean("supportsTcpProbe")) throw AppFailure("unsupported_ping_method")
             val settings = catalog.settings
             catalog.node(id).string("ipPreference").takeIf { it.isNotEmpty() }?.let { settings.put("profilePreferredIP", it) }
-            val address = addresses(endpoint, settings, mappings(config, listOf(endpoint)).mapObject(endpoint.getString("host"))).first()
+            val address = addresses(endpoint, settings, mapping).first()
             if (method == "tcp") {
                 val start = System.nanoTime()
                 Socket().use { socket -> physical()?.bindSocket(socket); socket.connect(InetSocketAddress(address, endpoint.getInt("port")), timeout * 1000) }

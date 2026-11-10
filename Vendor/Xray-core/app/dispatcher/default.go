@@ -8,6 +8,7 @@ import (
 
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/buf"
+	c "github.com/xtls/xray-core/common/ctx"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/log"
 	"github.com/xtls/xray-core/common/net"
@@ -98,6 +99,7 @@ type DefaultDispatcher struct {
 	policy policy.Manager
 	stats  stats.Manager
 	fdns   dns.FakeDNSEngine
+	recent recentConnections
 }
 
 func init() {
@@ -130,12 +132,16 @@ func (*DefaultDispatcher) Type() interface{} {
 }
 
 // Start implements common.Runnable.
-func (*DefaultDispatcher) Start() error {
+func (d *DefaultDispatcher) Start() error {
+	d.recent.reset()
 	return nil
 }
 
 // Close implements common.Closable.
-func (*DefaultDispatcher) Close() error { return nil }
+func (d *DefaultDispatcher) Close() error {
+	d.recent.close()
+	return nil
+}
 
 func (d *DefaultDispatcher) getLink(ctx context.Context) (*transport.Link, *transport.Link) {
 	opt := pipe.OptionsFromContext(ctx)
@@ -446,6 +452,7 @@ func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.
 	routingLink := routing_session.AsRoutingContext(ctx)
 	inTag := routingLink.GetInboundTag()
 	isPickRoute := 0
+	ruleTag := ""
 	if forcedOutboundTag := session.GetForcedOutboundTagFromContext(ctx); forcedOutboundTag != "" {
 		ctx = session.SetForcedOutboundTagToContext(ctx, "")
 		if h := d.ohm.GetHandler(forcedOutboundTag); h != nil {
@@ -463,6 +470,7 @@ func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.
 			outTag := route.GetOutboundTag()
 			if h := d.ohm.GetHandler(outTag); h != nil {
 				isPickRoute = 2
+				ruleTag = route.GetRuleTag()
 				if route.GetRuleTag() == "" {
 					errors.LogInfo(ctx, "taking detour [", outTag, "] for [", destination, "]")
 				} else {
@@ -510,5 +518,8 @@ func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.
 		log.Record(accessMessage)
 	}
 
+	if decision, ok := routingLink.(*routing_session.Context); ok {
+		d.recent.record(uint32(c.IDFromContext(ctx)), decision, destination, handler, ruleTag)
+	}
 	handler.Dispatch(ctx, link)
 }

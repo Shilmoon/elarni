@@ -42,19 +42,6 @@ class ElarniNativeBindings {
       .asFunction<void Function(ElarniBuffer)>();
 
   /// # Safety
-  /// `handle` must point to a live Elarni handle.
-  int elarni_cancel(ffi.Pointer<ElarniHandle> handle) {
-    return _elarni_cancel(handle);
-  }
-
-  late final _elarni_cancelPtr =
-      _lookup<
-        ffi.NativeFunction<ElarniStatus Function(ffi.Pointer<ElarniHandle>)>
-      >('elarni_cancel');
-  late final _elarni_cancel = _elarni_cancelPtr
-      .asFunction<int Function(ffi.Pointer<ElarniHandle>)>();
-
-  /// # Safety
   /// `handle` must be null or a pointer returned by `elarni_handle_new` that has not been freed.
   void elarni_handle_free(ffi.Pointer<ElarniHandle> handle) {
     return _elarni_handle_free(handle);
@@ -135,8 +122,6 @@ const int ELARNI_ABI_VERSION = 1;
 const int ELARNI_SCHEMA_MAX = 1;
 
 const int ELARNI_SCHEMA_MIN = 1;
-
-const int ELARNI_STATUS_CANCELLED = 5;
 
 const int ELARNI_STATUS_COMPILE_ERROR = 7;
 

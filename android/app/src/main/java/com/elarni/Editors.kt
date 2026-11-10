@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -38,7 +39,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -158,7 +163,8 @@ private fun lines(value: String) = value.lines().map(String::trim).filter(String
 @Composable fun SettingsEditor(catalog: Catalog, section: String, busy: Boolean, activity: MainActivity,
     navigate: (String, String) -> Unit, openServers: () -> Unit, done: () -> Unit) {
     val saved = catalog.settings
-    val fields = Settings.fields.filter { it.section == section }
+    // The titles come from resources; a new language is a new configuration.
+    val fields = remember(section, LocalConfiguration.current) { Settings.fields.filter { it.section == section } }
     val current = buildMap {
         fields.forEach { put(it.key, saved.get(it.key).toString()) }
         listOf("includedRoutes", "excludedRoutes", "trustedWiFiNetworks").forEach { put(it, saved.strings(it).joinToString("\n")) }
@@ -363,6 +369,7 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
     var packages by rememberSaveable { mutableStateOf(saved.strings("perAppProcesses")) }
     var targets by rememberSaveable { mutableStateOf(targetMap(saved.optJSONObject("perAppTargets"))) }
     var proxyFor by rememberSaveable { mutableStateOf<String?>(null) }
+    var showConnections by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var visibleCount by rememberSaveable(query) { mutableIntStateOf(8) }
     var apps by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
@@ -376,6 +383,8 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
         finally { loading = false }
     }
     val selectedApps = apps.filter { it.string("package") in packages }
+    // A listed package that is not installed matches nothing; it stays listed so it can be removed.
+    val missingApps = if (loading || error != null) emptyList() else packages.filter { name -> apps.none { it.string("package") == name } }
     val available = apps.filter { it.string("package") !in packages && (it.string("name").contains(query, true) || it.string("package").contains(query, true)) }
     fun select(name: String, selected: Boolean) { packages = if (selected) (packages + name).distinct() else packages - name }
     // An app without a target of its own follows the mode.
@@ -394,6 +403,9 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
         item {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         ChoiceField(tr(R.string.mode), mode, listOf("off", "bypass", "proxyOnly"), listOf(tr(R.string.off), tr(R.string.bypass_listed_apps), tr(R.string.only_listed_apps)), enabled = !busy) { mode = it }
+        OutlinedButton({ showConnections = true }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("per-app-connections")) {
+            Text(tr(R.string.recent_connections))
+        }
         // Only listed apps already sends the others directly.
         if (mode != "proxyOnly") RussianAppsPreset(apps, packages, !busy && !loading) { added ->
             packages = (packages + added).distinct()
@@ -403,7 +415,8 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
         }
         }
         if (loading) item { Text(tr(R.string.loading_app_list), style = MaterialTheme.typography.bodySmall) }
-        if (selectedApps.isNotEmpty()) item { Text(tr(R.string.selected_apps, selectedApps.size), style = MaterialTheme.typography.titleMedium) }
+        if (selectedApps.isNotEmpty() || missingApps.isNotEmpty()) item { Text(tr(R.string.selected_apps, selectedApps.size + missingApps.size), style = MaterialTheme.typography.titleMedium) }
+        items(missingApps, key = { "missing-$it" }) { name -> MissingAppRow(name, !busy) { select(name, false) } }
         items(selectedApps, key = { it.string("package") }) { app ->
             val name = app.string("package")
             Column {
@@ -467,6 +480,7 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
             }
         }
     }
+    if (showConnections) ConnectionsDialog(apps, packages, saved.string("perAppMode") == "off", { select(it, true) }) { showConnections = false }
     proxyFor?.let { app ->
         ProxyDialog(targets[app]?.takeIf { it.startsWith("proxy:") }?.substring(6) ?: "socks5://127.0.0.1:1080", saved, { proxyFor = null }) { setTarget(app, "proxy:$it"); proxyFor = null }
     }
@@ -483,6 +497,92 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
             OutlinedTextField(text, { text = it }, label = { Text(tr(R.string.proxy_address)) }, singleLine = true, isError = error != null, modifier = Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         } })
+}
+
+// The core runs in this process, so the list reads its recent routing decisions directly. An entry
+// names its app by UID: the lookup per-app routing already made for it.
+@Composable private fun ConnectionsDialog(apps: List<JSONObject>, packages: List<String>, perAppOff: Boolean, add: (String) -> Unit, dismiss: () -> Unit) {
+    var epoch by remember { mutableLongStateOf(0L) }
+    var seq by remember { mutableLongStateOf(0L) }
+    var read by remember { mutableStateOf(false) }
+    var entries by remember { mutableStateOf(mapOf<Long, JSONObject>()) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                val result = withContext(Dispatchers.IO) { runCatching { Native.call("readConnections", obj("epoch" to epoch, "after" to seq)) }.getOrNull() }
+                if (result == null) {
+                    entries = emptyMap(); epoch = 0; seq = 0
+                } else {
+                    // Another core's list starts over; an entry changed again replaces its older copy.
+                    val kept = if (result.optLong("epoch") == epoch) entries else emptyMap()
+                    val merged = kept + result.objects("connections").associateBy { it.optLong("key") }
+                    entries = if (merged.size > 500) merged.toSortedMap().entries.drop(merged.size - 500).associate { it.key to it.value } else merged
+                    epoch = result.optLong("epoch"); seq = result.optLong("seq")
+                }
+                read = true
+                delay(1000)
+            }
+        }
+    }
+    val byUid = apps.groupBy { it.optInt("uid").toString() }
+    val clock = remember { java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM) }
+    AlertDialog(onDismissRequest = dismiss, title = { Text(tr(R.string.recent_connections)) },
+        confirmButton = { TextButton(dismiss, modifier = Modifier.testTag("per-app-connections-done")) { Text(tr(R.string.done)) } },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(tr(R.string.recent_connections_help), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (perAppOff) Text(tr(R.string.per_app_off_connections), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                when {
+                    !read -> LinearProgressIndicator(Modifier.fillMaxWidth())
+                    epoch == 0L -> Text(tr(R.string.connect_to_see_connections), Modifier.testTag("per-app-connections-disconnected"))
+                    entries.isEmpty() -> Text(tr(R.string.no_connections_yet))
+                    else -> LazyColumn(Modifier.heightIn(max = 480.dp).testTag("per-app-connections-list")) {
+                        items(entries.values.sortedByDescending { it.optLong("key") }.take(200), key = { it.optLong("key") }) { entry ->
+                            val rules = entry.strings("rules")
+                            val app = if (entry.string("owner") == "found") byUid[entry.string("name")]?.firstOrNull() else null
+                            val title = when (entry.string("owner")) {
+                                "found" -> app?.string("name") ?: tr(R.string.connection_uid, entry.string("name"))
+                                "unknown" -> tr(R.string.unidentified_traffic)
+                                else -> tr(R.string.app_not_looked_up)
+                            }
+                            val host = entry.string("host").let { if (':' in it) "[$it]" else it }
+                            val route = listOfNotNull(when (entry.string("kind")) {
+                                "direct" -> tr(R.string.direct); "block" -> tr(R.string.connection_blocked); "dns" -> tr(R.string.connection_dns)
+                                "routing" -> tr(R.string.connection_routing); else -> tr(R.string.connection_through_server)
+                            }, tr(R.string.connection_per_app_rule).takeIf { "elarni-per-app-listed" in rules },
+                                tr(R.string.connection_not_listed).takeIf { "elarni-per-app-other" in rules }).joinToString(" · ")
+                            val key = entry.optLong("key")
+                            val pkg = app?.string("package")
+                            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("per-app-connection-$key"), verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(title, style = MaterialTheme.typography.bodyLarge)
+                                    Text("$host:${entry.optInt("port")} · ${entry.string("network").uppercase()} · ${clock.format(java.util.Date(entry.optLong("time")))}",
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(route, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                if (pkg != null && pkg !in packages && "elarni-per-app-listed" !in rules) {
+                                    TextButton({ add(pkg) }, modifier = Modifier.testTag("per-app-add-connection-$key")) { Text(tr(R.string.add_to_list)) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        })
+}
+
+@Composable private fun MissingAppRow(packageName: String, enabled: Boolean, remove: () -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).testTag("per-app-missing-$packageName").toggleable(true, enabled = enabled, role = Role.Checkbox) { if (!it) remove() },
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) { RouteIcon("apps", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        Column(Modifier.weight(1f)) {
+            Text(packageName, style = MaterialTheme.typography.bodyLarge)
+            Text(tr(R.string.app_not_installed), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        Checkbox(true, null, enabled = enabled)
+    }
 }
 
 @Composable private fun InstalledAppRow(app: JSONObject, selected: Boolean, enabled: Boolean, activity: MainActivity, change: (Boolean) -> Unit) {
@@ -669,21 +769,22 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
         ChoiceField(tr(R.string.policy), policy, listOf("fixed", "orderedFallback", "lowestLatency"), listOf(tr(R.string.keep_selected_server), tr(R.string.ordered_fallback), tr(R.string.lowest_latency))) { policy = it }
         Text(tr(R.string.allowed_servers_listed_in_fallback_order), style = MaterialTheme.typography.titleMedium)
         Text(tr(R.string.servers_may_come_from_any_subscription), style = MaterialTheme.typography.bodySmall)
-        val available = catalog.nodes.filter { it.string("format") == "xrayProfile" }
+        val available = remember(catalog) { catalog.nodes.filter { it.string("format") == "xrayProfile" }.map { it.string("id") }.toSet() }
         // A provider refresh can remove a chosen server, which then has no row to clear it with.
-        val chosen = selected.filter { id -> available.any { it.string("id") == id } }
-        chosen.forEach { id ->
+        val chosen = selected.filter { it in available }
+        val listed = chosen.toSet()
+        chosen.forEachIndexed { position, id ->
             Row(Modifier.toggleable(true, role = Role.Checkbox) { selected = chosen - id }, verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(true, null)
                 Column(Modifier.weight(1f)) {
                     Text(catalog.node(id).string("name"))
                     Text(catalog.sourceFor(id).string("name"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (chosen.indexOf(id) > 0) TextButton({ val items = chosen.toMutableList(); val index = items.indexOf(id); items[index] = items[index-1]; items[index-1] = id; selected = items }) { Text(tr(R.string.up)) }
+                if (position > 0) TextButton({ val items = chosen.toMutableList(); val index = items.indexOf(id); items[index] = items[index-1]; items[index-1] = id; selected = items }) { Text(tr(R.string.up)) }
             }
         }
         catalog.sources.forEach { source ->
-            val rest = source.objects("nodes").filter { it.string("format") == "xrayProfile" && it.string("id") !in chosen }
+            val rest = source.objects("nodes").filter { it.string("format") == "xrayProfile" && it.string("id") !in listed }
             if (rest.isNotEmpty()) Text(source.string("name"), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
             rest.forEach { node ->
                 Row(Modifier.toggleable(false, role = Role.Checkbox) { selected = chosen + node.string("id") }, verticalAlignment = Alignment.CenterVertically) {
@@ -713,7 +814,8 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
 }
 
 @Composable fun PingEditor(id: String, state: AppState, activity: MainActivity, sourceId: String = "") {
-    val saved = Catalog(state.catalog).settings
+    val catalog = remember(state.catalog) { Catalog(state.catalog, snapshot = true) }
+    val saved = catalog.settings
     var protocol by rememberSaveable { mutableStateOf(saved.string("probeMode", "proxy")) }; var url by rememberSaveable { mutableStateOf(saved.string("probeURL", "https://www.gstatic.com/generate_204")) }
     var timeout by rememberSaveable { mutableStateOf(saved.optInt("probeTimeout", 5).toString()) }; var method by rememberSaveable { mutableStateOf(saved.string("probeMethod", "GET")) }
     var mode by rememberSaveable { mutableStateOf(saved.string("probeVariant", "default")) }
@@ -734,10 +836,9 @@ private fun targetMap(value: JSONObject?) = value?.let { map -> map.keys().asSeq
             activity.run("ping", obj("id" to id, "sourceId" to sourceId, "protocol" to protocol, "timeout" to (timeout.toIntOrNull()?.coerceIn(1, 15) ?: 0), "url" to url,
                 "method" to method, "mode" to mode, "expectedStatus" to (expected.toIntOrNull() ?: 0), "expectedBody" to body))
         }, enabled = !state.busy) { Text(tr(R.string.run_test)) }
-        val catalog = Catalog(state.catalog)
-        val scopedIds = catalog.sources.firstOrNull { it.string("id") == sourceId }?.objects("nodes")?.map { it.string("id") }?.toSet() ?: emptySet()
+        val scopedIds = remember(catalog, sourceId) { catalog.sources.firstOrNull { it.string("id") == sourceId }?.objects("nodes")?.map { it.string("id") }?.toSet() ?: emptySet() }
         state.pings.filterKeys { (id.isEmpty() || it == id) && (sourceId.isEmpty() || it in scopedIds) }.forEach { (key, result) ->
-            val node = catalog.nodes.firstOrNull { it.string("id") == key }
+            val node = catalog.nodeOrNull(key)
             Text("${node?.string("name") ?: tr(R.string.server_word)}: ${if (result.string("status") == "success") tr(R.string.ms_value, result.optLong("latencyMs")) else errorMessage(result.string("error"))}")
             Text("${pingScope(result)} · ${date(result.optDouble("timestamp"))}${if (node == null || !pingFresh(node, result, clock)) " · " + tr(R.string.outdated) else ""}", style = MaterialTheme.typography.bodySmall)
         }

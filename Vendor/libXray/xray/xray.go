@@ -127,31 +127,6 @@ func StartXrayFromJSON(configJSON string) (_ *core.Instance, startErr error) {
 	return server, nil
 }
 
-// Run Xray instance.
-// configPath means the config.json file path.
-func RunXray(configPath string) (err error) {
-	coreServerMu.Lock()
-	defer coreServerMu.Unlock()
-	if coreServer != nil {
-		return ErrAlreadyRunning
-	}
-
-	memory.InitForceFree()
-	server, err := StartXray(configPath)
-	if err != nil {
-		return
-	}
-
-	if err = server.Start(); err != nil {
-		_ = server.Close()
-		return
-	}
-	coreServer = server
-
-	debug.FreeOSMemory()
-	return nil
-}
-
 // Run Xray instance with JSON configuration string.
 // configJSON means the JSON configuration string.
 func RunXrayFromJSON(configJSON string) (err error) {
@@ -167,6 +142,7 @@ func RunXrayFromJSON(configJSON string) (err error) {
 		return
 	}
 	coreServer = server
+	tunnelRules = perAppRules(configJSON)
 
 	debug.FreeOSMemory()
 	return nil
@@ -185,7 +161,7 @@ func StopXray() error {
 	defer coreServerMu.Unlock()
 	if coreServer != nil {
 		err := coreServer.Close()
-		coreServer = nil
+		coreServer, tunnelRules = nil, nil
 		if err != nil {
 			return err
 		}

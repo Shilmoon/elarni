@@ -34,16 +34,8 @@ type ProbeDiagnostics struct {
 	TrackedWorkComplete bool          `json:"trackedWorkComplete"`
 }
 
-// PingJSONWithDiagnostics returns only typed, endpoint-free diagnostic fields.
+// PingJSONWithPreparation returns only typed, endpoint-free diagnostic fields.
 // The HTTP timeout still measures the original request; cleanup retains ownership.
-func PingJSONWithDiagnostics(configJSON string, timeout int, targetURL, proxyURL, method, mode, variant string, expected ...*nodep.ExpectedResponse) (delay int64, diagnostic *ProbeDiagnostics, err error) {
-	return PingJSONWithContext(context.Background(), configJSON, timeout, targetURL, proxyURL, method, mode, variant, expected...)
-}
-
-func PingJSONWithContext(parent context.Context, configJSON string, timeout int, targetURL, proxyURL, method, mode, variant string, expected ...*nodep.ExpectedResponse) (delay int64, diagnostic *ProbeDiagnostics, err error) {
-	return PingJSONWithPreparation(parent, configJSON, timeout, targetURL, proxyURL, method, mode, variant, nil, expected...)
-}
-
 // prepare installs platform assets until configuration construction completes.
 func PingJSONWithPreparation(parent context.Context, configJSON string, timeout int, targetURL, proxyURL, method, mode, variant string, prepare func() (func(), error), expected ...*nodep.ExpectedResponse) (delay int64, diagnostic *ProbeDiagnostics, err error) {
 	diagnostic = &ProbeDiagnostics{CleanupState: "not_started", Stage: "admission"}

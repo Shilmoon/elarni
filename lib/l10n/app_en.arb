@@ -230,7 +230,7 @@
   "linkImportsRoutingProfile": "A link wants to import a routing profile.",
   "linkImportsClientProfile": "A link wants to import a client profile.",
   "disconnect": "Disconnect",
-  "appRoutingUses": "App routing uses {engine}. In bypass mode, unlisted or unidentified processes follow normal routing. In only-selected mode, they connect directly.",
+  "appRoutingUses": "App routing uses {engine}. Unlisted apps connect directly in only-selected mode and follow normal routing in bypass mode. Traffic Elarni cannot link to an app (WSL, virtual machines, containers, connections that closed early) may come from a listed app: in only-selected mode it follows normal routing. Add Unidentified traffic to the list to choose where it goes.",
   "@appRoutingUses": {
     "placeholders": {
       "engine": {
@@ -298,7 +298,6 @@
   "noMatchingApps": "No matching apps.",
   "noAppsFound": "No apps found. Choose an app file below.",
   "loadingApps": "Loading apps…",
-  "runningApps": "Running apps",
   "installedAndRunningApps": "Installed and running apps",
   "refreshAppList": "Refresh app list",
   "searchApps": "Search apps",
@@ -353,7 +352,7 @@
     }
   },
   "perAppOperationFailed": "The operation failed. Try again; your draft is kept.",
-  "perAppLauncherRule": "Snap, Flatpak and script launchers start another program, so their rules match nothing. Start the app, then choose it from the app list.",
+  "perAppLauncherRule": "Snap, Flatpak and script launchers start another program, so their rules match nothing. Choose the app from the app list; start a Snap or script app first.",
   "useProxy": "Use proxy",
   "proxyAddress": "Proxy address",
   "localProxyHelp": "Another app's SOCKS5 or HTTP proxy, such as ByeByeDPI.",
@@ -378,6 +377,52 @@
     "placeholders": {
       "platform": {
         "type": "Object"
+      }
+    }
+  },
+  "perAppLinuxRulesElsewhere": "Flatpak and AppImage rules name Linux apps and cannot be used in a {platform} profile.",
+  "@perAppLinuxRulesElsewhere": {
+    "placeholders": {
+      "platform": {
+        "type": "Object"
+      }
+    }
+  },
+  "perAppServiceRulesElsewhere": "Service rules name Windows services and cannot be used in a {platform} profile.",
+  "@perAppServiceRulesElsewhere": {
+    "placeholders": {
+      "platform": {
+        "type": "Object"
+      }
+    }
+  },
+  "perAppFlatpakRule": "Flatpak app: also its other programs in the sandbox",
+  "perAppAppImageRule": "AppImage: the programs in that image file",
+  "perAppServiceRule": "Windows service: also the services that share its process",
+  "perAppKindService": "Windows service",
+  "perAppIncludeChildren": "Include programs it starts",
+  "perAppIncludeChildrenHelp": "Also routes the programs this app starts, and theirs, such as helpers, updaters and command-line tools. A program listed on its own keeps its own target. A browser the app starts is included too, but not one that was already running.",
+  "perAppWithChildren": "with the programs it starts",
+  "perAppPresets": "Presets",
+  "perAppPresetSteam": "Steam and games",
+  "perAppPresetBrowsers": "Browsers",
+  "perAppPresetAdded": "Added",
+  "perAppPresetNotFound": "Not found",
+  "perAppPresetWithChildren": "With the programs it starts",
+  "perAppPresetsHelp": "A preset offers the apps the app list found, each with the rule this computer gives it. For an app it does not find, use Choose app file.",
+  "perAppAddPresetApps": "{count, plural, =1{Add 1 app} other{Add {count} apps}}",
+  "@perAppAddPresetApps": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "perAppConnectionStartedBy": "Started by {name}",
+  "@perAppConnectionStartedBy": {
+    "placeholders": {
+      "name": {
+        "type": "String"
       }
     }
   },
@@ -1539,5 +1584,71 @@
   "recordingEmpty": "Nothing is recorded yet. Turn on Record connection diagnostics, reproduce the problem, then export.",
   "recordingNotSaved": "The recording could not be saved. Choose a writable location and retry.",
   "recordingConnectionDiagnostics": "Recording connection diagnostics",
-  "markProblem": "Mark problem"
+  "markProblem": "Mark problem",
+  "perAppUnknownOwner": "Unidentified traffic",
+  "@perAppUnknownOwner": {
+    "description": "Per-app list entry for traffic whose app could not be identified (rule \"-1\")."
+  },
+  "perAppUnknownOwnerHelp": "Traffic without an app: WSL, virtual machines, closed connections",
+  "perAppRunningNow": "{count, plural, =1{1 program running} other{{count} programs running}}",
+  "@perAppRunningNow": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "perAppNotRunning": "Not running now",
+  "perAppWarningMissing": "Not found on this computer.",
+  "perAppWarningFolder": "This is a folder. A folder rule ends with a separator and matches the programs inside.",
+  "perAppWarningNotFolder": "This is a file, not a folder.",
+  "perAppWarningScript": "A script: its interpreter runs, not the script. Add the program it starts.",
+  "perAppWarningSymlink": "A link: the program runs as the file it points to.",
+  "perAppWarningCase": "The letter case differs from the file on disk, and rules compare it.",
+  "perAppWarningLauncher": "A launcher: it starts another program, which this rule does not match.",
+  "perAppWarningBundleName": "A bare name matches a program file, not an app bundle. Pick the app from the list.",
+  "perAppWarningVersioned": "Names one version of the app, so it stops matching after the next update.",
+  "perAppWarningUnknown": "This rule may not match any program.",
+  "perAppSuggestedRule": "Suggested rule: {rule}",
+  "@perAppSuggestedRule": {
+    "placeholders": {
+      "rule": {
+        "type": "String"
+      }
+    }
+  },
+  "perAppUseSuggested": "Use suggested rule",
+  "perAppConnections": "Recent connections",
+  "perAppConnectionsHelp": "Connections apps opened while Elarni is connected, newest first, with where each one went. It names the program behind an app's traffic, such as a helper or updater, so you can add it. Kept in memory until you disconnect.",
+  "perAppConnectionsDisconnected": "Connect to see which apps open connections and where they go.",
+  "perAppConnectionsOff": "Per-app routing is off, so apps are not named. Turn it on and save to see them.",
+  "perAppConnectionsEmpty": "No connections yet.",
+  "perAppConnectionsSearch": "Search apps and addresses",
+  "perAppConnectionNoApp": "App not looked up",
+  "perAppConnectionDirect": "Direct",
+  "perAppConnectionProxy": "Through a server",
+  "perAppConnectionBlocked": "Blocked",
+  "perAppConnectionDns": "DNS",
+  "perAppConnectionRouting": "Routing",
+  "perAppConnectionListed": "Per-app rule",
+  "perAppConnectionNotListed": "Not listed",
+  "perAppConnectionAdd": "Add to list",
+  "perAppConnectionAdded": "{name} added. Save changes to apply.",
+  "@perAppConnectionAdded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "perAppConnectionOpenedReset": "Open before Elarni connected · Closed, so the app reconnects through per-app routing",
+  "perAppConnectionOpenedKept": "Open before Elarni connected · Skips per-app routing until the app reconnects",
+  "perAppConnectionsRestart": "Restart {apps}: their connections opened before Elarni connected skip per-app routing until they reconnect.",
+  "@perAppConnectionsRestart": {
+    "placeholders": {
+      "apps": {
+        "type": "String"
+      }
+    }
+  }
 }

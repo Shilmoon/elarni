@@ -25,7 +25,6 @@ final class DesktopAutomation {
   bool _pathKnown = false;
   int _sleepTicks = 0;
   final Map<String, double> cooldown = {};
-  final Set<String> invalid = {};
   final Map<String, ({double score, double at, int epoch, String reference})>
   measurements = {};
   // Mobile whitelists pass Russian addresses only: set when a Russian-entry
@@ -243,9 +242,7 @@ final class DesktopAutomation {
   }
 
   List<String> round(List<String> nodes, String? current, double now) {
-    final eligible = nodes
-        .where((id) => !invalid.contains(id) && (cooldown[id] ?? 0) <= now)
-        .toList();
+    final eligible = nodes.where((id) => (cooldown[id] ?? 0) <= now).toList();
     final rest = eligible.where((id) => id != current).toList();
     final offset = rest.isEmpty ? 0 : rotation % rest.length;
     final result = [
@@ -322,12 +319,7 @@ final class DesktopAutomation {
   ) => policy == 'fixed'
       ? []
       : order
-            .where(
-              (id) =>
-                  id != current &&
-                  !invalid.contains(id) &&
-                  (cooldown[id] ?? 0) <= now,
-            )
+            .where((id) => id != current && (cooldown[id] ?? 0) <= now)
             .take(10)
             .toList();
 

@@ -1,26 +1,8 @@
 use hickory_proto::{
-    op::{Message, MessageType, ResponseCode},
-    rr::{
-        Name, RData, Record,
-        rdata::{A, AAAA},
-    },
+    op::{Message, ResponseCode},
+    rr::RData,
 };
-use std::{net::IpAddr, str::FromStr};
-
-pub fn build_dns_response(mut request: Message, domain: &str, ip: IpAddr, ttl: u32) -> Result<Message, String> {
-    let name = Name::from_str(domain).map_err(|e| e.to_string())?;
-    let record = match ip {
-        IpAddr::V4(ip) => Record::from_rdata(name.clone(), ttl, RData::A(A(ip))),
-        IpAddr::V6(ip) => Record::from_rdata(name, ttl, RData::AAAA(AAAA(ip))),
-    };
-
-    // We must indicate that this message is a response. Otherwise, implementations may not
-    // recognize it.
-    request.metadata.message_type = MessageType::Response;
-
-    request.add_answer(record);
-    Ok(request)
-}
+use std::net::IpAddr;
 
 pub fn remove_ipv6_entries(message: &mut Message) {
     message.answers.retain(|answer| !matches!(&answer.data, RData::AAAA(_)));

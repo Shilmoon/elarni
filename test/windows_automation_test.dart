@@ -217,7 +217,7 @@ void main() {
       policy.recoveryCandidates('orderedFallback', ['a', 'b', 'c'], 'a', 301),
       ['c'],
     );
-    policy.invalid.add('c');
+    policy.cooldown['c'] = 400;
     expect(
       policy.recoveryCandidates('orderedFallback', ['a', 'b', 'c'], 'a', 301),
       isEmpty,

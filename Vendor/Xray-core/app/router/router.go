@@ -3,11 +3,13 @@ package router
 import (
 	"context"
 	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/errors"
+	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/serial"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/dns"
@@ -28,6 +30,21 @@ type Router struct {
 	ohm        outbound.Manager
 	dispatcher routing.Dispatcher
 	mu         sync.Mutex
+	// Elarni: whether this router holds the TUN's socket-owner prefetch (net.HoldSocketOwnerPrefetch).
+	ownerPrefetch bool
+}
+
+// holdOwnerPrefetch keeps the socket-owner prefetch on while rules match processes. Holds r.mu.
+func (r *Router) holdOwnerPrefetch(rules []*Rule) {
+	want := slices.ContainsFunc(rules, func(rule *Rule) bool { return rule.matchesProcess })
+	if want != r.ownerPrefetch {
+		r.ownerPrefetch = want
+		if want {
+			net.HoldSocketOwnerPrefetch(1)
+		} else {
+			net.HoldSocketOwnerPrefetch(-1)
+		}
+	}
 }
 
 // Route is an implementation of routing.Route.
@@ -128,9 +145,10 @@ func (r *Router) ReloadRules(config *Config, shouldAppend bool) error {
 			return err
 		}
 		rr := &Rule{
-			Condition: cond,
-			Tag:       rule.GetTag(),
-			RuleTag:   rule.GetRuleTag(),
+			Condition:      cond,
+			Tag:            rule.GetTag(),
+			RuleTag:        rule.GetRuleTag(),
+			matchesProcess: len(rule.Process) > 0,
 		}
 		if rr.RuleTag != "" && existTags[rr.RuleTag] {
 			return errors.New("duplicate ruleTag ", rr.RuleTag)
@@ -155,6 +173,7 @@ func (r *Router) ReloadRules(config *Config, shouldAppend bool) error {
 
 	r.balancers.Store(&newBalancers)
 	r.rules.Store(&newRules)
+	r.holdOwnerPrefetch(newRules)
 	if !shouldAppend {
 		closeWebhooks(oldRules)
 	}
@@ -181,6 +200,7 @@ func (r *Router) RemoveRule(tag string) error {
 		}
 	}
 	r.rules.Store(&newRules)
+	r.holdOwnerPrefetch(newRules)
 	closeWebhooks(removed)
 	return nil
 }
@@ -261,6 +281,7 @@ func (r *Router) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	closeWebhooks(*r.rules.Load())
+	r.holdOwnerPrefetch(nil)
 	return nil
 }
 

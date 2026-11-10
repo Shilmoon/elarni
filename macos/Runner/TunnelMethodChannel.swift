@@ -30,6 +30,9 @@ final class TunnelMethodChannel {
   var automationRefreshPath = false
   var automationFailover = false
   var automationTimer: Task<Void, Never>?
+  // What the pending timers wait for: a call that changes nothing, such as a status poll, keeps the timer it found.
+  var automationTimerDue: (at: Double, epoch: UInt64)?
+  private var maintenanceTimerDue: Date?
   var automationWork: Task<Void, Never>?
   private var maintenanceTimer: Task<Void, Never>?
   private var maintenanceWork: Task<Void, Never>?
@@ -161,7 +164,7 @@ final class TunnelMethodChannel {
           let concurrentProbe = call.method == "pingNode" &&
             (call.arguments as? [String: Any])?["protocol"] as? String != "icmp"
           let readOnly = ["state", "subscriptions", "routingProfiles", "tunnelSettings", "inboundCredentials",
-                          "automationStatus", "runtimeMetrics", "readLogs", "systemInfo", "routeTable"].contains(call.method)
+                          "automationStatus", "runtimeMetrics", "readLogs", "readConnections", "systemInfo", "routeTable"].contains(call.method)
           try await self.commands.perform(intent: intent, concurrent: concurrentProbe, readOnly: readOnly) {
             if !["disconnect", "restoreCatalogBackup", "repairTunnel"].contains(call.method) { try await self.reconcileDisconnectedIntent() }
             switch call.method {
@@ -199,6 +202,14 @@ final class TunnelMethodChannel {
               }
             case "routeTable":
               result(try await Task.detached { try Self.routeTable() }.value)
+            case "checkProcessRules":
+              // The core counts running programs per per-app rule with its own matcher.
+              guard let rules = try Self.arguments(call)["rules"] as? [String] else {
+                throw RunnerTunnelError.invalidSettings
+              }
+              result(try await Task.detached {
+                try SubscriptionFeedFetcher.invoke("checkProcessRules", ["rules": rules])
+              }.value)
             case "updateTunnelSettings":
               let settings = try AppTunnelSettings(arguments: Self.arguments(call), base: self.settingsStore.current)
               let applied = try await self.apply(settings: settings)
@@ -507,6 +518,10 @@ final class TunnelMethodChannel {
             case "readLogs":
               let after = ((call.arguments as? [String: Any])?["after"] as? NSNumber)?.int64Value ?? 0
               result(try await self.readLogs(after: after))
+            case "readConnections":
+              let arguments = call.arguments as? [String: Any]
+              result(try await self.readConnections(epoch: (arguments?["epoch"] as? NSNumber)?.int64Value ?? 0,
+                                                    after: (arguments?["after"] as? NSNumber)?.int64Value ?? 0))
             case "saveLogs":
               try self.saveLogs((call.arguments as? [String: Any])?["content"] as? String)
               result([:])
@@ -749,6 +764,20 @@ final class TunnelMethodChannel {
     return value
   }
 
+  // The running extension's recent connections; none without a tunnel.
+  func readConnections(epoch: Int64, after: Int64) async throws -> [String: Any] {
+    guard let selected = try? await loadManager(), let session = selected.connection as? NETunnelProviderSession,
+          [.connected, .reasserting].contains(selected.connection.status) else {
+      return ["epoch": 0, "seq": 0, "connections": [Any]()]
+    }
+    let request = try JSONSerialization.data(withJSONObject: ["operation": "connections", "epoch": epoch, "after": max(after, 0)])
+    guard let response = try await sendProviderMessage(request, session: session),
+          let object = try JSONSerialization.jsonObject(with: response) as? [String: Any] else {
+      throw RunnerTunnelError.invalidState
+    }
+    return object
+  }
+
   @MainActor
   func saveLogs(_ content: String?) throws {
     guard let content, !content.isEmpty, content.utf8.count <= 4 * 1024 * 1024 else {
@@ -960,6 +989,11 @@ final class TunnelMethodChannel {
       let value: [String: Any] = ["runtime": settings.compilerRuntime,
         "backend": settings.xrayTunEnabled, "profileIP": settings.profilePreferredIP ?? "inherit"]
       return (try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]).base64EncodedString()) ?? ""
+    }
+    store.compileContext = { [weak self] in
+      guard let self else { return "" }
+      let settings = self.settingsStore.current
+      return "\(settings.socksPort) \(settings.inboundAuthEnabled) \(settings.inboundCredentialRef ?? "")"
     }
     store.compilePreview = { [weak self, weak store] outbound, routes, preference in
       guard let self, let store else { throw CancellationError() }
@@ -1184,11 +1218,16 @@ final class TunnelMethodChannel {
   @MainActor
   func scheduleMaintenance() {
     guard observesSystem else { return }
-    maintenanceTimer?.cancel(); maintenanceTimer = nil
     guard maintenanceWork == nil, !automation.sleeping, automation.online,
-          let store = try? subscriptionStore(), !store.runtimeReconciliationRequired else { return }
-    guard let due = [store.nextRefreshDate(), store.routing.nextManagedDate(), store.routing.nextGeofileDate()]
-      .compactMap({ $0 }).min() else { return }
+          let store = try? subscriptionStore(), !store.runtimeReconciliationRequired,
+          let due = [store.nextRefreshDate(), store.routing.nextManagedDate(), store.routing.nextGeofileDate()]
+            .compactMap({ $0 }).min() else {
+      maintenanceTimer?.cancel(); maintenanceTimer = nil
+      return
+    }
+    if let timer = maintenanceTimer, !timer.isCancelled, maintenanceTimerDue == due { return }
+    maintenanceTimer?.cancel()
+    maintenanceTimerDue = due
     let delay = max(0, due.timeIntervalSince(maintenanceNow()))
     let sleep = automationSleep
     maintenanceTimer = Task { @MainActor [weak self] in

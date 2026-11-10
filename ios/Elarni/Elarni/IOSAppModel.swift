@@ -501,7 +501,6 @@ final class IOSAppModel {
         try savePreferences(next)
       }
     }
-    reload()
   }
 
   func connect() async {

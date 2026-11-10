@@ -61,6 +61,9 @@ struct Segment {
     window: u16,
     syn: bool,
     fin: bool,
+    rst: bool,
+    /// The ACK flag; `ack` is the number, set or not.
+    acked: bool,
     len: usize,
     mss: Option<u16>,
     wscale: Option<u8>,
@@ -72,9 +75,11 @@ impl std::fmt::Debug for Segment {
         let (seq, ack, window, len) = (self.seq, self.ack, self.window, self.len);
         write!(
             f,
-            "seq {seq} ack {ack} win {window} len {len}{}{}",
+            "seq {seq} ack {ack} win {window} len {len}{}{}{}{}",
             if self.syn { " SYN" } else { "" },
-            if self.fin { " FIN" } else { "" }
+            if self.fin { " FIN" } else { "" },
+            if self.rst { " RST" } else { "" },
+            if self.acked { "" } else { " no ACK" }
         )
     }
 }
@@ -123,6 +128,8 @@ fn parse(packet: &[u8]) -> Option<Segment> {
         window: tcp.window_size(),
         syn: tcp.syn(),
         fin: tcp.fin(),
+        rst: tcp.rst(),
+        acked: tcp.ack(),
         len: tcp.payload().len(),
         mss,
         wscale,
@@ -445,7 +452,7 @@ async fn data_written_before_the_handshake_waits_for_it() {
         panic!("not TCP")
     };
     let (client, server) = ((CLIENT, 41000).into(), (SERVER, 443).into());
-    let mut stream = IpStackTcpStream::new(client, server, header, up, 1500, None, Default::default()).unwrap();
+    let mut stream = IpStackTcpStream::new(client, server, header, 0, up, 1500, None, Default::default()).unwrap();
     let early = tokio::time::timeout(Duration::ZERO, stream.write(b"banner")).await;
     let mut next = async || parse(&output.recv().await.unwrap().to_bytes().unwrap()).unwrap();
     let syn_ack = next().await;
@@ -741,7 +748,7 @@ fn direct_stream(destroyed: Option<tokio::sync::oneshot::Sender<()>>) -> (IpStac
         panic!("not TCP")
     };
     let (client, server) = ((CLIENT, 41000).into(), (SERVER, 443).into());
-    let stream = IpStackTcpStream::new(client, server, header, up, 1500, destroyed, Default::default()).unwrap();
+    let stream = IpStackTcpStream::new(client, server, header, 0, up, 1500, destroyed, Default::default()).unwrap();
     (stream, output)
 }
 
@@ -951,4 +958,97 @@ async fn a_packet_for_an_ended_session_starts_a_new_one() {
     drop(second);
     crate::remove_session(&mut sessions, removed.recv().await.unwrap());
     assert!(sessions.is_empty(), "an ended session stayed");
+}
+
+// A segment of a connection the stack does not have was reset at a random sequence number. A client whose
+// connection is established ignores a reset outside its window (RFC 9293 3.10.7.4) and kept retransmitting
+// until its own timeout; the reset belongs at the segment's ACK number (3.10.7.1).
+#[tokio::test(flavor = "current_thread")]
+async fn a_segment_of_an_unknown_connection_is_reset_where_the_client_expects_it() {
+    let (mut sessions, mut fragments) = (crate::SessionCollection::new(), crate::packet::FragmentReassembler::new());
+    let (remove, _removed) = unbounded_channel();
+    let (up, mut output) = unbounded_channel();
+    let (accept, mut accepted) = unbounded_channel();
+    let config = IpStackConfig::default();
+    let mut reset = async |bytes: Vec<u8>| {
+        let taken = crate::process_device_read(&bytes, &mut fragments, &mut sessions, &remove, &up, &config, &accept).await;
+        assert!(taken.is_err() && accepted.try_recv().is_err(), "the segment opened a session");
+        parse(&output.try_recv().expect("no reply").to_bytes().unwrap()).unwrap()
+    };
+    let push = Flags {
+        psh: true,
+        ..Flags::default()
+    };
+    let data = reset(client_packet(ISN, Some(777_777), push, 65535, &[], b"hello")).await;
+    assert!(data.rst && data.seq == 777_777, "{data:?}");
+    // Without an ACK to take the number from, the reset acknowledges the segment instead.
+    let fin = reset(client_packet(ISN, None, FIN, 65535, &[], b"hello")).await;
+    assert!(fin.rst && fin.acked && fin.seq == 0 && fin.ack == ISN + 5 + 1, "{fin:?}");
+    // A reset is never answered.
+    let rst = Flags {
+        rst: true,
+        ..Flags::default()
+    };
+    let bytes = client_packet(ISN, Some(777_777), rst, 0, &[], &[]);
+    let taken = crate::process_device_read(&bytes, &mut fragments, &mut sessions, &remove, &up, &config, &accept).await;
+    assert!(taken.is_err() && output.try_recv().is_err() && sessions.is_empty());
+}
+
+// A stream dropped while its connection was open sent nothing. tun2proxy drops one when the proxy refuses
+// the connection or the session limit is reached, after the SYN-ACK went out, so the client took itself for
+// connected and waited for a reply until its own timeout.
+#[tokio::test(flavor = "multi_thread")]
+async fn dropping_an_open_stream_resets_the_client() {
+    let (mut peer, stream) = connect(65535, &[]).await;
+    tokio::time::sleep(Duration::from_millis(50)).await; // the handshake's ACK reaches the stream
+    drop(stream);
+    let segments = peer.collect_until(Duration::from_secs(1), |s| s.rst).await;
+    assert!(
+        segments.last().is_some_and(|(_, s)| s.rst && s.seq == peer.server_seq),
+        "no reset at the next sequence number: {segments:?}"
+    );
+    // What the client sends afterwards meets no connection and is reset at its own ACK number.
+    let push = Flags {
+        psh: true,
+        ..Flags::default()
+    };
+    peer.send(0, peer.server_seq, push, 65535, b"hello");
+    let segments = peer.collect_until(Duration::from_secs(1), |s| s.rst).await;
+    assert!(
+        segments.last().is_some_and(|(_, s)| s.rst && s.seq == peer.server_seq),
+        "later data was not reset: {segments:?}"
+    );
+}
+
+// The same before the client's ACK of the SYN-ACK arrived.
+#[tokio::test(flavor = "current_thread")]
+async fn dropping_a_stream_during_the_handshake_resets_the_client() {
+    let (stream, mut output) = direct_stream(None);
+    let syn_ack = parse(&output.recv().await.unwrap().to_bytes().unwrap()).unwrap();
+    drop(stream);
+    let reset = tokio::time::timeout(Duration::from_secs(1), output.recv())
+        .await
+        .expect("nothing sent")
+        .expect("nothing sent");
+    let reset = parse(&reset.to_bytes().unwrap()).unwrap();
+    assert!(reset.rst && reset.seq == syn_ack.seq.wrapping_add(1), "{reset:?}");
+}
+
+// A connection both sides closed is dropped without a reset.
+#[tokio::test(flavor = "multi_thread")]
+async fn dropping_a_closed_stream_sends_no_reset() {
+    let (mut peer, read, shutdown) = close_from_the_app_first(b"").await;
+    tokio::time::timeout(Duration::from_secs(1), read)
+        .await
+        .expect("read hung")
+        .unwrap()
+        .unwrap();
+    // The shutdown returns once the connection has ended; both halves of the stream are dropped by then.
+    tokio::time::timeout(Duration::from_secs(4), shutdown)
+        .await
+        .expect("shutdown hung")
+        .unwrap()
+        .unwrap();
+    let segments = peer.collect(Duration::from_millis(200)).await;
+    assert!(segments.iter().all(|(_, s)| !s.rst), "{segments:?}");
 }

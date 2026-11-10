@@ -1177,6 +1177,47 @@ rules:
     expect(await revision(), isNot(second));
   });
 
+  // What a direct test dials is kept for a configuration revision.
+  test('a direct TCP test follows an edit of the server port', () async {
+    await prepare();
+    final node = (await backend.control.subscriptions())
+        .subscriptions
+        .single
+        .nodes
+        .single;
+    Future<PingResult> direct() => backend.control.pingNode(
+      node.id,
+      protocol: 'tcp',
+      method: 'GET',
+      mode: 'default',
+      timeout: 5,
+      url: '',
+    );
+    expect((await direct()).status, 'success');
+    final text = await backend.control.nodeConfig(node.id);
+    final unused = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final closed = unused.port;
+    await unused.close();
+    final port = Uri.parse(profile).port;
+    expect(text, contains('$port'));
+    await backend.control.updateNodeConfig(
+      node.id,
+      text.replaceAll('$port', '$closed'),
+    );
+    await expectLater(
+      direct(),
+      throwsA(
+        isA<PlatformException>().having(
+          (error) => error.code,
+          'code',
+          'ping_failed',
+        ),
+      ),
+    );
+    await backend.control.updateNodeConfig(node.id, text);
+    expect((await direct()).status, 'success');
+  });
+
   test(
     'a server config edit validates, applies live and stays hidden where the provider hides it',
     () async {
@@ -3427,11 +3468,36 @@ for line in sys.stdin:
       expect(metrics['metricsAvailable'], true);
       expect(catalogMap(metrics['counters'])['uplinkBytes'], greaterThan(0));
       expect(catalogMap(metrics['counters'])['downlinkBytes'], greaterThan(0));
+      // The connections view gets the core's routing decisions as events.
+      RecentConnection? routed;
+      var recent = const RecentConnections(0, 0, []);
+      for (var i = 0; i < 50 && routed == null; i++) {
+        recent = await backend.control.readConnections();
+        routed = recent.connections
+            .where((c) => c.inbound == 'elarni-socks' && c.port == target.port)
+            .firstOrNull;
+        if (routed == null) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+      }
+      expect(recent.epoch, isNot(0));
+      expect(routed, isNotNull, reason: '${recent.connections}');
+      expect(routed!.host, '127.0.0.1');
+      expect(routed.network, 'tcp');
+      expect(routed.kind, isNot('routing'));
+      // No per-app rule asks for the app of a listener's connection.
+      expect(routed.owner, '');
+      final later = await backend.control.readConnections(
+        epoch: recent.epoch,
+        after: recent.seq,
+      );
+      expect(later.connections.map((c) => c.key), isNot(contains(routed.key)));
       await backend.control.disconnect();
       expect(
         (await backend.control.runtimeMetrics())['metricsAvailable'],
         false,
       );
+      expect((await backend.control.readConnections()).epoch, 0);
       await expectClosed(settings.socksPort);
     },
   );
@@ -5353,6 +5419,23 @@ for line in sys.stdin:
     } finally {
       await feed.close(force: true);
     }
+  });
+
+  // The per-app editor asks the core which rules match running programs: the
+  // core that answers is one, and a rule for a missing file says so.
+  test('per-app rule checks count running programs with the core', () async {
+    final missing =
+        '${Directory.systemTemp.path}${Platform.pathSeparator}elarni-never-running';
+    final checks = await backend.control.checkProcessRules([corePath, missing]);
+    expect(checks.listed, isTrue);
+    expect(checks.rules[corePath]!.running, greaterThan(0));
+    expect(checks.rules[corePath]!.warnings, isEmpty);
+    expect(checks.rules[missing]!.running, 0);
+    expect(checks.rules[missing]!.warnings.single.$1, 'missing');
+    await expectLater(
+      backend.control.checkProcessRules(['']),
+      throwsA(isA<PlatformException>()),
+    );
   });
 
   test(

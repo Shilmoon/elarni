@@ -463,6 +463,7 @@
     <string name="other_apps">Other apps</string>
     <string name="traffic">Traffic</string>
     <string name="local_proxy_2">Local proxy…</string>
+    <string name="app_not_installed">Not installed on this device, so this rule matches nothing.</string>
     <string name="selected_apps">Selected apps · %1$s</string>
     <string name="loading_app_list">Loading app list…</string>
     <string name="search_installed_apps">Search installed apps</string>
@@ -705,4 +706,19 @@
         <item quantity="one">Updated %d day ago</item>
         <item quantity="other">Updated %d days ago</item>
     </plurals>
+    <string name="recent_connections">Recent connections</string>
+    <string name="recent_connections_help">Connections apps opened while Elarni is connected, newest first, with where each one went. Kept in memory until you disconnect.</string>
+    <string name="connect_to_see_connections">Connect to see which apps open connections and where they go.</string>
+    <string name="per_app_off_connections">Per-app routing is off, so apps are not named. Turn it on and save to see them.</string>
+    <string name="no_connections_yet">No connections yet.</string>
+    <string name="app_not_looked_up">App not looked up</string>
+    <string name="unidentified_traffic">Unidentified traffic</string>
+    <string name="connection_uid">UID %1$s</string>
+    <string name="connection_through_server">Through a server</string>
+    <string name="connection_blocked">Blocked</string>
+    <string name="connection_dns">DNS</string>
+    <string name="connection_routing">Routing</string>
+    <string name="connection_per_app_rule">Per-app rule</string>
+    <string name="connection_not_listed">Not listed</string>
+    <string name="add_to_list">Add to list</string>
 </resources>

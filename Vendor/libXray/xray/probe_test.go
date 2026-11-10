@@ -34,7 +34,7 @@ func TestProbeCleanupHoldsNewProbesOnlyWhileItRuns(t *testing.T) {
 func TestBusyProbeReportsItsOwnCode(t *testing.T) {
 	probeQuarantine.Add(1)
 	defer probeQuarantine.Add(-1)
-	_, diagnostic, err := PingJSONWithDiagnostics("{}", 1, "https://example.com/", "", "GET", "default", "")
+	_, diagnostic, err := PingJSONWithPreparation(context.Background(), "{}", 1, "https://example.com/", "", "GET", "default", "", nil)
 	if err == nil || err.Error() != "probe_busy" || diagnostic.Code != "probe_busy" {
 		t.Fatalf("busy probe reported %v / %q", err, diagnostic.Code)
 	}

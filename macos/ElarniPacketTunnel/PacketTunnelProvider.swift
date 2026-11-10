@@ -175,6 +175,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         completionHandler?(try? JSONSerialization.data(withJSONObject: lines ?? [:]))
         return
       }
+      if messageData.count <= 256,
+         let request = try? JSONSerialization.jsonObject(with: messageData) as? [String: Any],
+         request["operation"] as? String == "connections" {
+        // The connections view: recent routing decisions with the app per-app routing found.
+        let list = try? NativeXrayCore.invokeObject(method: "readConnections", payload: [
+          "epoch": (request["epoch"] as? NSNumber)?.int64Value ?? 0,
+          "after": (request["after"] as? NSNumber)?.uint64Value ?? 0,
+        ])
+        completionHandler?(try? JSONSerialization.data(withJSONObject: list ?? [:]))
+        return
+      }
       if messageData.count <= 1024,
          let request = try? JSONSerialization.jsonObject(with: messageData) as? [String: Any],
          request["operation"] as? String == "prepareStop" {
@@ -643,6 +654,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       IOSConnectionAlerts.connected()
 #endif
       completionHandler(nil)
+#if os(macOS)
+      // Listed apps that were running keep their open connections outside the tunnel.
+      Task { [xray] in await xray.moveOpenedConnections() }
+#endif
     } catch {
       runtime.startupFinished(generation)
       ProviderBoundaryEvidence.finalFailure(attempt: attempt)
@@ -784,6 +799,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       _ = runtime.launchMonitor(generation: generation) { [weak self] in
         await self?.runMonitor(generation: generation, attempt: attempt)
       }
+#if os(macOS)
+      // A new core starts a new connections list.
+      Task { [xray] in await xray.moveOpenedConnections() }
+#endif
       return "switched"
     } catch {
       guard lifecycle.isActive(generation), !Task.isCancelled else { return "cancelled" }

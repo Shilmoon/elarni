@@ -37,22 +37,38 @@ class AndroidUIE2E {
         // after text input/recreation otherwise moves its touch coordinates.
         // Compose dialogs own a separate window, so the Activity token cannot
         // dismiss their IME. Native Back dismisses it without closing the dialog.
-        if (ui.onAllNodes(isDialog()).fetchSemanticsNodes().isNotEmpty() &&
-            ui.activity.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true) {
-            InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
-        }
+        fun imeVisible() = ui.activity.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true
         ui.runOnUiThread {
             val focus = ui.activity.currentFocus ?: ui.activity.window.decorView
             ui.activity.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
                 .hideSoftInputFromWindow(focus.windowToken, 0)
             focus.clearFocus()
         }
-        ui.waitUntil(5000) { ui.activity.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) != true }
+        // A dialog's IME can still be animating in when this starts, so Back goes out whenever it shows.
+        // Its hide animation is far shorter than a second; one Back per second never closes the dialog.
+        var back = 0L
+        ui.waitUntil(5000) {
+            val visible = imeVisible()
+            if (visible && android.os.SystemClock.uptimeMillis() - back >= 1000 && ui.onAllNodes(isDialog()).fetchSemanticsNodes().isNotEmpty()) {
+                back = android.os.SystemClock.uptimeMillis()
+                InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            }
+            !visible
+        }
     }
     private fun click(text: String) {
         dismissKeyboard()
-        val match = hasText(text) and hasClickAction()
-        if (ui.onAllNodes(match).fetchSemanticsNodes().isEmpty()) ui.onNode(hasScrollToIndexAction()).performScrollToNode(match)
+        // A disabled control keeps its click action but ignores the tap: editors disable theirs while the
+        // repository is busy, as the per-app editor is while it loads the installed apps.
+        val match = hasText(text) and hasClickAction() and isEnabled()
+        // A menu composes its items a frame or more after the click that opened it: look again before
+        // scrolling the list for a node that is not there yet.
+        try {
+            ui.waitUntil(5000) {
+                ui.onAllNodes(match).fetchSemanticsNodes().isNotEmpty() ||
+                    runCatching { ui.onNode(hasScrollToIndexAction()).performScrollToNode(match) }.isSuccess
+            }
+        } catch (error: ComposeTimeoutException) { throw AssertionError("No enabled clickable \"$text\" on screen or in its list", error) }
         if (ui.onAllNodes(match and hasAnyAncestor(hasScrollAction())).fetchSemanticsNodes().isNotEmpty()) ui.onNode(match).performScrollTo()
         ui.waitForIdle()
         ui.onNode(match).assertIsDisplayed().performClick()
@@ -609,6 +625,8 @@ class AndroidUIE2E {
                             while (!input.readLine().isNullOrEmpty()) { }
                             if (request.contains("/stall")) {
                                 stalled.countDown()
+                                // Held past the arrival window below, so no stalled probe ends before Cancel.
+                                it.soTimeout = 20_000
                                 it.getInputStream().read()
                                 return@respond
                             }
@@ -653,10 +671,12 @@ class AndroidUIE2E {
                 capture("parallel-ping-light")
                 call("settings", obj("settings" to obj("theme" to "dark")))
                 capture("parallel-ping-dark")
-                call("settings", obj("settings" to obj("probeURL" to "http://127.0.0.1:${origin.localPort}/stall")))
+                call("settings", obj("settings" to obj("probeURL" to "http://127.0.0.1:${origin.localPort}/stall", "probeTimeout" to 15)))
                 val completed = repo.state.value.pings.mapValues { it.value.toString() }
                 ui.runOnUiThread { ui.activity.testServers(snapshot().nodes.map { it.string("id") }) }
-                assertTrue("All stalled probes must start together", stalled.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                // Stalled probes end only at their 15 s timeout, so all 26 arriving within 10 s proves they
+                // run together; the loaded CI emulator took over 3 s to start them.
+                assertTrue("All stalled probes must start together: ${26 - stalled.count} arrived", stalled.await(10, java.util.concurrent.TimeUnit.SECONDS))
                 val cancelledAt = System.nanoTime()
                 repo.cancel()
                 ui.waitUntil(2000) { !repo.state.value.busy }
@@ -711,6 +731,58 @@ class AndroidUIE2E {
         click("Per-app routing")
         click("Only listed apps"); click("Off"); click("Cancel")
         assertEquals("proxyOnly", snapshot().settings.string("perAppMode"))
+    }
+
+    // A listed package that is not installed matched nothing and was hidden; it is listed so it can be removed.
+    @Test fun perAppListsSavedPackagesThatAreNotInstalled() {
+        val installed = call("apps").objects("apps").first().string("package")
+        val missing = "com.example.elarni.notinstalled"
+        call("settings", obj("settings" to obj("perAppMode" to "bypass", "perAppProcesses" to JSONArray(listOf(installed, missing)), "xrayTunEnabled" to true)))
+        ui.onNode(hasText("Settings") and hasClickAction()).performClick()
+        click("Apps & routes")
+        click("Per-app routing")
+        val list = ui.onNodeWithTag("per-app-list")
+        ui.waitUntil(10_000) { ui.onAllNodesWithText("Selected apps · 2").fetchSemanticsNodes().isNotEmpty() }
+        list.performScrollToNode(hasTestTag("per-app-missing-$missing"))
+        ui.onNodeWithText("Not installed on this device, so this rule matches nothing.").assertIsDisplayed()
+        ui.onNodeWithTag("per-app-missing-$missing").performClick()
+        ui.waitUntil(10_000) { ui.onAllNodesWithText("Selected apps · 1").fetchSemanticsNodes().isNotEmpty() }
+        click("Save changes")
+        ui.waitUntil(10_000) { snapshot().settings.strings("perAppProcesses") == listOf(installed) }
+    }
+
+    // The list reads this process's core; without the VPN its lookup names no owner ("-1").
+    @Test fun perAppConnectionsListTheCoresRecentConnections() {
+        call("settings", obj("settings" to obj("perAppMode" to "bypass", "perAppProcesses" to JSONArray(listOf(call("apps").objects("apps").first().string("package"))), "xrayTunEnabled" to true)))
+        ui.onNode(hasText("Settings") and hasClickAction()).performClick()
+        click("Apps & routes")
+        click("Per-app routing")
+        ui.onNodeWithTag("per-app-connections").performScrollTo().performClick()
+        ui.waitUntil(10_000) { ui.onAllNodesWithTag("per-app-connections-disconnected").fetchSemanticsNodes().isNotEmpty() }
+        ui.onNodeWithTag("per-app-connections-done").performClick()
+        java.net.ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1")).use { echo ->
+            kotlin.concurrent.thread { runCatching { echo.accept().use { it.getOutputStream().write(it.getInputStream().read()) } } }
+            val inbound = java.net.ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1")).use { it.localPort }
+            val config = obj(
+                "inbounds" to JSONArray(listOf(obj("tag" to "elarni-tun", "listen" to "127.0.0.1", "port" to inbound, "protocol" to "dokodemo-door", "settings" to obj("network" to "tcp")))),
+                "outbounds" to JSONArray(listOf(obj("tag" to "elarni-direct", "protocol" to "freedom", "settings" to obj("redirect" to "127.0.0.1:${echo.localPort}")))),
+                "routing" to obj("rules" to JSONArray(listOf(obj("type" to "field", "inboundTag" to JSONArray(listOf("elarni-tun")), "process" to JSONArray(listOf("-1")),
+                    "outboundTag" to "elarni-direct", "ruleTag" to "elarni-per-app-listed")))))
+            Native.call("runXrayFromJson", obj("configJSON" to config.toString()))
+            try {
+                java.net.Socket("127.0.0.1", inbound).use { client ->
+                    client.soTimeout = 5000
+                    client.getOutputStream().write(7)
+                    assertEquals(7, client.getInputStream().read())
+                }
+                ui.onNodeWithTag("per-app-connections").performScrollTo().performClick()
+                ui.waitUntil(10_000) { ui.onAllNodesWithTag("per-app-connections-list").fetchSemanticsNodes().isNotEmpty() }
+                ui.onNodeWithText("Unidentified traffic").assertIsDisplayed()
+                ui.onNodeWithText("Direct · Per-app rule").assertIsDisplayed()
+                ui.onNodeWithText("127.0.0.1:$inbound · TCP", substring = true).assertIsDisplayed()
+                ui.onNodeWithTag("per-app-connections-done").performClick()
+            } finally { Native.call("stopXray") }
+        }
     }
 
     @Test fun perAppEachAppTakesItsOwnTargetAndOtherAppsKeepTheMode() {

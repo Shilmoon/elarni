@@ -214,7 +214,6 @@ fn ingress_overflow_drops_the_packet_and_keeps_the_bridge_running() {
         counters: Arc::new(Counters::default()),
         thread: Mutex::new(None),
         max_packet_bytes: 1280,
-        virtual_dns_metrics: Arc::new(VirtualDnsMetrics::default()),
         session_metrics: Arc::new(tun2proxy::SessionMetrics::default()),
     };
     let bytes = packet(6, 8);
@@ -268,7 +267,6 @@ fn stop_joins_worker_even_after_it_publishes_stopped() {
         counters: Arc::new(Counters::default()),
         thread: Mutex::new(Some(worker)),
         max_packet_bytes: 1280,
-        virtual_dns_metrics: Arc::new(VirtualDnsMetrics::default()),
         session_metrics: Arc::new(tun2proxy::SessionMetrics::default()),
     };
     let finish = thread::spawn(move || {
@@ -899,7 +897,6 @@ fn held_bridge(
         counters: Arc::new(Counters::default()),
         thread: Mutex::new(None),
         max_packet_bytes: 1280,
-        virtual_dns_metrics: Arc::new(VirtualDnsMetrics::default()),
         session_metrics: Arc::new(tun2proxy::SessionMetrics::default()),
     }))
 }

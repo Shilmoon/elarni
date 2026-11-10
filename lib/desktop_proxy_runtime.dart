@@ -205,7 +205,10 @@ extension _ProxyRuntime on DesktopProxy {
       'method': method,
       'payload': {...payload, if (method == 'runVPN') 'reuseSession': true},
     });
-    if (utf8.encode(request).length > 16 * 1024 * 1024)
+    // UTF-8 takes at most three bytes for a UTF-16 unit, so only a request
+    // that could be too large is encoded to be measured.
+    const limit = 16 * 1024 * 1024;
+    if (request.length * 3 > limit && utf8.encode(request).length > limit)
       throw desktopError('request_too_large');
     final runtime = {'runXrayFromJson', 'runVPN'}.contains(method),
         lease = method == 'acquireCatalog',
@@ -265,6 +268,7 @@ extension _ProxyRuntime on DesktopProxy {
         _metricsProcess = process;
         _latestMetrics = {};
         _metricsAt = null;
+        _connections.clear();
       }
       if (session) {
         // A session whose output ended answers nothing more; its exit clears it.
@@ -272,24 +276,24 @@ extension _ProxyRuntime on DesktopProxy {
           throw desktopError('native_unavailable');
         _vpnReplyProcess = process;
       }
-      final response =
-          (lease || leased
-                  ? _readLine(_leaseOutput!)
-                  : reused
-                  ? (_vpnReply = Completer<CatalogMap>()).future
-                  : runtime
-                  ? _readRuntimeResponse(process, session: session)
-                  : _readResponse(process))
-              .timeout(
-                timeout ??
-                    (method == 'fetchSubscription'
-                        ? const Duration(seconds: 35)
-                        : method == 'prepareRoutingAssets'
-                        ? const Duration(seconds: 370)
-                        : method == 'runVPN'
-                        ? const Duration(seconds: 120)
-                        : _replyTimeout),
-              );
+      // Awake time: a connect that straddles a sleep must not run out at resume.
+      final response = awakeTimeout(
+        lease || leased
+            ? _readLine(_leaseOutput!)
+            : reused
+            ? (_vpnReply = Completer<CatalogMap>()).future
+            : runtime
+            ? _readRuntimeResponse(process, session: session)
+            : _readResponse(process),
+        timeout ??
+            (method == 'fetchSubscription'
+                ? const Duration(seconds: 35)
+                : method == 'prepareRoutingAssets'
+                ? const Duration(seconds: 370)
+                : method == 'runVPN'
+                ? const Duration(seconds: 120)
+                : _replyTimeout),
+      );
       // A lease that missed a reply can no longer pair replies with requests,
       // so it ends; the next storage request takes a new one.
       if (leased)
@@ -462,6 +466,7 @@ extension _ProxyRuntime on DesktopProxy {
             final event = value['event'];
             if (event != 'metrics' &&
                 event != 'logs' &&
+                event != 'connections' &&
                 event != 'stopped' &&
                 session) {
               final pending = _vpnReply;
@@ -486,6 +491,9 @@ extension _ProxyRuntime on DesktopProxy {
               }
             } else if (event == 'logs' && value['data'] is Map) {
               _appendLogs(catalogMap(value['data']));
+            } else if (event == 'connections' && value['data'] is Map) {
+              if (_metricsProcess == process)
+                _appendConnections(catalogMap(value['data']));
             } else {
               if (event != 'metrics' || value['data'] is! Map)
                 throw const FormatException();
@@ -570,6 +578,7 @@ extension _ProxyRuntime on DesktopProxy {
     }
     if (_process == launch) _process = null;
     _metricsProcess = null;
+    _connections.clear();
   }().whenComplete(() => _stopping = null);
 
   Future<void> _disconnect() async {

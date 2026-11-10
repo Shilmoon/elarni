@@ -271,7 +271,12 @@ class AndroidE2E {
             refresh.get(15, java.util.concurrent.TimeUnit.SECONDS)
             val deadline = System.currentTimeMillis() + 10_000
             while (manager.activeNotifications.any { it.id == 1 } && System.currentTimeMillis() < deadline) Thread.sleep(100)
-            assertTrue("Disconnect left the VPN service in the foreground", manager.activeNotifications.none { it.id == 1 })
+            // Seen twice in CI and not explained by the start and stop paths: name the service's state when it fails again.
+            if (manager.activeNotifications.any { it.id == 1 }) {
+                val services = shell("dumpsys activity services ${ui.activity.packageName}")
+                fail("Disconnect left the VPN service in the foreground: connection=${repo.state.value.connection} " +
+                    "error=${repo.state.value.error} refresh=${refresh.get()}\n$services")
+            }
             assertEquals("disconnected", repo.state.value.connection)
         }
     }
@@ -411,6 +416,24 @@ class AndroidE2E {
             val after = snapshot()
             assertEquals("My routing", after.route(after.assignments.string(restored)).string("name"))
         }
+    }
+    @Test fun e_newRoutingProfileKeepsTheOneThatHasItsName() {
+        // "New profile" opens every draft as "My routing", with the name field on another tab.
+        fun profile(blocked: String) = obj("Name" to "My routing", "RemoteDNSType" to "DoU", "RemoteDNSIP" to "1.1.1.1", "DomesticDNSType" to "DoU", "DomesticDNSIP" to "8.8.8.8",
+            "BlockSites" to JSONArray(listOf(blocked)))
+        call("saveRouting", obj("id" to "", "text" to profile("first.example").toString()))
+        call("saveRouting", obj("id" to "", "text" to profile("second.example").toString()))
+        val routes = snapshot().routes.sortedBy { it.string("name") }
+        assertEquals(listOf("My routing", "My routing 2"), routes.map { it.string("name") })
+        assertEquals(listOf("first.example"), routes[0].getJSONObject("profile").strings("BlockSites"))
+        assertEquals(listOf("second.example"), routes[1].getJSONObject("profile").strings("BlockSites"))
+        assertEquals("My routing 2", routes[1].getJSONObject("profile").getString("Name"))
+        // An edit keeps its profile, and a copy still takes a free name.
+        call("saveRouting", obj("id" to routes[0].getString("id"), "text" to profile("third.example").toString()))
+        call("duplicateRouting", obj("id" to routes[0].getString("id")))
+        val after = snapshot().routes
+        assertEquals(setOf("My routing", "My routing 2", "My routing copy"), after.map { it.string("name") }.toSet())
+        assertEquals(listOf("third.example"), after.single { it.string("id") == routes[0].getString("id") }.getJSONObject("profile").strings("BlockSites"))
     }
     @Test fun e_base64ProviderTitleDecodesInTheURLSafeAlphabet() {
         HTTPFixture().use { feed ->

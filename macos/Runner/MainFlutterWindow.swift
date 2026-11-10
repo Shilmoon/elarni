@@ -134,37 +134,15 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       let arguments = call.arguments as? [String: Any] ?? [:]
       switch call.method {
       case "routingApplications":
-        var applications: [String: [String: Any]] = [:]
-        for app in NSWorkspace.shared.runningApplications {
-          if let url = app.bundleURL ?? app.executableURL,
-             let entry = self.routingApplication(url, name: app.localizedName) {
-            applications[entry["process"] as! String] = entry
-          }
+        // The list reads every app's bundle and draws its icon, so it is made off the main thread.
+        let running = NSWorkspace.shared.runningApplications.compactMap { app in
+          (app.bundleURL ?? app.executableURL).map { (url: $0, name: app.localizedName) }
         }
-        // Application directories only; do not walk user documents or app contents.
-        for directory in FileManager.default.urls(for: .applicationDirectory, in: .allDomainsMask) {
-          let children = (try? FileManager.default.contentsOfDirectory(at: directory,
-            includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
-          for url in children {
-            if url.pathExtension == "app", let entry = self.routingApplication(url) {
-              applications[entry["process"] as! String] = entry
-            } else if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
-              for nested in (try? FileManager.default.contentsOfDirectory(at: url,
-                includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? [] where nested.pathExtension == "app" {
-                if let entry = self.routingApplication(nested) { applications[entry["process"] as! String] = entry }
-              }
-            }
-          }
+        let selected = arguments["processes"] as? [String] ?? []
+        DispatchQueue.global(qos: .userInitiated).async {
+          let applications = RoutingApplications.list(running: running, selected: selected)
+          DispatchQueue.main.async { result(applications) }
         }
-        if let selected = arguments["processes"] as? [String], selected.count <= 256 {
-          for path in selected where path.hasPrefix("/") && path.utf8.count <= 1024 {
-            if let entry = self.routingApplication(URL(fileURLWithPath: path)) {
-              let process = entry["process"] as! String
-              if applications[process] == nil { applications[process] = entry }
-            }
-          }
-        }
-        result(Array(applications.values))
       case "pickRoutingApplications":
         let panel = NSOpenPanel()
         panel.title = String(localized: "Choose applications or executables")
@@ -173,7 +151,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
         panel.treatsFilePackagesAsDirectories = false
         panel.directoryURL = FileManager.default.urls(for: .applicationDirectory, in: .localDomainMask).first
         guard panel.runModal() == .OK else { return result([]) }
-        let entries = panel.urls.compactMap { self.routingApplication($0) }
+        let entries = panel.urls.compactMap { RoutingApplications.entry($0) }
         guard entries.count == panel.urls.count, entries.count <= 256 else {
           return result(FlutterError(code: "invalid_applications", message: "Select up to 256 applications or executable files.", details: nil))
         }
@@ -217,34 +195,6 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     }
   }
 
-  private func routingApplication(_ url: URL, name: String? = nil) -> [String: Any]? {
-    let bundle = url.pathExtension == "app" ? Bundle(url: url) : nil
-    guard url.pathExtension == "app" ? bundle?.executableURL != nil :
-      ((try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true &&
-       FileManager.default.isExecutableFile(atPath: url.path)) else { return nil }
-    let path = url.path + (bundle == nil ? "" : "/")
-    guard path.utf8.count <= 1024, !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
-    var entry: [String: Any] = ["name": name ?? (bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
-      ?? url.deletingPathExtension().lastPathComponent, "process": path]
-    // Fixed-size native artwork; never include icons in saved routing profiles.
-    let image = NSWorkspace.shared.icon(forFile: url.path)
-    if let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64,
-      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-      colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
-      let context = NSGraphicsContext(bitmapImageRep: bitmap) {
-      NSGraphicsContext.saveGraphicsState()
-      NSGraphicsContext.current = context
-      context.cgContext.clear(CGRect(x: 0, y: 0, width: 64, height: 64))
-      image.draw(in: NSRect(x: 0, y: 0, width: 64, height: 64), from: .zero,
-        operation: .copy, fraction: 1)
-      NSGraphicsContext.restoreGraphicsState()
-      if let png = bitmap.representation(using: .png, properties: [:]), png.count <= 65536 {
-        entry["iconPng"] = FlutterStandardTypedData(bytes: png)
-      }
-    }
-    return entry
-  }
-
   @objc private func desktopShow() {
     deminiaturize(nil); makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
   }
@@ -260,4 +210,85 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
   }
   @objc private func desktopConnect() { desktopChannel?.invokeMethod("action", arguments: "connect") }
   @objc private func desktopDisconnect() { desktopChannel?.invokeMethod("action", arguments: "disconnect") }
+}
+
+/// The apps a per-app rule can name. Not bound to the main thread: the list is made on a background queue.
+private enum RoutingApplications {
+  /// Running apps, the apps of the application directories and the saved rules, by rule.
+  static func list(running: [(url: URL, name: String?)], selected: [String]) -> [[String: Any]] {
+    var applications: [String: [String: Any]] = [:]
+    for app in running {
+      if let entry = entry(app.url, name: app.name) { applications[entry["process"] as! String] = entry }
+    }
+    // Application directories only; do not walk user documents or app contents.
+    for directory in FileManager.default.urls(for: .applicationDirectory, in: .allDomainsMask) {
+      let children = (try? FileManager.default.contentsOfDirectory(at: directory,
+        includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
+      for url in children {
+        if url.pathExtension == "app", let entry = entry(url) {
+          applications[entry["process"] as! String] = entry
+        } else if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+          for nested in (try? FileManager.default.contentsOfDirectory(at: url,
+            includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? [] where nested.pathExtension == "app" {
+            if let entry = entry(nested) { applications[entry["process"] as! String] = entry }
+          }
+        }
+      }
+    }
+    if selected.count <= 256 {
+      for path in selected where path.hasPrefix("/") && path.utf8.count <= 1024 {
+        if applications[path] == nil, let suggested = RoutingApplicationRule.suggestion(forSaved: path) {
+          let name = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+          applications[path] = ["name": name, "process": path, "suggested": suggested]
+          continue
+        }
+        if let entry = entry(URL(fileURLWithPath: path), followsUpdates: false) {
+          let process = entry["process"] as! String
+          if applications[process] == nil { applications[process] = entry }
+        }
+      }
+    }
+    return Array(applications.values)
+  }
+
+  // Running, installed and chosen apps get a rule that follows updates; a saved rule is listed as saved.
+  static func entry(_ url: URL, name: String? = nil, followsUpdates: Bool = true) -> [String: Any]? {
+    let bundle = url.pathExtension == "app" ? Bundle(url: url) : nil
+    guard url.pathExtension == "app" ? bundle?.executableURL != nil :
+      ((try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true &&
+       FileManager.default.isExecutableFile(atPath: url.path)) else { return nil }
+    let path = (followsUpdates ? RoutingApplicationRule.versionsFolder(of: url.path) : nil)
+      ?? url.path + (bundle == nil ? "" : "/")
+    guard path.utf8.count <= 1024, !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
+    var entry: [String: Any] = ["name": name ?? (bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+      ?? url.deletingPathExtension().lastPathComponent, "process": path]
+    if let png = icon(url) { entry["iconPng"] = FlutterStandardTypedData(bytes: png) }
+    return entry
+  }
+
+  // An app's icon is drawn once and kept until the app changes: the tab asks for the whole list each time it opens.
+  private static let icons: NSCache<NSString, NSData> = {
+    let cache = NSCache<NSString, NSData>(); cache.countLimit = 2048; return cache
+  }()
+
+  private static func icon(_ url: URL) -> Data? {
+    let changed = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+    let key = "\(url.path)\n\(changed?.timeIntervalSince1970 ?? 0)" as NSString
+    if let kept = icons.object(forKey: key) { return kept as Data }
+    // Fixed-size native artwork; never include icons in saved routing profiles.
+    let image = NSWorkspace.shared.icon(forFile: url.path)
+    guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64,
+      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+      colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+      let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = context
+    context.cgContext.clear(CGRect(x: 0, y: 0, width: 64, height: 64))
+    image.draw(in: NSRect(x: 0, y: 0, width: 64, height: 64), from: .zero,
+      operation: .copy, fraction: 1)
+    NSGraphicsContext.restoreGraphicsState()
+    guard let png = bitmap.representation(using: .png, properties: [:]), png.count <= 65536 else { return nil }
+    icons.setObject(png as NSData, forKey: key)
+    return png
+  }
 }

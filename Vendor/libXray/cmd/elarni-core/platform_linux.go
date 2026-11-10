@@ -146,9 +146,8 @@ func platformRequest(method string, payload json.RawMessage) (any, error, bool) 
 		if err != nil {
 			return nil, err, true
 		}
-		if err = installAssets(assets); err != nil {
-			return nil, err, true
-		}
+		// readAssets verified the files in this process.
+		useAssets(assets)
 		// A probe through the running local listener needs no bypass of the VPN. An
 		// isolated probe of another server brings its own listener and does.
 		var config struct {

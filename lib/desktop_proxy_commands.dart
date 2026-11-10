@@ -26,6 +26,13 @@ extension _ProxyCommands on DesktopProxy {
       if (url is! String || !isHttpsURL(url)) throw desktopError('invalid_url');
       return _platformRequest('openURL', {'url': url});
     }
+    if (method == 'checkProcessRules') {
+      // Rule checks read this computer's programs, not the catalog.
+      final rules = arguments?['rules'];
+      if (rules is! List || rules.any((rule) => rule is! String))
+        throw desktopError('invalid_rules');
+      return _native('checkProcessRules', {'rules': rules});
+    }
     final readOnly = {
       'state',
       'subscriptions',
@@ -34,6 +41,7 @@ extension _ProxyCommands on DesktopProxy {
       'automationStatus',
       'runtimeMetrics',
       'readLogs',
+      'readConnections',
       'nodeConfig',
       'inboundCredentials',
     }.contains(method);
@@ -116,12 +124,19 @@ extension _ProxyCommands on DesktopProxy {
         } on Object {
           // The page is still useful without the core's version.
         }
-        Object? vpnService;
-        if (Platform.isWindows) {
+        // The UI reloads on every backend event, so this one is asked again
+        // only after half a minute.
+        final known = _vpnService;
+        if (Platform.isWindows &&
+            (known == null || _clock.elapsedMilliseconds - known.at >= 30000)) {
           try {
-            vpnService = (await _native('vpnServiceStatus', {}))['enabled'];
+            _vpnService = (
+              enabled: (await _native('vpnServiceStatus', {}))['enabled'],
+              at: _clock.elapsedMilliseconds,
+            );
           } on Object {
             // The row then reads as off.
+            _vpnService = null;
           }
         }
         return {
@@ -129,14 +144,19 @@ extension _ProxyCommands on DesktopProxy {
           'os': Platform.operatingSystemVersion,
           'appVersion': ?desktopAppVersion,
           'coreVersion': ?_coreVersion,
-          'vpnService': ?vpnService,
+          'vpnService': ?_vpnService?.enabled,
         };
       case 'setVPNService':
         if (!Platform.isWindows) throw desktopError('unsupported_method');
+        _vpnService = null;
         // The consent prompt waits for the user.
         final service = await _native('setVPNService', {
           'enabled': args['enabled'] == true,
         }, timeout: const Duration(seconds: 90));
+        _vpnService = (
+          enabled: service['enabled'],
+          at: _clock.elapsedMilliseconds,
+        );
         return {'vpnService': service['enabled']};
       // Settings replace their system info with this reply.
       case 'setLaunchAtLogin':
@@ -179,6 +199,21 @@ extension _ProxyCommands on DesktopProxy {
               if ((line['seq']! as int) > after) line,
           ],
           'last': _logSeq,
+        };
+      case 'readConnections':
+        if (_state != 'connected')
+          return {'epoch': 0, 'seq': 0, 'connections': const <Object?>[]};
+        final epoch = args['epoch'] is int ? args['epoch']! as int : 0;
+        final after = epoch == _connectionsEpoch && args['after'] is int
+            ? args['after']! as int
+            : 0;
+        return {
+          'epoch': _connectionsEpoch,
+          'seq': _connections.isEmpty ? 0 : _connections.values.last['seq'],
+          'connections': [
+            for (final entry in _connections.values)
+              if ((entry['seq']! as int) > after) entry,
+          ],
         };
       case 'saveLogs':
         final content = args['content'];
@@ -807,6 +842,25 @@ extension _ProxyCommands on DesktopProxy {
       });
     }
     if (_logs.length > 1000) _logs.removeRange(0, _logs.length - 1000);
+  }
+
+  // The core's list, relayed by its tunnel owner on Windows and Linux.
+  void _appendConnections(CatalogMap data) {
+    final epoch = data['epoch'];
+    if (epoch is! int || epoch == 0) return;
+    if (epoch != _connectionsEpoch) {
+      _connectionsEpoch = epoch;
+      _connections.clear();
+    }
+    for (final item in data['connections'] as List? ?? const []) {
+      if (item is! Map || item['key'] is! int || item['seq'] is! int) continue;
+      final key = item['key'] as int;
+      _connections.remove(key);
+      _connections[key] = catalogMap(item);
+    }
+    while (_connections.length > 500) {
+      _connections.remove(_connections.keys.first);
+    }
   }
 
   CatalogMap _runtimeMetrics() => {

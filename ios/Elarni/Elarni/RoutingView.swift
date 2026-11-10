@@ -71,10 +71,12 @@ struct RoutingDetailView: View {
           }
           Button("Refresh all routing data") { model.launch { try await model.refreshAssets(profile) } }.disabled(model.busy)
         }
-        if !profile.managedSources.isEmpty {
+        // Reading the lists parses the profile's JSON, so the body reads them once.
+        let managedSources = profile.managedSources
+        if !managedSources.isEmpty {
           Section {
-            ForEach(profile.managedSources.indices, id: \.self) { index in
-              let source = profile.managedSources[index]
+            ForEach(managedSources.indices, id: \.self) { index in
+              let source = managedSources[index]
               VStack(alignment: .leading, spacing: 8) {
                 Text(URL(string: source["url"] as? String ?? "")?.host ?? String(localized: "Domain list")).font(.headline)
                 Text("\(Self.destinations[source["destination"] as? String ?? ""] ?? "") · \(source["matchMode"] as? String == "exact" ? String(localized: "Exact domains") : String(localized: "Including subdomains"))").font(.caption).foregroundStyle(AppPalette.secondary)
@@ -94,7 +96,7 @@ struct RoutingDetailView: View {
             }
             Button("Refresh all lists", systemImage: "arrow.clockwise") {
               model.launch {
-                for source in profile.managedSources {
+                for source in managedSources {
                   guard let id = source["id"] as? String else { throw IOSAppError.invalidSettings }
                   try await model.refreshManaged(profileID: profile.id, sourceID: id)
                 }
@@ -239,7 +241,7 @@ struct RoutingEditor: View {
       let text = try prettyJSON(saved)
       try await model.editRouting { store in
         if let profile { _ = try store.update(id: profile.id, content: text) }
-        else { _ = try store.importContent(text, selectedSubscriptionID: model.selected?.subscriptionID) }
+        else { _ = try store.importContent(text, selectedSubscriptionID: model.selected?.subscriptionID, asNew: true) }
       }
       dismiss()
     }

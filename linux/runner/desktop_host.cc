@@ -3,16 +3,20 @@
 #include <libayatana-appindicator/app-indicator.h>
 #include <gst/app/gstappsink.h>
 #include <gst/gst.h>
+#include <gio/gdesktopappinfo.h>
 #include <glib/gstdio.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/sysinfo.h>
 #include <sys/utsname.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -233,32 +237,210 @@ void camera_frame(DesktopHost* host, FlMethodCall* call) {
   gst_buffer_unmap(buffer, &map);
   gst_sample_unref(sample);
 }
-void add_app(FlValue* list, std::set<std::string>& seen, const char* name, const char* process, GIcon* icon = nullptr) {
-  g_autofree char* canonical = process ? realpath(process, nullptr) : nullptr;
-  process = canonical;
-  if (!process || !*process || strlen(process) > 1024 || !g_utf8_validate(process, -1, nullptr)
-      || !seen.insert(process).second || seen.size() > 4096) return;
-  auto* item = fl_value_new_map();
-  fl_value_set_string_take(item, "name", fl_value_new_string(name && *name ? name : process));
-  fl_value_set_string_take(item, "process", fl_value_new_string(process));
+bool version_name(const std::string& name) {
+  return !name.empty() && name.find_first_not_of("0123456789.") == std::string::npos && name.find('.') != std::string::npos &&
+         name.front() != '.' && name.back() != '.' && name.find("..") == std::string::npos;
+}
+// The rule for a running or listed executable, and the app's name when the rule is a folder. Snap
+// apps run from /snap/<name>/<revision>/, which each refresh replaces, so they match /snap/<name>/.
+// Apps that keep each version beside the previous one, such as Claude Code
+// (~/.local/share/claude/versions/<version>), match that folder of versions when it holds nothing
+// else: the nearest version among the file and its four parents.
+std::string application_rule(const std::string& path, std::string& name) {
+  if (path.compare(0, 6, "/snap/") == 0) {
+    const auto snap = path.find('/', 6);
+    const auto revision_end = snap == std::string::npos ? snap : path.find('/', snap + 1);
+    if (snap == std::string::npos || snap == 6 || revision_end == std::string::npos) return path;
+    auto revision = path.substr(snap + 1, revision_end - snap - 1);
+    if (!revision.empty() && revision[0] == 'x') revision.erase(0, 1);
+    if (revision.empty() || revision.find_first_not_of("0123456789") != std::string::npos) return path;
+    name = path.substr(6, snap - 6);
+    return path.substr(0, snap + 1);
+  }
+  size_t end = path.size();
+  for (int level = 0; level < 5 && end != std::string::npos && end > 0; ++level) {
+    const auto start = path.rfind('/', end - 1);
+    if (start == std::string::npos) return path;
+    if (!version_name(path.substr(start + 1, end - start - 1))) { end = start; continue; }
+    const auto root = path.substr(0, start);
+    // At least two folders deep, so a version never widens to /opt/.
+    if (std::count(root.begin(), root.end(), '/') < 2) return path;
+    GDir* folder = g_dir_open(root.c_str(), 0, nullptr);
+    if (!folder) return path;
+    bool versions = true;
+    while (const char* entry = g_dir_read_name(folder)) versions = versions && (entry[0] == '.' || version_name(entry));
+    g_dir_close(folder);
+    if (!versions) return path;
+    g_autofree char* base = g_path_get_basename(root.c_str());
+    g_autofree char* owner = g_path_get_dirname(root.c_str());
+    g_autofree char* owner_name = g_path_get_basename(owner);
+    name = strcmp(base, "versions") == 0 ? owner_name : base;
+    return root + "/";
+  }
+  return path;
+}
+// A small regular file, read without following a final link or waiting on a pipe: a process
+// controls what its root holds.
+std::string read_small(const std::string& path, size_t limit) {
+  const int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK | O_NOCTTY | O_CLOEXEC | O_NOFOLLOW);
+  if (fd < 0) return "";
+  std::string data;
+  struct stat info{};
+  if (fstat(fd, &info) == 0 && S_ISREG(info.st_mode)) {
+    char buffer[4096];
+    ssize_t count;
+    while (data.size() < limit && (count = read(fd, buffer, sizeof(buffer))) > 0) data.append(buffer, count);
+    if (data.size() > limit) data.resize(limit);
+  }
+  close(fd);
+  return data;
+}
+// Reverse-DNS names of letters, digits, "_" and "-", as Vendor/Xray-core/common/net checks them.
+bool flatpak_id(const std::string& id) {
+  if (id.empty() || id.size() > 255 || id.front() == '.' || id.back() == '.' || id.find("..") != std::string::npos ||
+      id.find('.') == std::string::npos)
+    return false;
+  return id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-") == std::string::npos;
+}
+// /proc; the host test uses a fake tree.
+std::string proc_root = "/proc";
+// A Flatpak app's processes run in its sandbox, from /app paths the host does not have. The core
+// names them as xdg-desktop-portal does: the [Application] name in the sandbox's /.flatpak-info.
+std::string flatpak_app(const char* pid) {
+  const auto info = read_small(proc_root + "/" + pid + "/root/.flatpak-info", 65536);
+  if (info.empty()) return "";
+  g_autoptr(GKeyFile) file = g_key_file_new();
+  if (!g_key_file_load_from_data(file, info.data(), info.size(), G_KEY_FILE_NONE, nullptr)) return "";
+  g_autofree char* id = g_key_file_get_string(file, "Application", "name", nullptr);
+  return id && flatpak_id(id) ? id : "";
+}
+// An AppImage runs from a mount that changes each start; its runtime sets APPIMAGE to the image
+// file and APPDIR to the mount, which must hold the program.
+std::string running_appimage(const char* pid, const std::string& program) {
+  const auto environment = read_small(proc_root + "/" + pid + "/environ", 1 << 20);
+  std::string image, mount;
+  for (size_t start = 0; start < environment.size();) {
+    auto end = environment.find('\0', start);
+    if (end == std::string::npos) end = environment.size();
+    const auto entry = environment.substr(start, end - start);
+    if (entry.compare(0, 9, "APPIMAGE=") == 0) image = entry.substr(9);
+    else if (entry.compare(0, 7, "APPDIR=") == 0) mount = entry.substr(7);
+    start = end + 1;
+  }
+  while (!mount.empty() && mount.back() == '/') mount.pop_back();
+  if (image.empty() || image[0] != '/' || mount.empty() || mount[0] != '/' ||
+      program.compare(0, mount.size() + 1, mount + "/") != 0)
+    return "";
+  return image;
+}
+// An AppImage file carries "AI" and its type, 1 or 2, at byte 8.
+bool appimage_file(const char* path) {
+  const auto head = read_small(path, 11);
+  return head.size() == 11 && head.compare(8, 2, "AI") == 0 && (head[10] == 1 || head[10] == 2);
+}
+// PNGs by icon, on the main thread. Every program without artwork has the same generic icon, and the
+// tab asks for the whole list each time it opens. A new icon theme starts over.
+std::map<std::string, std::string>& icon_pngs() {
+  static std::map<std::string, std::string> pngs;
+  static bool watching = false;
+  if (!watching && gdk_screen_get_default()) {
+    watching = true;
+    g_signal_connect(gtk_icon_theme_get_default(), "changed",
+        G_CALLBACK(+[](GtkIconTheme*, gpointer) { icon_pngs().clear(); }), nullptr);
+  }
+  return pngs;
+}
+void set_icon(FlValue* item, GIcon* icon, const char* path) {
   // Installed desktop entries provide their own artwork. For custom binaries,
   // use the file's native icon; failure simply leaves Flutter's app fallback.
-  g_autoptr(GFile) file = g_file_new_for_path(process);
-  g_autoptr(GFileInfo) file_info = icon ? nullptr : g_file_query_info(file,
+  g_autoptr(GFile) file = path ? g_file_new_for_path(path) : nullptr;
+  g_autoptr(GFileInfo) file_info = icon || !file ? nullptr : g_file_query_info(file,
       G_FILE_ATTRIBUTE_STANDARD_ICON, G_FILE_QUERY_INFO_NONE, nullptr, nullptr);
   if (!icon && file_info) icon = g_file_info_get_icon(file_info);
-  g_autoptr(GtkIconInfo) icon_info = icon && gdk_screen_get_default() ? gtk_icon_theme_lookup_by_gicon(
-      gtk_icon_theme_get_default(), icon, 64, GTK_ICON_LOOKUP_FORCE_SIZE) : nullptr;
-  g_autoptr(GdkPixbuf) pixbuf = icon_info ? gtk_icon_info_load_icon(icon_info, nullptr) : nullptr;
-  if (pixbuf) {
+  if (!icon || !gdk_screen_get_default()) return;
+  auto& pngs = icon_pngs();
+  g_autofree gchar* key = g_icon_to_string(icon);
+  auto kept = key ? pngs.find(key) : pngs.end();
+  if (kept == pngs.end()) {
+    std::string encoded;
+    g_autoptr(GtkIconInfo) icon_info = gtk_icon_theme_lookup_by_gicon(
+        gtk_icon_theme_get_default(), icon, 64, GTK_ICON_LOOKUP_FORCE_SIZE);
+    g_autoptr(GdkPixbuf) pixbuf = icon_info ? gtk_icon_info_load_icon(icon_info, nullptr) : nullptr;
     g_autofree gchar* png = nullptr;
     gsize length = 0;
-    if (gdk_pixbuf_save_to_buffer(pixbuf, &png, &length, "png", nullptr, nullptr) && length <= 65536) {
-      fl_value_set_string_take(item, "iconPng", fl_value_new_uint8_list(
-          reinterpret_cast<const uint8_t*>(png), length));
+    if (pixbuf && gdk_pixbuf_save_to_buffer(pixbuf, &png, &length, "png", nullptr, nullptr) && length <= 65536) {
+      encoded.assign(png, length);
     }
+    if (!key) {
+      if (!encoded.empty()) fl_value_set_string_take(item, "iconPng", fl_value_new_uint8_list(
+          reinterpret_cast<const uint8_t*>(encoded.data()), encoded.size()));
+      return;
+    }
+    if (pngs.size() >= 4096) pngs.clear();
+    // An icon that could not be drawn is kept too, as empty, and not tried again.
+    kept = pngs.emplace(key, std::move(encoded)).first;
   }
-  fl_value_append_take(list, item);
+  if (!kept->second.empty()) {
+    fl_value_set_string_take(item, "iconPng", fl_value_new_uint8_list(
+        reinterpret_cast<const uint8_t*>(kept->second.data()), kept->second.size()));
+  }
+}
+// An app for the list. The list is gathered off the main thread; its icons are made on it, as
+// GTK's icon theme needs.
+struct ListedApp {
+  std::string name, process, suggested, icon_path;
+  std::shared_ptr<GIcon> icon;
+};
+using AppList = std::vector<ListedApp>;
+std::shared_ptr<GIcon> icon_ref(GIcon* icon) {
+  return {icon ? G_ICON(g_object_ref(icon)) : nullptr, [](GIcon* value) { if (value) g_object_unref(value); }};
+}
+// On the main thread.
+FlValue* app_value(const ListedApp& app) {
+  auto* item = fl_value_new_map();
+  fl_value_set_string_take(item, "name", fl_value_new_string(app.name.c_str()));
+  fl_value_set_string_take(item, "process", fl_value_new_string(app.process.c_str()));
+  if (!app.suggested.empty()) fl_value_set_string_take(item, "suggested", fl_value_new_string(app.suggested.c_str()));
+  if (app.suggested.empty()) set_icon(item, app.icon.get(), app.icon_path.empty() ? nullptr : app.icon_path.c_str());
+  return item;
+}
+// An app the core names by more than a path: "flatpak:<app id>" or "appimage:<file>".
+void add_rule(AppList& list, std::set<std::string>& seen, const char* name, const std::string& rule, GIcon* icon,
+              const char* icon_path = nullptr) {
+  if (rule.size() > 1024 || !g_utf8_validate(rule.c_str(), -1, nullptr) || !seen.insert(rule).second ||
+      seen.size() > 4096)
+    return;
+  list.push_back({name, rule, {}, icon_path ? icon_path : "", icon_ref(icon)});
+}
+// An AppImage is named after its file, without the extension.
+std::string appimage_name(const std::string& image) {
+  g_autofree char* base = g_path_get_basename(image.c_str());
+  std::string name = base;
+  const auto dot = name.rfind('.');
+  if (dot != std::string::npos && dot > 0 && g_ascii_strcasecmp(name.c_str() + dot, ".AppImage") == 0) name.resize(dot);
+  return name;
+}
+// A Flatpak app is named by its exported desktop entry, if it has one.
+void add_flatpak(AppList& list, std::set<std::string>& seen, const std::string& id) {
+  g_autoptr(GDesktopAppInfo) entry = g_desktop_app_info_new((id + ".desktop").c_str());
+  add_rule(list, seen, entry ? g_app_info_get_display_name(G_APP_INFO(entry)) : id.c_str(), "flatpak:" + id,
+           entry ? g_app_info_get_icon(G_APP_INFO(entry)) : nullptr);
+}
+// Running and listed apps get a rule that follows updates; a saved rule is listed as saved.
+void add_app(AppList& list, std::set<std::string>& seen, const char* name, const char* process, GIcon* icon = nullptr,
+             bool follow_updates = false) {
+  g_autofree char* canonical = process ? realpath(process, nullptr) : nullptr;
+  if (!canonical || !*canonical || strlen(canonical) > 1024 || !g_utf8_validate(canonical, -1, nullptr)) return;
+  if (follow_updates && appimage_file(canonical)) {
+    const std::string image = canonical;
+    add_rule(list, seen, name && *name ? name : appimage_name(image).c_str(), "appimage:" + image, icon, canonical);
+    return;
+  }
+  std::string rule_name;
+  const std::string rule = follow_updates ? application_rule(canonical, rule_name) : canonical;
+  if (!seen.insert(rule).second || seen.size() > 4096) return;
+  g_autofree char* base = g_path_get_basename(canonical);
+  list.push_back({name && *name ? name : !rule_name.empty() ? rule_name.c_str() : base, rule, {}, canonical, icon_ref(icon)});
 }
 // Snap, Flatpak, env and script entries name a launcher that is never the
 // running process image, so a rule for them would silently match nothing.
@@ -281,13 +463,22 @@ const char* chosen_application_error(const char* path) {
     return "invalid_applications";
   return launcher(path) ? "launcher_application" : nullptr;
 }
-FlValue* applications(FlValue* args) {
-  auto* list = fl_value_new_list();
+// Runs off the main thread: desktop entries, running processes, then the saved rules.
+AppList applications(const std::vector<std::string>& selected) {
+  AppList list;
   std::set<std::string> seen;
   GList* apps = g_app_info_get_all();
   for (GList* item = apps; item; item = item->next) {
     auto* app = G_APP_INFO(item->data);
     if (!g_app_info_should_show(app)) continue;
+    // Flatpak exports name their app; their Exec is the flatpak launcher.
+    g_autofree char* flatpak = G_IS_DESKTOP_APP_INFO(app)
+        ? g_desktop_app_info_get_string(G_DESKTOP_APP_INFO(app), "X-Flatpak") : nullptr;
+    if (flatpak) {
+      if (flatpak_id(flatpak))
+        add_rule(list, seen, g_app_info_get_display_name(app), std::string("flatpak:") + flatpak, g_app_info_get_icon(app));
+      continue;
+    }
     const char* command = g_app_info_get_executable(app);
     g_autofree char* resolved = command ? g_find_program_in_path(command) : nullptr;
     // "Exec=sh -c ..." and "Exec=firejail app" name a wrapper, not the app.
@@ -296,7 +487,7 @@ FlValue* applications(FlValue* args) {
     bool wrapper = false;
     for (const char* known : {"sh", "bash", "dash", "zsh", "firejail"}) wrapper = wrapper || (base && strcmp(base, known) == 0);
     if (wrapper || launcher(resolved)) continue;
-    add_app(list, seen, g_app_info_get_display_name(app), resolved, g_app_info_get_icon(app));
+    add_app(list, seen, g_app_info_get_display_name(app), resolved, g_app_info_get_icon(app), true);
   }
   g_list_free_full(apps, g_object_unref);
   g_autoptr(GDir) proc = g_dir_open("/proc", 0, nullptr);
@@ -304,23 +495,77 @@ FlValue* applications(FlValue* args) {
     if (strspn(pid, "0123456789") != strlen(pid)) continue;
     std::string path = std::string("/proc/") + pid + "/exe";
     g_autofree char* binary = g_file_read_link(path.c_str(), nullptr);
-    if (!binary || !g_file_test(binary, G_FILE_TEST_IS_EXECUTABLE)) continue;
-    g_autofree char* name = g_path_get_basename(binary);
-    add_app(list, seen, name, binary);
+    if (!binary) continue;
+    const auto id = flatpak_app(pid);
+    if (!id.empty()) { add_flatpak(list, seen, id); continue; }
+    if (!g_file_test(binary, G_FILE_TEST_IS_EXECUTABLE)) continue;
+    const auto image = running_appimage(pid, binary);
+    if (!image.empty()) {
+      add_rule(list, seen, appimage_name(image).c_str(), "appimage:" + image, nullptr,
+               g_file_test(image.c_str(), G_FILE_TEST_IS_REGULAR) ? image.c_str() : nullptr);
+      continue;
+    }
+    add_app(list, seen, nullptr, binary, nullptr, true);
   }
+  for (const auto& saved : selected) {
+    const char* path = saved.c_str();
+    if (!g_path_is_absolute(path) || strlen(path) > 1024 || !g_utf8_validate(path, -1, nullptr)) continue;
+    g_autofree char* name = g_path_get_basename(path);
+    // A rule saved for one version, even one an update removed, is offered the rule that
+    // follows updates.
+    std::string rule_name;
+    const auto suggested = application_rule(path, rule_name);
+    if (suggested != path && seen.insert(path).second) {
+      list.push_back({rule_name.empty() ? name : rule_name, path, suggested, {}, nullptr});
+      continue;
+    }
+    if (!g_file_test(path, G_FILE_TEST_IS_REGULAR) || !g_file_test(path, G_FILE_TEST_IS_EXECUTABLE)) continue;
+    add_app(list, seen, name, path);
+  }
+  return list;
+}
+// The app list is gathered on a worker thread, and its icons are made a few at a time on the main
+// thread, so the window keeps drawing while hundreds of apps load.
+struct ApplicationsJob {
+  FlMethodCall* call;
+  std::vector<std::string> selected;
+  AppList apps;
+  size_t next = 0;
+  FlValue* list = nullptr;
+};
+gboolean add_application_icons(gpointer data) {
+  auto* job = static_cast<ApplicationsJob*>(data);
+  for (int step = 0; step < 8 && job->next < job->apps.size(); ++step) {
+    fl_value_append_take(job->list, app_value(job->apps[job->next++]));
+  }
+  if (job->next < job->apps.size()) return G_SOURCE_CONTINUE;
+  success(job->call, job->list);
+  fl_value_unref(job->list);
+  g_object_unref(job->call);
+  delete job;
+  return G_SOURCE_REMOVE;
+}
+void list_applications(FlMethodCall* call, FlValue* args) {
+  auto* job = new ApplicationsJob{FL_METHOD_CALL(g_object_ref(call))};
   auto* selected = field(args, "processes", FL_VALUE_TYPE_LIST);
   if (selected && fl_value_get_length(selected) <= 256) {
     for (size_t index = 0; index < fl_value_get_length(selected); ++index) {
       auto* value = fl_value_get_list_value(selected, index);
-      if (fl_value_get_type(value) != FL_VALUE_TYPE_STRING) continue;
-      const char* path = fl_value_get_string(value);
-      if (!g_path_is_absolute(path) || strlen(path) > 1024 ||
-          !g_file_test(path, G_FILE_TEST_IS_REGULAR) || !g_file_test(path, G_FILE_TEST_IS_EXECUTABLE)) continue;
-      g_autofree char* name = g_path_get_basename(path);
-      add_app(list, seen, name, path);
+      if (fl_value_get_type(value) == FL_VALUE_TYPE_STRING) job->selected.emplace_back(fl_value_get_string(value));
     }
   }
-  return list;
+  GTask* task = g_task_new(nullptr, nullptr, [](GObject*, GAsyncResult*, gpointer data) {
+    auto* job = static_cast<ApplicationsJob*>(data);
+    job->list = fl_value_new_list();
+    g_idle_add(add_application_icons, job);
+  }, job);
+  g_task_set_task_data(task, job, nullptr);
+  g_task_run_in_thread(task, [](GTask* task, gpointer, gpointer data, GCancellable*) {
+    auto* job = static_cast<ApplicationsJob*>(data);
+    job->apps = applications(job->selected);
+    g_task_return_boolean(task, TRUE);
+  });
+  g_object_unref(task);
 }
 void picker(DesktopHost* host, FlMethodCall* call, bool apps) {
   auto* args = fl_method_call_get_args(call);
@@ -370,14 +615,15 @@ void picker(DesktopHost* host, FlMethodCall* call, bool apps) {
     if (apps) {
       GSList* files = gtk_file_chooser_get_filenames(chooser);
       std::set<std::string> seen;
+      AppList chosen;
       if (g_slist_length(files) > 256) error = "invalid_applications";
       for (GSList* item = files; item && !error; item = item->next) {
         const char* path = static_cast<char*>(item->data);
         if ((error = chosen_application_error(path))) break;
-        g_autofree char* name = g_path_get_basename(path);
-        add_app(result, seen, name, path);
+        add_app(chosen, seen, nullptr, path, nullptr, true);
       }
       g_slist_free_full(files, g_free);
+      for (const auto& app : chosen) fl_value_append_take(result, app_value(app));
     } else {
       g_autofree char* path = gtk_file_chooser_get_filename(chooser);
       if (!path) error = "picker_failed";
@@ -405,7 +651,7 @@ void desktop_call(FlMethodChannel*, FlMethodCall* call, gpointer data) {
   const std::string method = fl_method_call_get_name(call);
   auto* args = fl_method_call_get_args(call);
   if (method == "routingApplications") {
-    g_autoptr(FlValue) value = applications(args); success(call, value);
+    list_applications(call, args);
   } else if (method == "pickRoutingApplications") picker(host, call, true);
   else if (method == "getPreferences") {
     std::string path = config_path("Elarni/preferences.json");

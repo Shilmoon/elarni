@@ -3,7 +3,7 @@
 use serde_json::{Value, json};
 
 use crate::compiler::compile_xray_outbound_config_with_options;
-use crate::model::{PacketBackend, PreferredIp, RouteModel, RuntimeOptions};
+use crate::model::{PacketBackend, PerAppMode, PreferredIp, RouteModel, RuntimeOptions};
 use crate::profile::compile_profile;
 
 const FIXTURE: &str = concat!(
@@ -76,10 +76,64 @@ fn compiled_fixtures() -> Value {
         },
     )
     .unwrap();
+    // The TUN backend (Android, Windows, Linux) with the same direct rule for 198.51.100.0/24,
+    // which holds the TUN's own addresses; in proxy-only per-app mode unlisted apps go direct.
+    let tun = |runtime: &RuntimeOptions| {
+        let (config, _) = compile_xray_outbound_config_with_options(
+            client("node"),
+            &routes,
+            10890,
+            PacketBackend::XrayTun,
+            1500,
+            runtime,
+        )
+        .unwrap();
+        serde_json::from_slice::<Value>(&config).unwrap()
+    };
+    let tun_profile = compile_profile(
+        json!({
+            "outbounds": [client("proxy"), {"tag": "direct", "protocol": "freedom"}],
+            "dns": {"servers": ["192.0.2.53"]},
+            "routing": {"rules": [
+                {"type": "field", "ip": ["198.51.100.0/24"], "outboundTag": "direct"}]}}),
+        None,
+        10890,
+        PacketBackend::XrayTun,
+        1500,
+        &RuntimeOptions::default(),
+        None,
+    )
+    .unwrap();
+    // Per-app routing with several targets: each target's apps share a rule of their own, and
+    // a "children:" rule adds one more.
+    let per_app = compile_profile(
+        json!({"outbounds": [client("proxy"),
+            {"tag": "direct", "protocol": "freedom", "settings": {}}]}),
+        None,
+        10890,
+        PacketBackend::XrayTun,
+        1500,
+        &serde_json::from_value::<RuntimeOptions>(json!({
+            "perAppMode": "proxyOnly",
+            "perAppProcesses": ["/opt/listed", "/opt/blocked", "children:/opt/direct"],
+            "perAppTargets": [{"process": "/opt/blocked", "target": "block"},
+                {"process": "children:/opt/direct", "target": "direct"}]}))
+        .unwrap(),
+        None,
+    )
+    .unwrap();
     json!({
+        "tun": tun(&RuntimeOptions::default()),
+        "tun-per-app": tun(&RuntimeOptions {
+            per_app_mode: PerAppMode::ProxyOnly,
+            per_app_processes: vec!["com.example.listed".into()],
+            ..RuntimeOptions::default()
+        }),
+        "tun-profile": serde_json::from_slice::<Value>(&tun_profile.config).unwrap(),
         "outbound": serde_json::from_slice::<Value>(&outbound).unwrap(),
         "profile": serde_json::from_slice::<Value>(&profile.config).unwrap(),
         "automatic-ip": serde_json::from_slice::<Value>(&automatic_ip).unwrap(),
+        "per-app": serde_json::from_slice::<Value>(&per_app.config).unwrap(),
     })
 }
 

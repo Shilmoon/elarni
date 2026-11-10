@@ -70,7 +70,8 @@ class AndroidVpnE2E {
         // launch wait can then remain blocked. The token below proves completion.
         shell("am start -n $packageName/com.elarni.traffic.TrafficActivity --es token $token --es mode $mode --es address $address --ei port $port$proxy")
         var result: JSONObject? = null
-        ui.waitUntil(10_000) {
+        // Two direct TCP tries of 4 s connect and 4 s read each fit (TrafficActivity).
+        ui.waitUntil(20_000) {
             result = runCatching { JSONObject(shell("run-as $packageName cat files/result.json")) }.getOrNull()
             result?.string("token") == token
         }
@@ -87,6 +88,23 @@ class AndroidVpnE2E {
         }
         inTunnel = result!!.optBoolean("vpn")
         return result!!.optString("body")
+    }
+
+    /** Waits until the VPN is connected over a Wi-Fi path that has held for 1.5 s. */
+    private fun awaitConnectedOnWiFi() {
+        val connectivity = ui.activity.getSystemService(android.net.ConnectivityManager::class.java)
+        var stablePath: Long? = null
+        var stableSince = android.os.SystemClock.elapsedRealtime()
+        ui.waitUntil(30_000) {
+            val network = repo.engine.physical()
+            val path = network?.networkHandle
+            val wifiReady = connectivity.getNetworkCapabilities(network)
+                ?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
+            val time = android.os.SystemClock.elapsedRealtime()
+            if (!wifiReady || repo.state.value.connection != "connected" || path != stablePath) {
+                stablePath = path; stableSince = time; false
+            } else time - stableSince >= 1500
+        }
     }
 
     @Test fun systemInfoLeavesAnotherAppsVpn() {
@@ -194,9 +212,10 @@ class AndroidVpnE2E {
                 connect()
                 // The physical TUIC endpoint is excluded; the controlled payload
                 // destinations are different IPs and must traverse VpnService.
-                assertTrue(traffic("a", "tcp", httpPort, "198.18.0.81").contains("proxy:elarni-synthetic"))
+                // A TCP reply without the proxy's body came once in CI; name what came instead.
+                traffic("a", "tcp", httpPort, "198.18.0.81").let { assertTrue("TUIC $mode IPv4 TCP body: $it", it.contains("proxy:elarni-synthetic")) }
                 assertEquals("proxy:elarni-udp-fixture", traffic("b", "udp", udpPort, "198.18.0.81"))
-                assertTrue(traffic("b", "tcp", httpPort, "fdfe:dcba:9876::10").contains("proxy:elarni-synthetic"))
+                traffic("b", "tcp", httpPort, "fdfe:dcba:9876::10").let { assertTrue("TUIC $mode IPv6 TCP body: $it", it.contains("proxy:elarni-synthetic")) }
                 assertEquals("proxy:elarni-udp-fixture", traffic("a", "udp", udpPort, "fdfe:dcba:9876::10"))
                 assertEquals("198.18.0.81", traffic("a", "dns", udpPort, "198.18.0.81"))
                 assertTrue(traffic("b", "systemDns", udpPort).contains("198.18.0.81"))
@@ -296,6 +315,14 @@ class AndroidVpnE2E {
             call("settings", obj("settings" to obj("perAppMode" to "proxyOnly")))
             assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
             assertTrue(inTunnel)
+            // The connections view names the app per-app routing found, by UID, and the rule that took it.
+            val listedUid = ui.activity.packageManager.getApplicationInfo("com.elarni.traffic.a", 0).uid.toString()
+            val listed = Native.call("readConnections", obj("epoch" to 0, "after" to 0)).objects("connections")
+                .lastOrNull { it.string("name") == listedUid && it.optInt("port") == httpPort }
+            assertNotNull("The connections view must name the listed app", listed)
+            assertEquals("found", listed!!.string("owner"))
+            assertTrue(listed.strings("rules").contains("elarni-per-app-listed"))
+            assertEquals("proxy", listed.string("kind"))
             assertTrue("Only-listed mode must send other apps directly", traffic("b", "tcp", httpPort).contains("direct:elarni-synthetic"))
             assertFalse("Only-listed mode must keep other apps out of the tunnel", inTunnel)
             assertEquals("direct:elarni-udp-fixture", traffic("b", "udp", udpPort))
@@ -351,6 +378,22 @@ class AndroidVpnE2E {
             } finally { shell("input keyevent 224"); shell("wm dismiss-keyguard") }
             ui.waitUntil(15_000) { repo.state.value.connection == "connected" }
             assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
+            // A tunnel started while the screen is off, as a tile or an external request starts it, is the one the
+            // screen finds when it turns on: the retry that resumes a paused tunnel used to restart it.
+            try {
+                shell("input keyevent 223")
+                ui.waitUntil(10_000) { repo.state.value.connection == "paused" }
+                runBlocking { repo.requestConnect() }
+                ui.waitUntil(15_000) { repo.state.value.connection == "connected" && Engine.fetchProxy != null }
+            } finally { shell("input keyevent 224"); shell("wm dismiss-keyguard") }
+            // Each start of the core has its own listener login.
+            val session = Engine.fetchProxy
+            runBlocking { repo.screenChanged(false) }
+            // The first retry is due a second after it is scheduled; a tick that finds the lock taken does nothing.
+            repeat(3) { Thread.sleep(600); runBlocking { repo.tick() } }
+            assertEquals("Screen-on restarted a running tunnel", session, Engine.fetchProxy)
+            assertEquals("connected", repo.state.value.connection)
+            assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
             assertEquals(warning.getString("token"), repo.state.value.approval?.string("token"))
             assertEquals(sources, snapshot().sources.size)
             call("reject")
@@ -396,6 +439,39 @@ class AndroidVpnE2E {
             assertEquals("The failed edit replaced the running tunnel", before, tunnel())
             assertTrue(Native.call("getXrayState").getBoolean("running"))
         } }
+    }
+    // Android and the per-app rules take a listed app's UID when the tunnel starts; removing or installing it while
+    // connected builds the tunnel again, so the app installed meanwhile takes its route at once.
+    @Test fun listedAppRemovedAndInstalledWhileConnectedTakesItsRoute() {
+        fun tunnel() = NetworkInterface.getNetworkInterfaces().asSequence().firstOrNull { it.inetAddresses.asSequence().any { address -> address.hostAddress == "198.51.100.253" } }?.index
+        fun rebuilt(before: Int?) = ui.waitUntil(15_000) { repo.state.value.connection == "connected" && tunnel().let { it != null && it != before } }
+        val listed = "com.elarni.traffic.a"
+        val copy = "/data/local/tmp/elarni-listed-app.apk"
+        fun installed() = shell("pm list packages $listed").lines().any { it.trim() == "package:$listed" }
+        assertTrue(shell("cp ${shell("pm path $listed").trim().removePrefix("package:")} $copy").isBlank())
+        SocksFixture().use { upstream ->
+            call("import", obj("text" to "socks://127.0.0.1:${upstream.port}#Listed%20app"))
+            call("select", obj("id" to snapshot().nodes.single().getString("id")))
+            call("settings", obj("settings" to obj("perAppMode" to "proxyOnly", "perAppProcesses" to JSONArray(listOf(listed)))))
+            try {
+                connect()
+                assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
+                assertTrue(inTunnel)
+                var before = tunnel()
+                assertTrue(shell("pm uninstall $listed").contains("Success"))
+                rebuilt(before)
+                before = tunnel()
+                assertTrue(shell("pm install -r $copy").contains("Success"))
+                rebuilt(before)
+                assertTrue("The app installed while connected must take its route", traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
+                assertTrue("Only-listed mode must take the installed app into the tunnel", inTunnel)
+                assertTrue("Other apps must stay out", traffic("b", "tcp", httpPort).contains("direct:elarni-synthetic"))
+                assertFalse(inTunnel)
+            } finally {
+                if (!installed()) shell("pm install -r $copy")
+                shell("rm $copy")
+            }
+        }
     }
     // A restore clears the connection intent, so it waits for Disconnect instead of leaving the running VPN unrecorded.
     @Test fun restoreWhileConnectedAsksToDisconnectFirst() {
@@ -700,13 +776,16 @@ class AndroidVpnE2E {
                 ui.waitUntil(15_000) { join() != null }
                 assertEquals("disconnected", repo.state.value.connection)
                 // On Wi-Fi, Android reports leaving it; that report asks for the next join. Both reach a killed process.
-                // Mobile data stays foreground for a while after Wi-Fi comes back, as after an earlier run's last join.
-                ui.waitUntil(60_000) { WiFiRule.watching == "leave" }
+                // Mobile data stays foreground for a while after Wi-Fi comes back, as after an earlier run's last join;
+                // WiFiRule.arm looks again every 5 s for up to 2 minutes, so wait as long as it does.
+                ui.waitUntil(125_000) { WiFiRule.watching == "leave" }
                 rule(true, emptyList())
                 var before = rejoin()
                 ui.waitUntil(15_000) { join() != before }
                 ui.waitUntil(15_000) { repo.state.value.connection == "connected" }
                 assertTrue(snapshot().data.optBoolean("connectionIntent"))
+                // The join connects while the default network still moves from mobile data to Wi-Fi.
+                awaitConnectedOnWiFi()
                 assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
                 // A Disconnect holds on this network, even when the rule reads the network again.
                 repo.requestStop(); ui.waitUntil(10_000) { repo.state.value.connection == "disconnected" }
@@ -714,7 +793,7 @@ class AndroidVpnE2E {
                 assertEquals("disconnected", repo.state.value.connection)
                 // In the background, the next join connects: VPN consent allows the service to start. Mobile data
                 // stays foreground for a while after a join, and leaving is watched once it drops back.
-                ui.waitUntil(60_000) { WiFiRule.watching == "leave" }
+                ui.waitUntil(125_000) { WiFiRule.watching == "leave" }
                 shell("input keyevent KEYCODE_HOME")
                 before = rejoin()
                 ui.waitUntil(15_000) { join() != before }
@@ -870,18 +949,7 @@ class AndroidVpnE2E {
                 // Cellular can recover seconds before Wi-Fi associates, and the core then starts there. Require the
                 // default network on the Wi-Fi path we just restored, which the core's new sockets follow without
                 // a restart while cellular stays, then verify uninterrupted traffic.
-                var stablePath: Long? = null
-                var stableSince = android.os.SystemClock.elapsedRealtime()
-                ui.waitUntil(30_000) {
-                    val network = repo.engine.physical()
-                    val path = network?.networkHandle
-                    val wifiReady = connectivity.getNetworkCapabilities(network)
-                        ?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
-                    val time = android.os.SystemClock.elapsedRealtime()
-                    if (!wifiReady || repo.state.value.connection != "connected" || path != stablePath) {
-                        stablePath = path; stableSince = time; false
-                    } else time - stableSince >= 1500
-                }
+                awaitConnectedOnWiFi()
                 assertTrue(traffic("a", "tcp", httpPort).contains("proxy:elarni-synthetic"))
                 assertEquals(warning.getString("token"), repo.state.value.approval?.string("token"))
                 assertEquals(1, snapshot().sources.size)

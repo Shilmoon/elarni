@@ -9,9 +9,10 @@ import java.io.FileOutputStream
 
 class RoutingAssets(context: Context) {
     private val root = File(context.noBackupFilesDir, "routing-assets").apply { mkdirs() }
+    private val revisionPattern = Regex("^[a-f0-9]{64}$")
     fun directory(revision: String): String {
         if (revision.isEmpty()) return ""
-        if (!Regex("^[a-f0-9]{64}$").matches(revision)) throw AppFailure("invalid_assets")
+        if (!revisionPattern.matches(revision)) throw AppFailure("invalid_assets")
         val file = File(root, revision)
         if (!file.isDirectory) throw AppFailure("assets_unavailable")
         return file.absolutePath
@@ -46,13 +47,16 @@ class RoutingAssets(context: Context) {
         var committed = false
         try {
             val files = JSONArray(); val skipped = mutableListOf<String>(); val missing = mutableListOf<String>()
+            // Earlier downloads this revision uses again, by file name. They are read where they are and copied
+            // only into a revision that is kept: a rule edit that leaves the reduced files as they were copies nothing.
+            val reused = mutableMapOf<String, File>()
             var status = if (profile.string("UseChunkFiles") == "true") "ready" else "disabled"
             sources.forEach { (name, url) ->
                 val old = if (previous.isEmpty()) null else File(directory(previous), "$name.original.dat")
                 // Originals stay on disk: a runetfreedom geosite.dat is 85 MB, against a 256 MB app heap.
                 val original = File(stage, "$name.original.dat"); val reduced = File(stage, "$name.dat")
-                fun stored() = old?.takeIf { it.isFile }?.inputStream()?.use { input -> FileOutputStream(original).use { input.copyTo(it); it.fd.sync() } }
-                    ?: throw AppFailure("assets_unavailable")
+                var input = original
+                fun stored() { original.delete(); input = old?.takeIf { it.isFile } ?: throw AppFailure("assets_unavailable"); reused[original.name] = input }
                 // The stored original's ETag and Last-Modified hold only for the link it came from.
                 var source = old?.takeIf { it.isFile }?.let { File(it.parentFile, "$name.source.json") }?.takeIf { it.isFile && it.length() <= 16384 }
                     ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }?.takeIf { it.string("url") == url } ?: JSONObject()
@@ -61,7 +65,7 @@ class RoutingAssets(context: Context) {
                     if (response.optBoolean("notModified")) stored()
                     else source = obj("url" to url, "etag" to response.string("etag"), "lastModified" to response.string("lastModified"))
                 }
-                val result = try { JSONObject(LibXray.reduceAndroidGeoFile(name, original.absolutePath, reduced.absolutePath, JSONArray(selectors.toList()).toString(), JSONArray(optional.toList()).toString(), profile.string("UseChunkFiles") == "true")) }
+                val result = try { JSONObject(LibXray.reduceAndroidGeoFile(name, input.absolutePath, reduced.absolutePath, JSONArray(selectors.toList()).toString(), JSONArray(optional.toList()).toString(), profile.string("UseChunkFiles") == "true")) }
                     catch (error: Exception) { throw AppFailure(error.message?.takeIf { it in setOf("input_too_large", "assets_unavailable") } ?: "invalid_geodata") }
                 // Collect the codes both files lack, then name them together.
                 if (result.has("missing")) { missing += result.strings("missing"); return@forEach }
@@ -70,13 +74,14 @@ class RoutingAssets(context: Context) {
                 if (source.string("etag").isNotEmpty() || source.string("lastModified").isNotEmpty())
                     FileOutputStream(File(stage, "$name.source.json")).use { it.write(source.toString().toByteArray()); it.fd.sync() }
                 Native.call("countGeoData", obj("name" to name, "geoType" to if (name == "geoip") "ip" else "domain", "datDir" to stage.absolutePath))
-                files.put(obj("name" to name, "source" to url, "bytes" to reduced.length(), "originalBytes" to original.length(), "updatedAt" to now()))
+                files.put(obj("name" to name, "source" to url, "bytes" to reduced.length(), "originalBytes" to input.length(), "updatedAt" to now()))
             }
             if (missing.isNotEmpty()) throw AppFailure("missing_geodata:" + missing.joinToString(","))
             val same = previous.isNotEmpty() && listOf("geoip.dat", "geoip.original.dat", "geosite.dat", "geosite.original.dat").all { name ->
-                val a = File(stage, name); val b = File(directory(previous), name)
-                (!a.exists() && !b.exists()) || a.isFile && b.isFile && sameContent(a, b)
+                val a = reused[name] ?: File(stage, name); val b = File(directory(previous), name)
+                (!a.exists() && !b.exists()) || a.isFile && b.isFile && (a == b || sameContent(a, b))
             }
+            if (!same) reused.forEach { (name, file) -> file.inputStream().use { from -> FileOutputStream(File(stage, name)).use { from.copyTo(it); it.fd.sync() } } }
             // Only the validators may have changed; the core never reads them.
             if (same) listOf("geoip.source.json", "geosite.source.json").forEach { name ->
                 val kept = File(directory(previous), name)
@@ -111,6 +116,6 @@ class RoutingAssets(context: Context) {
         } }
     }
     fun retire(keep: Set<String>) {
-        root.listFiles()?.filter { it.isDirectory && Regex("^[a-f0-9]{64}$").matches(it.name) && it.name !in keep }?.forEach { it.deleteRecursively() }
+        root.listFiles()?.filter { it.isDirectory && revisionPattern.matches(it.name) && it.name !in keep }?.forEach { it.deleteRecursively() }
     }
 }

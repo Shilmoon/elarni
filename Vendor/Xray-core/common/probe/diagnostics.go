@@ -75,6 +75,15 @@ func RequestContext(ctx context.Context) context.Context {
 	return context.WithoutCancel(ctx)
 }
 
+// AfterEnd calls f once the probe that owns ctx ends, for work that net/http
+// detached from its request's cancellation; stop is context.AfterFunc's.
+func AfterEnd(ctx context.Context, f func()) (stop func() bool) {
+	if r := FromContext(ctx); r != nil {
+		return context.AfterFunc(r.lifetime, f)
+	}
+	return func() bool { return false }
+}
+
 type lifetimeContext struct {
 	context.Context
 	lifetime context.Context

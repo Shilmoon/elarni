@@ -3,7 +3,7 @@
   "components": [
     {
       "name": "Xray-core",
-      "upstreamRevision": "a52db8f6ed19384dbc91a6f7e2cf4c09fbe7c2ca",
+      "upstreamRevision": "676eaf66f8f05d4d558ee7a74b4736623d3feeb9",
       "files": [
         "Vendor/Xray-core/app/dispatcher/default.go",
         "Vendor/Xray-core/app/dispatcher/sniffer.go",
@@ -17,7 +17,9 @@
         "Vendor/Xray-core/app/proxyman/outbound/outbound.go",
         "Vendor/Xray-core/app/router/command/command.go",
         "Vendor/Xray-core/app/router/condition.go",
+        "Vendor/Xray-core/app/router/config.go",
         "Vendor/Xray-core/app/router/process_lookup_test.go",
+        "Vendor/Xray-core/app/router/router.go",
         "Vendor/Xray-core/common/buf/buffer.go",
         "Vendor/Xray-core/common/buf/packet_from.go",
         "Vendor/Xray-core/common/buf/packet_from_other.go",
@@ -39,6 +41,7 @@
         "Vendor/Xray-core/common/mux/first_payload_test.go",
         "Vendor/Xray-core/common/mux/reader.go",
         "Vendor/Xray-core/common/mux/reader_test.go",
+        "Vendor/Xray-core/common/net/find_process_android.go",
         "Vendor/Xray-core/common/net/find_process_darwin.go",
         "Vendor/Xray-core/common/net/find_process_darwin.s",
         "Vendor/Xray-core/common/net/find_process_darwin_test.go",
@@ -51,6 +54,9 @@
         "Vendor/Xray-core/common/net/net.go",
         "Vendor/Xray-core/common/net/process_table.go",
         "Vendor/Xray-core/common/net/process_table_test.go",
+        "Vendor/Xray-core/common/net/socket_owner.go",
+        "Vendor/Xray-core/common/net/socket_owner_other.go",
+        "Vendor/Xray-core/common/net/socket_owner_test.go",
         "Vendor/Xray-core/common/platform/filesystem/file.go",
         "Vendor/Xray-core/common/probe/diagnostics.go",
         "Vendor/Xray-core/common/protocol/bittorrent/bittorrent.go",
@@ -181,6 +187,7 @@
         "Vendor/Xray-core/transport/internet/splithttp/loaded_latency_test.go",
         "Vendor/Xray-core/transport/internet/splithttp/mux.go",
         "Vendor/Xray-core/transport/internet/splithttp/mux_test.go",
+        "Vendor/Xray-core/transport/internet/splithttp/probe_close_linux_test.go",
         "Vendor/Xray-core/transport/internet/splithttp/realtime_test.go",
         "Vendor/Xray-core/transport/internet/splithttp/redirect_test.go",
         "Vendor/Xray-core/transport/internet/splithttp/request_lifetime.go",
@@ -205,6 +212,7 @@
       "name": "libXray",
       "upstreamRevision": "80263da83e96b2972455b0a94b13ee1a10e51391",
       "files": [
+        "Vendor/libXray/android_data.go",
         "Vendor/libXray/cmd/elarni-core/assets.go",
         "Vendor/libXray/cmd/elarni-core/assets_test.go",
         "Vendor/libXray/cmd/elarni-core/benchmark_windows.go",
@@ -212,6 +220,7 @@
         "Vendor/libXray/cmd/elarni-core/catalog_windows_test.go",
         "Vendor/libXray/cmd/elarni-core/data.go",
         "Vendor/libXray/cmd/elarni-core/data_test.go",
+        "Vendor/libXray/cmd/elarni-core/diagnostics_enabled.go",
         "Vendor/libXray/cmd/elarni-core/diagnostics_test.go",
         "Vendor/libXray/cmd/elarni-core/dns_windows.go",
         "Vendor/libXray/cmd/elarni-core/dns_windows_test.go",
@@ -223,10 +232,13 @@
         "Vendor/libXray/cmd/elarni-core/main.go",
         "Vendor/libXray/cmd/elarni-core/main_test.go",
         "Vendor/libXray/cmd/elarni-core/metrics_test.go",
+        "Vendor/libXray/cmd/elarni-core/platform_linux.go",
         "Vendor/libXray/cmd/elarni-core/platform_other.go",
         "Vendor/libXray/cmd/elarni-core/platform_windows.go",
+        "Vendor/libXray/cmd/elarni-core/probe_linux.go",
         "Vendor/libXray/cmd/elarni-core/routes_windows.go",
         "Vendor/libXray/cmd/elarni-core/routes_windows_test.go",
+        "Vendor/libXray/cmd/elarni-core/vpn_linux.go",
         "Vendor/libXray/cmd/elarni-core/vpn_windows.go",
         "Vendor/libXray/cmd/elarni-core/vpn_windows_test.go",
         "Vendor/libXray/cmd/elarni-core/wintun_windows_test.go",
@@ -237,6 +249,7 @@
         "Vendor/libXray/invoke.go",
         "Vendor/libXray/invoke_model.go",
         "Vendor/libXray/invoke_test.go",
+        "Vendor/libXray/nodep/file.go",
         "Vendor/libXray/nodep/measure.go",
         "Vendor/libXray/probe_assets_android.go",
         "Vendor/libXray/probe_assets_other.go",
@@ -253,6 +266,7 @@
         "Vendor/libXray/share/compiled_routing_test.go",
         "Vendor/libXray/share/elarni_integration_bridge.go",
         "Vendor/libXray/share/generate_share.go",
+        "Vendor/libXray/share/generate_share_test.go",
         "Vendor/libXray/share/hysteria_mask.go",
         "Vendor/libXray/share/parse_share.go",
         "Vendor/libXray/share/stream.go",
@@ -275,6 +289,7 @@
         "Vendor/libXray/xray/logs_test.go",
         "Vendor/libXray/xray/ping.go",
         "Vendor/libXray/xray/probe.go",
+        "Vendor/libXray/xray/probe_test.go",
         "Vendor/libXray/xray/procs.go",
         "Vendor/libXray/xray/xray.go"
       ],
@@ -284,12 +299,15 @@
       "name": "tun2proxy",
       "upstreamRevision": "e271de19683937f23d3f8f0eb4df0a61fc4a6e50",
       "files": [
+        "Vendor/tun2proxy/Cargo.toml",
         "Vendor/tun2proxy/src/args.rs",
+        "Vendor/tun2proxy/src/dns.rs",
+        "Vendor/tun2proxy/src/error.rs",
         "Vendor/tun2proxy/src/lib.rs",
-        "Vendor/tun2proxy/src/socks.rs",
-        "Vendor/tun2proxy/src/virtual_dns.rs"
+        "Vendor/tun2proxy/src/proxy_handler.rs",
+        "Vendor/tun2proxy/src/socks.rs"
       ],
-      "purpose": "bounded dual-stack synthetic DNS allocation, packet-tunnel restoration, role metrics, joined session shutdown, preservation of fragmented DNS-over-TCP responses, and unconnected SOCKS UDP relay sockets compatible with Darwin send_to, and TCP_NODELAY on the proxy connection"
+      "purpose": "joined session shutdown, preservation of fragmented DNS-over-TCP responses, and unconnected SOCKS UDP relay sockets compatible with Darwin send_to, and TCP_NODELAY on the proxy connection; session limits and counters per protocol with sessions reserved for DNS, DNS sessions that end with their answer, and DNS answers forwarded as received; only the library the Apple packet bridge runs is kept (SOCKS5 sessions and DNS over TCP): the command-line programs, the HTTP and SOCKS4 proxies, virtual DNS, the UDP gateway, socket transfer between namespaces, the Android and Windows service entry points, the C API and the build script are removed"
     },
     {
       "name": "quic-go",

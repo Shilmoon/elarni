@@ -5,6 +5,8 @@ enum TunnelSettingsFactory {
   /// LAN discovery (multicast, the limited broadcast) reaches no device through the tunnel, so it
   /// stays on the physical network unless Block traffic without VPN keeps everything inside.
   static let discoveryRoutes = ["224.0.0.0/4", "255.255.255.255/32", "ff00::/8"]
+  /// The tunnel's own address ranges, as `make` sets them: a connection from them runs through it.
+  static let tunnelPrefixes = ["192.0.2.0/30", "2001:db8::/126"]
 
   static func make(plan: TunnelPlan, excludedEndpointAddresses: [String], keepDiscovery: Bool = false) throws -> NEPacketTunnelNetworkSettings {
     guard !excludedEndpointAddresses.isEmpty || plan.outboundFormat == .xrayProfile else { throw SettingsError.missingEndpointExclusion }

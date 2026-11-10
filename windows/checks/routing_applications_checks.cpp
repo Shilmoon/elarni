@@ -3,7 +3,9 @@
 #include <shellapi.h>
 #include <atomic>
 #include <cstdio>
+#include <exception>
 #include <stdexcept>
+#include <thread>
 #include <flutter/method_result_functions.h>
 #include "../runner/utils.h"
 
@@ -26,6 +28,13 @@ static DWORD_PTR CheckedFileInfo(LPCWSTR, DWORD, SHFILEINFOW*, UINT, UINT) {
 
 void Require(bool value, const char* message) {
   if (!value) throw std::runtime_error(message);
+}
+
+bool MakeShortcut(const std::wstring& shortcut, const std::wstring& target) {
+  Microsoft::WRL::ComPtr<IShellLinkW> link;
+  Microsoft::WRL::ComPtr<IPersistFile> file;
+  return SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) &&
+      SUCCEEDED(link->SetPath(target.c_str())) && SUCCEEDED(link.As(&file)) && SUCCEEDED(file->Save(shortcut.c_str(), TRUE));
 }
 
 int main() {
@@ -73,6 +82,9 @@ int main() {
     std::wstring rules[std::size(files)];
     for (size_t index = 0; index < std::size(files); ++index) rules[index] = ExecutableRule(files[index]);
     const auto squirrel_app = RoutingApplication(files[2], false, rules[2]);
+    // A rule saved for app-1.0.9265 is offered the folder rule; an exact rule that survives is not.
+    const bool suggested = UpdateProofRule(files[2]) == squirrel + L"\\" && UpdateProofRule(files[3]).empty() &&
+        UpdateProofRule(squirrel + L"\\").empty();
     for (const auto& file : files) DeleteFileW(file.c_str());
     for (auto folder = std::rbegin(folders); folder != std::rend(folders); ++folder) RemoveDirectoryW(folder->c_str());
     Require(created, "could not create the Squirrel fixture");
@@ -85,7 +97,138 @@ int main() {
         "the Squirrel folder rule was not offered");
     const std::wstring remote = L"\\\\server.invalid\\share\\Discord\\app-1.0\\Discord.exe";
     Require(ExecutableRule(remote) == remote, "a network path was resolved");
+    Require(suggested && UpdateProofRule(remote).empty(), "a saved Squirrel version rule was not offered its folder");
     std::puts("PASS Squirrel apps such as Discord match their install folder across updates");
+
+    // Microsoft Store apps such as Claude run from WindowsApps\<name>_<version>_<arch>_<resource>_<publisher>\,
+    // which each update replaces; the core compares that folder as <name>_<publisher>, its package family.
+    const std::wstring store = L"C:\\Program Files\\WindowsApps\\";
+    const auto family = store + L"Claude_pzs8sxrjxfjjc\\";
+    Require(ExecutableRule(store + L"Claude_4.23118.0.0_x64__pzs8sxrjxfjjc\\app\\Claude.exe") == family &&
+        ExecutableRule(store + L"Claude_4.24001.0.0_x64__pzs8sxrjxfjjc\\app\\Claude.exe") == family &&
+        // A bundle's resource id is ~.
+        ExecutableRule(store + L"5319275A.WhatsAppDesktop_2.2450.6.0_neutral_~_cv1g1gvanyjgm\\WhatsApp.exe") ==
+            store + L"5319275A.WhatsAppDesktop_cv1g1gvanyjgm\\",
+        "a Store app did not match its package family");
+    Require(UpdateProofRule(store + L"Claude_4.23118.0.0_x64__pzs8sxrjxfjjc\\app\\Claude.exe").empty(),
+        "a saved Store rule was offered a replacement it does not need");
+    for (const auto& path : {store + L"Tools\\tool.exe", store + L"Claude_4.23118_x64__pzs8sxrjxfjjc\\Claude.exe",
+                             store + L"Claude_4.23118.0.0_x64__pzs8sxrjxfjj\\Claude.exe",
+                             std::wstring(L"C:\\Apps\\Claude_4.23118.0.0_x64__pzs8sxrjxfjjc\\Claude.exe")}) {
+      Require(ExecutableRule(path) == path, "a folder that is not a Store package lost its exact path");
+    }
+    Require(std::get<std::string>(RoutingApplication(family).at(EncodableValue("name"))) == "Claude" &&
+        std::get<std::string>(RoutingApplication(store + L"5319275A.WhatsAppDesktop_cv1g1gvanyjgm\\")
+            .at(EncodableValue("name"))) == "WhatsAppDesktop",
+        "a Store app was not named after its package");
+    std::puts("PASS Store apps such as Claude match their package across updates");
+
+    // Claude Code as the Claude app installs it: <root>\claude-code\<version>\<build>\claude.exe, a new
+    // version folder with each update, beside the previous one. A version folder matches the folder of
+    // versions only when that folder holds nothing else.
+    const auto versions = std::wstring(squirrel_temp) + L"elarni-versions-check-" + std::to_wstring(GetCurrentProcessId());
+    const auto claude = versions + L"\\claude-code", node = versions + L"\\node", mixed = versions + L"\\Mixed";
+    const std::wstring version_folders[] = {versions, claude, claude + L"\\2.1.309", claude + L"\\2.1.309\\9078b9c1d466",
+        claude + L"\\2.1.317", claude + L"\\2.1.317\\a33aa5518497", node, node + L"\\22.1.0", mixed, mixed + L"\\1.0",
+        mixed + L"\\plugins"};
+    const std::wstring version_files[] = {claude + L"\\2.1.309\\9078b9c1d466\\claude.exe",
+        claude + L"\\2.1.317\\a33aa5518497\\claude.exe", node + L"\\22.1.0\\node.exe", mixed + L"\\1.0\\tool.exe"};
+    created = true;
+    for (const auto& folder : version_folders) created = CreateDirectoryW(folder.c_str(), nullptr) && created;
+    for (const auto& file : version_files) {
+      const HANDLE handle = CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+      created = handle != INVALID_HANDLE_VALUE && created;
+      if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+    }
+    std::wstring version_rules[std::size(version_files)];
+    for (size_t index = 0; index < std::size(version_files); ++index) version_rules[index] = ExecutableRule(version_files[index]);
+    // A rule saved for a version that an update already removed.
+    const auto stale = UpdateProofRule(claude + L"\\2.1.300\\0f1e2d3c4b5a\\claude.exe");
+    for (const auto& file : version_files) DeleteFileW(file.c_str());
+    for (auto folder = std::rbegin(version_folders); folder != std::rend(version_folders); ++folder) RemoveDirectoryW(folder->c_str());
+    Require(created, "could not create the versioned fixture");
+    const std::wstring version_expected[] = {claude + L"\\", claude + L"\\", node + L"\\", version_files[3]};
+    for (size_t index = 0; index < std::size(version_files); ++index) {
+      if (version_rules[index] != version_expected[index]) std::fwprintf(stderr, L"%ls -> %ls\n",
+          version_files[index].c_str(), version_rules[index].c_str());
+    }
+    Require(version_rules[0] == version_expected[0] && version_rules[1] == version_expected[1],
+        "Claude Code did not match its folder of versions");
+    Require(version_rules[2] == version_expected[2], "an executable in a version folder did not match its folder of versions");
+    Require(version_rules[3] == version_expected[3], "a version folder beside other folders widened the rule");
+    Require(stale == claude + L"\\", "a rule saved for a removed version was not offered the folder of versions");
+    std::puts("PASS apps in version folders, such as Claude Code, match every version");
+
+    // svchost runs most services; each is listed by its own rule, named by its display name. The
+    // RPC service runs on every Windows.
+    bool rpc = false;
+    size_t services = 0;
+    for (const auto& app : RunningApplications()) {
+      const auto& map = std::get<flutter::EncodableMap>(app);
+      const auto& process = std::get<std::string>(map.at(EncodableValue("process")));
+      if (process.rfind("service:", 0) != 0) continue;
+      ++services;
+      Require(!std::get<std::string>(map.at(EncodableValue("name"))).empty(), "a service has no name");
+      rpc = rpc || _stricmp(process.c_str(), "service:RpcSs") == 0;
+    }
+    Require(rpc && services > 1, "running services were not listed by their rules");
+    std::puts("PASS svchost services are listed by their own rules");
+
+    // Start menu shortcuts list installed apps by their executables and the shortcuts' names;
+    // uninstallers and shortcuts whose file is gone are left out, as are rules already listed.
+    {
+      wchar_t temp[MAX_PATH]{};
+      Require(GetTempPathW(MAX_PATH, temp) > 0, "no temporary folder");
+      const std::wstring root = std::wstring(temp) + L"elarni-shortcuts-" + std::to_wstring(GetCurrentProcessId());
+      const std::wstring programs = root + L"\\Programs", menu = programs + L"\\Example", install = root + L"\\Example";
+      wchar_t self[MAX_PATH]{};
+      GetModuleFileNameW(nullptr, self, MAX_PATH);
+      const auto app = install + L"\\example.exe", uninstaller = install + L"\\unins000.exe";
+      const bool made = SHCreateDirectoryExW(nullptr, menu.c_str(), nullptr) == ERROR_SUCCESS &&
+          SHCreateDirectoryExW(nullptr, install.c_str(), nullptr) == ERROR_SUCCESS &&
+          CopyFileW(self, app.c_str(), FALSE) && CopyFileW(self, uninstaller.c_str(), FALSE) &&
+          MakeShortcut(menu + L"\\Example App.lnk", app) && MakeShortcut(menu + L"\\Uninstall Example.lnk", uninstaller) &&
+          CopyFileW(self, (install + L"\\removed.exe").c_str(), FALSE) &&
+          MakeShortcut(menu + L"\\Removed.lnk", install + L"\\removed.exe") &&
+          DeleteFileW((install + L"\\removed.exe").c_str()) && MakeShortcut(programs + L"\\Helper.lnk", uninstaller);
+      std::set<std::wstring> seen;
+      const auto found = made ? ShortcutApplications({programs}, seen) : flutter::EncodableList{};
+      std::set<std::wstring> listed{Lowered(app)};
+      const auto again = made ? ShortcutApplications({programs}, listed) : flutter::EncodableList{};
+      for (const auto* file : {L"\\Programs\\Example\\Example App.lnk", L"\\Programs\\Example\\Uninstall Example.lnk",
+               L"\\Programs\\Example\\Removed.lnk", L"\\Programs\\Helper.lnk", L"\\Example\\example.exe",
+               L"\\Example\\unins000.exe"}) DeleteFileW((root + file).c_str());
+      for (const auto* folder : {L"\\Programs\\Example", L"\\Programs", L"\\Example", L""}) RemoveDirectoryW((root + folder).c_str());
+      Require(made, "could not create the Start menu fixture");
+      Require(found.size() == 1, "the Start menu fixture did not list exactly its one app");
+      const auto& entry = std::get<flutter::EncodableMap>(found.front());
+      Require(std::get<std::string>(entry.at(EncodableValue("name"))) == "Example App" &&
+              std::get<std::string>(entry.at(EncodableValue("process"))) == RoutingUTF8(app.c_str()),
+              "a Start menu app was not listed by its shortcut's name and executable");
+      Require(again.empty(), "a Start menu app already listed was listed again");
+    }
+    std::puts("PASS Start menu shortcuts list installed apps, without uninstallers or removed files");
+
+    // Installed Store apps are listed by package family; the list runs off the window thread.
+    size_t packaged = 0;
+    bool families = true;
+    std::exception_ptr packages_failed;
+    std::thread([&] {
+      winrt::init_apartment(winrt::apartment_type::multi_threaded);
+      try {
+        std::set<std::wstring> seen;
+        for (const auto& app : PackagedApplications(seen)) {
+          const auto& map = std::get<flutter::EncodableMap>(app);
+          const auto rule = std::wstring(winrt::to_hstring(std::get<std::string>(map.at(EncodableValue("process")))));
+          families = families && !PackageAppName(rule).empty() && !std::get<std::string>(map.at(EncodableValue("name"))).empty();
+          ++packaged;
+        }
+      } catch (...) { packages_failed = std::current_exception(); }
+      winrt::uninit_apartment();
+    }).join();
+    if (packages_failed) std::rethrow_exception(packages_failed);
+    Require(families, "a Store app was not listed by its package family and name");
+    std::printf("PASS installed Microsoft Store apps are listed by package family (%zu here)\n", packaged);
 
     auto lookup = std::make_shared<RoutingApplicationLookup>();
     bool complete = false, failed = false;
@@ -177,7 +320,7 @@ int main() {
         !IsLaunchCommand(L"C:\\Program Files\\Elarni\\elarni.exe", L"C:\\Program Files\\Elarni\\elarni.exe"),
         "launch at login compares the Run value with the wrong case rule");
     std::puts("PASS launch at login matches its Run value in any letter case");
-    std::puts("9 native routing metadata checks passed");
+    std::puts("14 native routing metadata checks passed");
   } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL %s\n", error.what()); return 1;
   } catch (...) { std::fputs("FAIL native routing metadata check\n", stderr); return 1; }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/cupertino.dart';
@@ -7,8 +8,14 @@ import 'package:flutter/services.dart';
 
 import 'desktop_integration.dart';
 import 'elarni_widgets.dart';
+import 'per_app_presets.dart';
 import 'tunnel_channel.dart';
 import 'strings.dart';
+
+/// The rule inside "children:<rule>", which also takes the programs that its
+/// program starts; else the rule itself.
+String innerRule(String rule) =>
+    rule.startsWith('children:') ? rule.substring(9) : rule;
 
 /// A routing-only exchange format. Runtime settings and credentials never enter it.
 final class PerAppProfile {
@@ -38,7 +45,6 @@ final class PerAppProfile {
   };
 
   String get platformName => platformLabel(platform);
-  bool get valid => validationError == null;
 
   String? get validationError {
     if (!{'macos', 'windows', 'linux', 'android'}.contains(platform)) {
@@ -52,6 +58,20 @@ final class PerAppProfile {
     ).validPerApp) {
       return l10n.perAppInvalidProfile;
     }
+    // A "children:" rule is checked as the rule it wraps.
+    final rules = processes.map(innerRule).toList();
+    // Flatpak and AppImage rules name Linux apps, service rules Windows services.
+    if (platform != 'linux' &&
+        rules.any(
+          (rule) => rule.startsWith('flatpak:') || rule.startsWith('appimage:'),
+        )) {
+      return l10n.perAppLinuxRulesElsewhere(platformName);
+    }
+    if (platform != 'windows' &&
+        rules.any((rule) => rule.startsWith('service:'))) {
+      return l10n.perAppServiceRulesElsewhere(platformName);
+    }
+    // Android routes by package; its apps' processes share the package's user ID.
     if (platform == 'android' &&
         processes.any(
           (package) => !RegExp(
@@ -63,21 +83,19 @@ final class PerAppProfile {
     // Names can be shared deliberately; absolute paths belong to their OS.
     final windowsPath = RegExp(r'^[A-Za-z]:[\\/]');
     if (platform != 'windows' &&
-        processes.any(
+        rules.any(
           (path) => windowsPath.hasMatch(path) || path.startsWith(r'\\'),
         )) {
       return l10n.perAppWindowsPathsElsewhere(platformName);
     }
     if (platform == 'linux' &&
-        processes.any(
+        rules.any(
           (path) => path.split('/').any((part) => part.endsWith('.app')),
         )) {
       return l10n.perAppMacBundlesOnLinux;
     }
     if (platform == 'windows' &&
-        processes.any(
-          (path) => path.startsWith('/') && !path.startsWith('//'),
-        )) {
+        rules.any((path) => path.startsWith('/') && !path.startsWith('//'))) {
       return l10n.perAppUnixPathsOnWindows;
     }
     return null;
@@ -216,12 +234,19 @@ class _ProxyDialogState extends State<_ProxyDialog> {
 /// Native metadata is optional. Rules remain usable when an app is not running
 /// or its icon cannot be read, and metadata never enters a routing profile.
 final class _RoutingApp {
-  const _RoutingApp(this.name, this.process, [this.icon]);
+  const _RoutingApp(this.name, this.process, [this.icon, this.suggested]);
   final String name, process;
   final Uint8List? icon;
+
+  /// The host's update-proof rule for a saved rule that names one version.
+  final String? suggested;
 }
 
-enum _AppView { selected, picker, rules, paste, help }
+/// The rule for traffic whose app the lookup could not find: WSL, virtual
+/// machines and containers, and connections that closed before routing.
+const unknownOwnerRule = '-1';
+
+enum _AppView { selected, picker, rules, paste, help, connections }
 
 // Owned by the settings screen, so switching pages does not discard edits.
 // Only this form's fields are merged into the latest saved settings.
@@ -303,6 +328,8 @@ class PerAppRoutingEditor extends StatefulWidget {
     this.draft,
     this.onCancel,
     this.servers = const [],
+    this.checkRules,
+    this.readConnections,
   });
 
   final TunnelSettings settings;
@@ -314,6 +341,13 @@ class PerAppRoutingEditor extends StatefulWidget {
   final Widget? advancedRoutes;
   final PerAppRoutingDraft? draft;
   final VoidCallback? onCancel;
+
+  /// Counts running programs per rule and explains rules that match nothing.
+  final Future<ProcessRuleChecks> Function(List<String>)? checkRules;
+
+  /// The running core's recent connections, for the connections view.
+  final Future<RecentConnections> Function({int epoch, int after})?
+  readConnections;
 
   @override
   State<PerAppRoutingEditor> createState() => _PerAppRoutingEditorState();
@@ -337,6 +371,18 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
   set view(_AppView value) => draft.view = value;
   String? notice;
   bool loading = true, working = false, appListFailed = false;
+  ProcessRuleChecks? checks;
+  List<String>? _checkedRules;
+  bool _checking = false;
+  // The connections view's list by key, in the order of their last change.
+  final _connections = <int, RecentConnection>{};
+  final connectionSearch = TextEditingController();
+  int _connectionsEpoch = 0, _connectionsSeq = 0;
+  bool _connectionsRead = false, _readingConnections = false;
+  Timer? _connectionsTimer;
+  // The open preset and the rules chosen from it.
+  String? _preset;
+  Set<String>? _presetChosen;
   bool get toolsExpanded => draft.toolsExpanded;
   set toolsExpanded(bool value) => draft.toolsExpanded = value;
 
@@ -360,6 +406,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
     search.addListener(() => draft.search = search.text);
     input.addListener(() => draft.input = input.text);
     _loadApps();
+    if (view == _AppView.connections) _watchConnections();
   }
 
   @override
@@ -375,8 +422,10 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
 
   @override
   void dispose() {
+    _connectionsTimer?.cancel();
     search.dispose();
     input.dispose();
+    connectionSearch.dispose();
     super.dispose();
   }
 
@@ -389,25 +438,97 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
         .toList();
   }
 
-  _RoutingApp _app(String process) =>
-      apps
-          .where((app) => identity(app.process) == identity(process))
-          .firstOrNull ??
-      _RoutingApp(_name(process), process);
+  // Unidentified traffic leads the list; apps follow by name.
+  static int _byName(_RoutingApp a, _RoutingApp b) =>
+      a.process == unknownOwnerRule || b.process == unknownOwnerRule
+      ? (b.process == unknownOwnerRule ? 1 : 0) -
+            (a.process == unknownOwnerRule ? 1 : 0)
+      : a.name.toLowerCase().compareTo(b.name.toLowerCase());
+
+  // A "children:" rule is its program's app, with that app's name and icon.
+  _RoutingApp _app(String process) {
+    final inner = innerRule(process);
+    final hosted = apps
+        .where((app) => identity(app.process) == identity(inner))
+        .firstOrNull;
+    if (hosted == null) return _RoutingApp(_name(process), process);
+    if (inner == process) return hosted;
+    final suggested = hosted.suggested;
+    return _RoutingApp(
+      hosted.name,
+      process,
+      hosted.icon,
+      suggested == null ? null : 'children:$suggested',
+    );
+  }
 
   String _name(String process) {
+    if (process == unknownOwnerRule) return l10n.perAppUnknownOwner;
+    if (process != innerRule(process)) return _name(innerRule(process));
+    for (final kind in ['flatpak:', 'service:']) {
+      if (process.startsWith(kind)) return process.substring(kind.length);
+    }
+    if (process.startsWith('appimage:')) {
+      // An image, or a folder of images, is named after its file.
+      final parts = process
+          .substring(9)
+          .split('/')
+          .where((part) => part.isNotEmpty)
+          .toList();
+      final file = parts.lastOrNull ?? process;
+      return file.toLowerCase().endsWith('.appimage') && file.length > 9
+          ? file.substring(0, file.length - 9)
+          : file;
+    }
     final parts = process
         .replaceAll('\\', '/')
         .split('/')
-        .where((part) => part.isNotEmpty);
+        .where((part) => part.isNotEmpty)
+        .toList();
+    // A folder of versions, such as Claude Code's .../claude/versions/, is named after its owner.
+    if (parts.length > 1 && parts.last == 'versions') parts.removeLast();
     final name = parts.lastOrNull ?? process;
     return name.endsWith('.app') ? name.substring(0, name.length - 4) : name;
   }
 
-  Future<List<_RoutingApp>> _nativeApps(String method) async {
+  /// What kind of app a rule names, when its path does not.
+  String? _kind(String rule) => _innerKind(innerRule(rule));
+
+  String? _innerKind(String process) => process.startsWith('flatpak:')
+      ? 'Flatpak'
+      : process.startsWith('appimage:')
+      ? 'AppImage'
+      : process.startsWith('service:')
+      ? l10n.perAppKindService
+      : null;
+
+  String _ruleKind(String rule) => rule == innerRule(rule)
+      ? _innerRuleKind(rule)
+      : '${_innerRuleKind(innerRule(rule))} · ${l10n.perAppWithChildren}';
+
+  String _innerRuleKind(String process) => process.startsWith('flatpak:')
+      ? l10n.perAppFlatpakRule
+      : process.startsWith('appimage:')
+      ? l10n.perAppAppImageRule
+      : process.startsWith('service:')
+      ? l10n.perAppServiceRule
+      : process.endsWith('.app/')
+      ? l10n.appBundleIncludesHelpers
+      : l10n.executableRule;
+
+  Future<List<_RoutingApp>> _nativeApps(
+    String method, {
+    List<String>? processes,
+  }) async {
     final raw = await DesktopIntegration.channel.invokeListMethod<Object?>(
       method,
-      method == 'routingApplications' ? {'processes': selections} : null,
+      method == 'routingApplications'
+          // Hosts know programs: a "children:" rule is asked as its program's.
+          ? {
+              'processes':
+                  processes ?? selections.map(innerRule).toSet().toList(),
+            }
+          : null,
     );
     final result = <_RoutingApp>[];
     for (final item in raw ?? []) {
@@ -415,6 +536,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
       final process = item['process'] as String;
       if (process.isEmpty) continue;
       final bytes = item['iconPng'];
+      final suggested = item['suggested'];
       result.add(
         _RoutingApp(
           item['name'] is String && (item['name'] as String).isNotEmpty
@@ -423,6 +545,9 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
           process,
           bytes is Uint8List && bytes.isNotEmpty && bytes.length <= 65536
               ? bytes
+              : null,
+          suggested is String && suggested.isNotEmpty && suggested != process
+              ? suggested
               : null,
         ),
       );
@@ -435,18 +560,173 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
       loading = true;
       notice = null;
       appListFailed = false;
+      _checkedRules = null; // a refresh counts the running programs again
     });
+    final unknown = _RoutingApp(l10n.perAppUnknownOwner, unknownOwnerRule);
     try {
-      final values = await _nativeApps('routingApplications');
-      values.sort(
-        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-      );
-      if (mounted) setState(() => apps = values);
+      // Hosts list saved rules too, "-1" among them.
+      final values = (await _nativeApps(
+        'routingApplications',
+      )).where((app) => app.process != unknownOwnerRule).toList();
+      values.sort(_byName);
+      if (mounted) setState(() => apps = [unknown, ...values]);
     } on Object {
-      if (mounted) setState(() => appListFailed = true);
+      if (mounted) {
+        setState(() {
+          apps = [unknown];
+          appListFailed = true;
+        });
+      }
     } finally {
       if (mounted) setState(() => loading = false);
     }
+  }
+
+  // Checks follow the list after each change; one runs at a time.
+  void _ensureChecks() {
+    if (widget.checkRules == null ||
+        _checking ||
+        listEquals(_checkedRules, selections))
+      return;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _runChecks());
+  }
+
+  Future<void> _runChecks() async {
+    final check = widget.checkRules;
+    final rules = List.of(selections);
+    if (check == null || _checking || !mounted) return;
+    if (listEquals(rules, _checkedRules)) return;
+    _checking = true;
+    _checkedRules = rules;
+    try {
+      final asked = rules.where((rule) => rule != unknownOwnerRule).toList();
+      final result = asked.isEmpty
+          ? const ProcessRuleChecks({})
+          : await check(asked);
+      if (mounted && listEquals(rules, _checkedRules)) {
+        setState(() => checks = result);
+      }
+    } on Object {
+      if (mounted) setState(() => checks = null);
+    } finally {
+      _checking = false;
+      if (mounted) _ensureChecks();
+    }
+  }
+
+  /// Replaces a rule in place; its target moves with it.
+  void _replaceRule(String old, String rule) {
+    final index = selections.indexWhere(
+      (value) => identity(value) == identity(old),
+    );
+    if (index < 0) return;
+    final present = selections.any(
+      (value) => identity(value) == identity(rule),
+    );
+    setState(() {
+      final next = List.of(selections);
+      if (present) {
+        next.removeAt(index);
+      } else {
+        next[index] = rule;
+      }
+      final target = targets[old];
+      targets = {
+        for (final MapEntry(:key, :value) in targets.entries)
+          if (key != old) key: value,
+        if (target != null && !targets.containsKey(rule)) rule: target,
+      };
+      selections = next;
+    });
+  }
+
+  String _warningText(String code) => switch (code) {
+    'missing' => l10n.perAppWarningMissing,
+    'folder' => l10n.perAppWarningFolder,
+    'notFolder' => l10n.perAppWarningNotFolder,
+    'script' => l10n.perAppWarningScript,
+    'symlink' => l10n.perAppWarningSymlink,
+    'case' => l10n.perAppWarningCase,
+    'launcher' => l10n.perAppWarningLauncher,
+    'bundleName' => l10n.perAppWarningBundleName,
+    'versioned' => l10n.perAppWarningVersioned,
+    _ => l10n.perAppWarningUnknown,
+  };
+
+  Widget _ruleStatus(_RoutingApp app) {
+    final muted = TextStyle(
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+    );
+    if (app.process == unknownOwnerRule) {
+      return Text(l10n.perAppUnknownOwnerHelp, style: muted);
+    }
+    final check = checks?.rules[app.process];
+    final running = checks?.listed == true && check != null
+        ? check.running > 0
+              ? l10n.perAppRunningNow(check.running)
+              : l10n.perAppNotRunning
+        : null;
+    final warnings = <(String, String?)>[
+      if (app.suggested != null) ('versioned', app.suggested),
+      ...?check?.warnings,
+    ];
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final warningColor = dark
+        ? const Color(0xFFF5D08A)
+        : const Color(0xFF6B4300);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text([_ruleKind(app.process), ?running].join(' · ')),
+        for (final (code, suggestion) in warnings)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Icon(
+                    CupertinoIcons.exclamationmark_triangle,
+                    size: 14,
+                    color: warningColor,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _warningText(code),
+                        key: Key('per-app-warning:${app.process}:$code'),
+                        style: TextStyle(color: warningColor),
+                      ),
+                      if (suggestion != null)
+                        Wrap(
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Text(
+                              l10n.perAppSuggestedRule(suggestion),
+                              style: muted,
+                            ),
+                            TextButton(
+                              key: Key('per-app-use:${app.process}:$code'),
+                              onPressed: enabled
+                                  ? () => _replaceRule(app.process, suggestion)
+                                  : null,
+                              child: Text(l10n.perAppUseSuggested),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
   }
 
   Future<void> _operation(Future<void> Function() action) async {
@@ -477,6 +757,342 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
       view = next;
       notice = null;
     });
+    if (next == _AppView.connections) {
+      _watchConnections();
+    } else {
+      _connectionsTimer?.cancel();
+      _connectionsTimer = null;
+    }
+  }
+
+  // The list follows the core once a second while it is shown.
+  void _watchConnections() {
+    _connectionsTimer?.cancel();
+    _readConnections();
+    _connectionsTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _readConnections(),
+    );
+  }
+
+  Future<void> _readConnections() async {
+    final read = widget.readConnections;
+    if (read == null || _readingConnections) return;
+    _readingConnections = true;
+    try {
+      final result = await read(
+        epoch: _connectionsEpoch,
+        after: _connectionsSeq,
+      );
+      if (!mounted) return;
+      setState(() {
+        if (result.epoch != _connectionsEpoch) _connections.clear();
+        _connectionsEpoch = result.epoch;
+        _connectionsSeq = result.seq;
+        for (final connection in result.connections) {
+          _connections.remove(connection.key);
+          _connections[connection.key] = connection;
+        }
+        while (_connections.length > 500) {
+          _connections.remove(_connections.keys.first);
+        }
+        _connectionsRead = true;
+      });
+    } on Object {
+      // No running tunnel answers on macOS and Android.
+      if (mounted) {
+        setState(() {
+          _connections.clear();
+          _connectionsEpoch = _connectionsSeq = 0;
+          _connectionsRead = true;
+        });
+      }
+    } finally {
+      _readingConnections = false;
+    }
+  }
+
+  String _connectionApp(RecentConnection connection) =>
+      switch (connection.owner) {
+        // A sandbox, a mount or a shared service host names its app by rule.
+        'found' when connection.app.isNotEmpty => _app(connection.app).name,
+        // A program in a folder of versions, such as Claude Code's
+        // .../claude/versions/2.1.300, is named after the folder's owner.
+        'found' when connection.path.isNotEmpty => _name(
+          RegExp(r'[\\/]versions[\\/][^\\/]+$').hasMatch(connection.path)
+              ? connection.path.substring(
+                  0,
+                  connection.path.lastIndexOf(RegExp(r'[\\/]')) + 1,
+                )
+              : connection.path,
+        ),
+        'found' => connection.name,
+        'unknown' => l10n.perAppUnknownOwner,
+        _ => l10n.perAppConnectionNoApp,
+      };
+
+  // The rule a connection's program gets: the app's rule when its path does
+  // not name it, the host's update-proof rule, as for a picked app, else the
+  // program's bundle on macOS, else its path.
+  Future<String> _connectionRule(RecentConnection connection) async {
+    if (connection.app.isNotEmpty) return connection.app;
+    final path = connection.path;
+    final rule = widget.windows ? path.replaceAll('/', r'\') : path;
+    try {
+      final hosted = await _nativeApps(
+        'routingApplications',
+        processes: [...selections, rule],
+      );
+      final suggested = hosted
+          .where((app) => identity(app.process) == identity(rule))
+          .firstOrNull
+          ?.suggested;
+      if (suggested != null) return suggested;
+    } on Object {
+      // The path still names the program.
+    }
+    if (platform == 'macos') {
+      final bundle = rule.indexOf('.app/');
+      if (bundle > 0) return rule.substring(0, bundle + 5);
+    }
+    return rule;
+  }
+
+  Future<void> _addConnectionApp(RecentConnection connection) =>
+      _operation(() async {
+        final rule = await _connectionRule(connection);
+        if (!mounted) return;
+        setState(() {
+          selections = _rules([...selections, rule].join('\n'));
+          if (!apps.any((app) => identity(app.process) == identity(rule))) {
+            apps = [...apps, _RoutingApp(_name(rule), rule)]..sort(_byName);
+          }
+        });
+        if (mounted) {
+          setState(() => notice = l10n.perAppConnectionAdded(_name(rule)));
+        }
+      });
+
+  // Whether a listed rule already names the program: its app's rule, its
+  // path, a folder holding it, or its file name. The core's own matcher
+  // decides routing.
+  bool _covers(String listed, RecentConnection connection) {
+    final rule = innerRule(listed);
+    final app = connection.app;
+    if (app.isNotEmpty) {
+      if (identity(rule) == identity(app)) return true;
+      // A folder of AppImages holds the image.
+      if (app.startsWith('appimage:') &&
+          rule.startsWith('appimage:') &&
+          rule.endsWith('/') &&
+          app.startsWith(rule)) {
+        return true;
+      }
+    }
+    return _coversPath(rule, connection.path);
+  }
+
+  bool _coversPath(String rule, String path) {
+    if (path.isEmpty) return false;
+    final windows = widget.windows;
+    String normal(String value) =>
+        identity(windows ? value.replaceAll('/', r'\') : value);
+    final program = normal(path), named = normal(rule);
+    if (named == program) return true;
+    if (named.endsWith('/') || named.endsWith(r'\')) {
+      return program.startsWith(named);
+    }
+    if (named.contains('/') || named.contains(r'\')) return false;
+    final file = program.substring(
+      program.lastIndexOf(windows ? r'\' : '/') + 1,
+    );
+    return file == named || windows && file == '$named.exe';
+  }
+
+  // The listed app whose program started a connection's program.
+  String _startedBy(String via) =>
+      selections
+          .map(_app)
+          .where((app) => _coversPath(innerRule(app.process), via))
+          .firstOrNull
+          ?.name ??
+      _name(via);
+
+  String _connectionRoute(RecentConnection connection) =>
+      switch (connection.kind) {
+        'direct' => l10n.perAppConnectionDirect,
+        'block' => l10n.perAppConnectionBlocked,
+        'dns' => l10n.perAppConnectionDns,
+        'routing' => l10n.perAppConnectionRouting,
+        _ => l10n.perAppConnectionProxy,
+      };
+
+  Widget _connectionRow(RecentConnection connection) {
+    final subtle = TextStyle(
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+    );
+    final time = connection.time;
+    String two(int value) => value.toString().padLeft(2, '0');
+    final canAdd =
+        connection.owner == 'found' &&
+        (connection.path.isNotEmpty || connection.app.isNotEmpty) &&
+        !connection.listed &&
+        !selections.any((rule) => _covers(rule, connection));
+    final address = connection.host.contains(':')
+        ? '[${connection.host}]:${connection.port}'
+        : '${connection.host}:${connection.port}';
+    return Column(
+      children: [
+        ListTile(
+          key: Key('per-app-connection-${connection.key}'),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+          leading: Icon(switch (connection.owner) {
+            'found' => CupertinoIcons.app,
+            'unknown' => CupertinoIcons.question_square,
+            _ => CupertinoIcons.globe,
+          }, size: 22),
+          title: Text(_connectionApp(connection)),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$address · ${connection.network.toUpperCase()}',
+                style: subtle,
+              ),
+              Text(switch (connection.before) {
+                'reset' => l10n.perAppConnectionOpenedReset,
+                'kept' => l10n.perAppConnectionOpenedKept,
+                _ => [
+                  _connectionRoute(connection),
+                  if (connection.listed) l10n.perAppConnectionListed,
+                  if (connection.unlisted) l10n.perAppConnectionNotListed,
+                ].join(' · '),
+              }, style: subtle),
+              if (connection.via.isNotEmpty)
+                Text(
+                  l10n.perAppConnectionStartedBy(_startedBy(connection.via)),
+                  style: subtle,
+                ),
+              if (connection.path.isNotEmpty)
+                Text(
+                  connection.path,
+                  style: subtle.copyWith(fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+            ],
+          ),
+          trailing: Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            children: [
+              Text(
+                '${two(time.hour)}:${two(time.minute)}:${two(time.second)}',
+                style: subtle,
+              ),
+              if (canAdd)
+                TextButton(
+                  key: Key('per-app-add-connection-${connection.key}'),
+                  onPressed: enabled
+                      ? () => _addConnectionApp(connection)
+                      : null,
+                  child: Text(l10n.perAppConnectionAdd),
+                ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+      ],
+    );
+  }
+
+  Widget _connectionsView() {
+    final query = connectionSearch.text.trim().toLowerCase();
+    final visible =
+        _connections.values
+            .where(
+              (connection) =>
+                  '${_connectionApp(connection)} ${connection.path} ${connection.host}'
+                      .toLowerCase()
+                      .contains(query),
+            )
+            .toList()
+          ..sort((a, b) => b.key.compareTo(a.key));
+    final subtle = TextStyle(
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+    );
+    // Listed apps whose connections from before connecting skip per-app
+    // routing: on macOS all of them, elsewhere those the system kept.
+    final restart = {
+      for (final connection in _connections.values)
+        if (connection.before == 'kept')
+          selections
+                  .where((rule) => _covers(rule, connection))
+                  .map((rule) => _app(rule).name)
+                  .firstOrNull ??
+              _connectionApp(connection),
+    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _heading(l10n.perAppConnections),
+        const SizedBox(height: 8),
+        Text(l10n.perAppConnectionsHelp, style: subtle),
+        if (restart.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            l10n.perAppConnectionsRestart(restart.join(', ')),
+            key: const Key('per-app-connections-restart'),
+          ),
+        ],
+        if (widget.settings.perAppMode == 'off') ...[
+          const SizedBox(height: 8),
+          Text(
+            l10n.perAppConnectionsOff,
+            key: const Key('per-app-connections-off'),
+            style: subtle,
+          ),
+        ],
+        const SizedBox(height: 12),
+        TextField(
+          key: const Key('per-app-connections-search'),
+          controller: connectionSearch,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            labelText: l10n.perAppConnectionsSearch,
+            prefixIcon: const Icon(CupertinoIcons.search),
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (!_connectionsRead)
+          const LinearProgressIndicator()
+        else if (_connectionsEpoch == 0)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Text(l10n.perAppConnectionsDisconnected, style: subtle),
+          )
+        else if (visible.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Text(l10n.perAppConnectionsEmpty, style: subtle),
+          )
+        else
+          SizedBox(
+            height: 420,
+            child: ListView(
+              children: [
+                for (final connection in visible.take(200))
+                  _connectionRow(connection),
+              ],
+            ),
+          ),
+        _footer([
+          FilledButton(
+            onPressed: () => _show(_AppView.selected),
+            child: Text(l10n.done),
+          ),
+        ]),
+      ],
+    );
   }
 
   Future<void> _chooseFile() => _operation(() async {
@@ -488,7 +1104,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
       );
       final known = apps.map((app) => identity(app.process)).toSet();
       apps.addAll(values.where((app) => known.add(identity(app.process))));
-      apps.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      apps.sort(_byName);
     });
   });
 
@@ -600,7 +1216,9 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
   Widget _icon(_RoutingApp app) {
     // A plain rounded square read as a checkbox beside each rule.
     Widget fallback() => Icon(
-      CupertinoIcons.macwindow,
+      app.process == unknownOwnerRule
+          ? CupertinoIcons.question_square
+          : CupertinoIcons.macwindow,
       size: 28,
       color: Theme.of(context).colorScheme.onSurfaceVariant,
     );
@@ -730,6 +1348,37 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
                     ? l10n.macBundleRuleHelp
                     : l10n.macRulesCaseSensitive,
               ),
+              if (app.process != unknownOwnerRule) ...[
+                const SizedBox(height: 12),
+                StatefulBuilder(
+                  builder: (context, update) {
+                    final current = selections.firstWhere(
+                      (rule) =>
+                          identity(innerRule(rule)) ==
+                          identity(innerRule(app.process)),
+                      orElse: () => app.process,
+                    );
+                    final included = current != innerRule(current);
+                    return SwitchListTile(
+                      key: const Key('per-app-include-children'),
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(l10n.perAppIncludeChildren),
+                      subtitle: Text(l10n.perAppIncludeChildrenHelp),
+                      value: included,
+                      onChanged: enabled
+                          ? (value) {
+                              final inner = innerRule(current);
+                              _replaceRule(
+                                current,
+                                value ? 'children:$inner' : inner,
+                              );
+                              update(() {});
+                            }
+                          : null,
+                    );
+                  },
+                ),
+              ],
             ],
           ),
         ),
@@ -744,6 +1393,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
   }
 
   Widget _selected() {
+    _ensureChecks();
     final selectedApps =
         [for (final process in selections) (process, _app(process))]..sort(
           (a, b) => a.$2.name.toLowerCase().compareTo(b.$2.name.toLowerCase()),
@@ -794,6 +1444,14 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
                 ),
               ),
             ),
+            if (widget.readConnections != null) ...[
+              TextButton(
+                key: const Key('per-app-connections'),
+                onPressed: enabled ? () => _show(_AppView.connections) : null,
+                child: Text(l10n.perAppConnections),
+              ),
+              const SizedBox(width: 8),
+            ],
             OutlinedButton(
               onPressed: enabled
                   ? () {
@@ -827,11 +1485,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
                 ),
                 leading: _icon(app),
                 title: Text(app.name),
-                subtitle: Text(
-                  app.process.endsWith('.app/')
-                      ? l10n.appBundleIncludesHelpers
-                      : l10n.executableRule,
-                ),
+                subtitle: _ruleStatus(app),
                 trailing: Wrap(
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
@@ -955,7 +1609,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
         ),
         const SizedBox(height: 16),
         Text(
-          widget.windows ? l10n.runningApps : l10n.installedAndRunningApps,
+          l10n.installedAndRunningApps,
           style: Theme.of(context).textTheme.labelLarge,
         ),
         const SizedBox(height: 8),
@@ -976,9 +1630,11 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
                   itemCount: visible.length,
                   itemBuilder: (context, index) {
                     final app = visible[index];
+                    final kind = _kind(app.process);
                     return CheckboxListTile(
                       secondary: _icon(app),
                       title: Text(app.name),
+                      subtitle: kind == null ? null : Text(kind),
                       controlAffinity: ListTileControlAffinity.trailing,
                       value: selected.contains(identity(app.process)),
                       onChanged: enabled
@@ -993,6 +1649,8 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
                   },
                 ),
         ),
+        const SizedBox(height: 16),
+        _presets(),
         ExpansionTile(
           key: const Key('per-app-tools'),
           title: Text(l10n.profileAndExecutableTools),
@@ -1056,6 +1714,110 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
             child: Text(l10n.done),
           ),
         ]),
+      ],
+    );
+  }
+
+  String _presetName(String id) => switch (id) {
+    'steam' => l10n.perAppPresetSteam,
+    'browsers' => l10n.perAppPresetBrowsers,
+    _ => appPresets.firstWhere((preset) => preset.id == id).apps.first.name,
+  };
+
+  // A preset offers the apps of its group that the app list has, with the
+  // list's rules; an app the list lacks is shown as not found.
+  Widget _presets() {
+    final listed = selections.map((rule) => identity(innerRule(rule))).toSet();
+    final hosted = [
+      for (final app in apps)
+        if (app.process != unknownOwnerRule)
+          (name: app.name, process: app.process),
+    ];
+    final open = appPresets.where((preset) => preset.id == _preset).firstOrNull;
+    final found = open?.find(hosted) ?? const [];
+    final candidates = {
+      for (final entry in found)
+        for (final rule in entry.rules)
+          if (!listed.contains(identity(innerRule(rule)))) rule,
+    };
+    final chosen = (_presetChosen ?? candidates).intersection(candidates);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(l10n.perAppPresets, style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            for (final preset in appPresets)
+              FilterChip(
+                key: Key('per-app-preset:${preset.id}'),
+                label: Text(_presetName(preset.id)),
+                selected: preset.id == _preset,
+                onSelected: enabled && !loading
+                    ? (on) => setState(() {
+                        _preset = on ? preset.id : null;
+                        _presetChosen = null;
+                      })
+                    : null,
+              ),
+          ],
+        ),
+        if (open != null) ...[
+          const SizedBox(height: 8),
+          for (final (:app, :rules) in found)
+            if (rules.isEmpty)
+              ListTile(
+                key: Key('per-app-preset-missing:${app.name}'),
+                enabled: false,
+                title: Text(app.name),
+                trailing: Text(l10n.perAppPresetNotFound),
+              )
+            else
+              for (final rule in rules)
+                CheckboxListTile(
+                  key: Key('per-app-preset-app:$rule'),
+                  secondary: _icon(_app(rule)),
+                  title: Text(_app(rule).name),
+                  subtitle: listed.contains(identity(innerRule(rule)))
+                      ? Text(l10n.perAppPresetAdded)
+                      : rule != innerRule(rule)
+                      ? Text(l10n.perAppPresetWithChildren)
+                      : null,
+                  controlAffinity: ListTileControlAffinity.trailing,
+                  value: !candidates.contains(rule) || chosen.contains(rule),
+                  onChanged: enabled && candidates.contains(rule)
+                      ? (checked) => setState(
+                          () => _presetChosen = checked == true
+                              ? {...chosen, rule}
+                              : ({...chosen}..remove(rule)),
+                        )
+                      : null,
+                ),
+          const SizedBox(height: 8),
+          Text(
+            l10n.perAppPresetsHelp,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton(
+              key: const Key('per-app-preset-add'),
+              onPressed: enabled && chosen.isNotEmpty
+                  ? () => setState(() {
+                      selections = [
+                        ...selections,
+                        ...candidates.where(chosen.contains),
+                      ];
+                      _preset = null;
+                      _presetChosen = null;
+                    })
+                  : null,
+              child: Text(l10n.perAppAddPresetApps(chosen.length)),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -1161,6 +1923,7 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
         switch (view) {
           _AppView.selected => _selected(),
           _AppView.picker => _picker(),
+          _AppView.connections => _connectionsView(),
           _ => _tool(),
         },
         // The selected-apps view shows it next to Add apps.

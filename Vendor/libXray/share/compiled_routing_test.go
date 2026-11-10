@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -123,6 +124,23 @@ func TestCompiledProviderReentryMatchesIPRulesForHostnames(t *testing.T) {
 	}
 }
 
+// Xray refuses two routing rules with one tag, so per-app routing with several targets, each
+// with a rule of its own, must still start.
+func TestCompiledPerAppRoutingWithSeveralTargetsStarts(t *testing.T) {
+	config := compiledRoutingFixture(t, "per-app")
+	listed := 0
+	for _, rule := range config["routing"].(map[string]any)["rules"].([]any) {
+		if tag, _ := rule.(map[string]any)["ruleTag"].(string); strings.HasPrefix(tag, "elarni-per-app-listed") {
+			listed++
+		}
+	}
+	if listed != 4 {
+		t.Fatalf("%d per-app rules for three targets and a children rule", listed)
+	}
+	_, stop := startTrafficCore(t, config)
+	stop()
+}
+
 // Per-app routing sends a listed app's TUN traffic through a loopback back into
 // the profile's rules (compiler.rs apply_per_app_routing). A provider rule that
 // matches the sniffed protocol must still match on that second pass.
@@ -196,4 +214,103 @@ func TestCompiledDirectRouteDialsDnsHostsPin(t *testing.T) {
 	for _, network := range []string{"tcp", "udp"} {
 		trafficRoundTripFromInbound(t, instance, network, "127.0.0.1", "elarni-socks", "pinned-direct.test")
 	}
+}
+
+// The TUN's own subnets (Android Platform.kt, desktop TunGateway4/6) hold only its DNS
+// resolver. A Private DNS probe to it on 853 or a subnet broadcast there must end at
+// once instead of leaving by a profile rule for 198.51.100.0/24, the fixtures' direct
+// range, while DNS on 53 and the rest of that range keep their routes.
+func TestCompiledTunBlocksItsOwnSubnets(t *testing.T) {
+	var fixtures map[string]json.RawMessage
+	if err := json.Unmarshal(compiledRoutingJSON, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	desktop, err := WindowsTunnelConfig(fixtures["tun"], "Elarni")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var desktopConfig map[string]any
+	if err := json.Unmarshal(desktop, &desktopConfig); err != nil {
+		t.Fatal(err)
+	}
+	desktopConfig["inbounds"] = []any{}
+	tcp := func(address string, port uint32) xnet.Destination {
+		return xnet.TCPDestination(xnet.ParseAddress(address), xnet.Port(port))
+	}
+	udp := func(address string, port uint32) xnet.Destination {
+		return xnet.UDPDestination(xnet.ParseAddress(address), xnet.Port(port))
+	}
+	for _, fixture := range []struct {
+		name          string
+		config        map[string]any
+		dns           xnet.Destination
+		dnsOutbound   string
+		rangeOutbound string
+		otherOutbound string
+	}{
+		{"tun", compiledRoutingFixture(t, "tun"), udp("198.51.100.254", 53), "elarni-dns", "elarni-direct", "elarni-proxy"},
+		{"tun-per-app", compiledRoutingFixture(t, "tun-per-app"), udp("198.51.100.254", 53), "elarni-apps-0", "elarni-direct", "elarni-direct"},
+		{"tun-profile", compiledRoutingFixture(t, "tun-profile"), udp("198.51.100.254", 53), "elarni-dns", "direct", "proxy"},
+		{"desktop", desktopConfig, udp(TunDNS4, 53), "elarni-windows-dns", "elarni-direct", "elarni-proxy"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			instance, stop := startTrafficCore(t, fixture.config)
+			defer stop()
+			router := instance.GetFeature(routing.RouterType()).(routing.Router)
+			for _, route := range []struct {
+				inbound string
+				target  xnet.Destination
+				want    string
+			}{
+				{"elarni-tun", tcp("198.51.100.254", 853), "elarni-block"},
+				{"elarni-tun", tcp(TunDNS4, 853), "elarni-block"},
+				{"elarni-tun", udp("198.51.100.255", 137), "elarni-block"},
+				{"elarni-tun", udp("198.51.100.255", 57621), "elarni-block"},
+				{"elarni-tun", tcp("fdfe:dcba:9876::2", 853), "elarni-block"},
+				{"elarni-tun", tcp(TunDNS6, 853), "elarni-block"},
+				{"elarni-tun", fixture.dns, fixture.dnsOutbound},
+				{"elarni-tun", tcp("198.51.100.20", 443), fixture.rangeOutbound},
+				{"elarni-tun", tcp("fdfe:dcba:9876::10", 443), fixture.otherOutbound},
+			} {
+				picked, err := router.PickRoute(&routingsession.Context{
+					Inbound:  &session.Inbound{Tag: route.inbound},
+					Outbound: &session.Outbound{Target: route.target},
+					Content:  &session.Content{},
+				})
+				if err != nil {
+					t.Fatalf("%s: %v", route.target, err)
+				}
+				if got := picked.GetOutboundTag(); got != route.want {
+					t.Errorf("%s: got %s, want %s", route.target, got, route.want)
+				}
+			}
+		})
+	}
+}
+
+// A blocked connection to the TUN's resolver on 853 closes at once, so Android's Private
+// DNS check falls back to plain DNS instead of waiting out its 16 s timeout.
+func TestCompiledTunClosesPrivateDNSProbeAtOnce(t *testing.T) {
+	config := compiledRoutingFixture(t, "tun")
+	port := trafficPort(t)
+	config["inbounds"] = []any{map[string]any{"tag": "elarni-tun", "listen": "127.0.0.1", "port": port,
+		"protocol": "dokodemo-door", "settings": map[string]any{"address": "198.51.100.254", "port": 853, "network": "tcp"}}}
+	_, stop := startTrafficCore(t, config)
+	defer stop()
+	conn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(3 * time.Second))
+	conn.Write([]byte("\x16\x03\x01\x00\x05hello"))
+	start := time.Now()
+	if n, err := conn.Read(make([]byte, 64)); err == nil || isTimeout(err) {
+		t.Fatalf("probe got %d bytes, err %v after %s; want the connection closed", n, err, time.Since(start))
+	}
+}
+
+func isTimeout(err error) bool {
+	timeout, ok := err.(net.Error)
+	return ok && timeout.Timeout()
 }

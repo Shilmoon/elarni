@@ -116,6 +116,10 @@ abstract interface class TunnelControl {
   /// The X-HWID this subscription's provider gets.
   Future<String> subscriptionDeviceID(String id);
 
+  /// How many running programs each per-app rule matches, and why a rule may
+  /// match nothing (desktop only).
+  Future<ProcessRuleChecks> checkProcessRules(List<String> rules);
+
   /// Gives this subscription a new device ID; the others keep theirs.
   Future<SubscriptionSnapshot> resetSubscriptionDeviceID(String id);
   Future<Map<String, Object?>> configureAutomation(
@@ -214,6 +218,10 @@ abstract interface class TunnelControl {
   /// current level: `{'level': String, 'entries': [{seq, time, level, text}]}`.
   Future<Map<String, Object?>> readLogs({int after = 0});
 
+  /// The running core's recent connections that changed after seq [after] of
+  /// list [epoch], oldest change first; for another epoch, the whole list.
+  Future<RecentConnections> readConnections({int epoch = 0, int after = 0});
+
   /// Saves exported log text where the user chooses.
   Future<void> saveLogs(String text);
   Future<Map<String, Object?>> systemInfo();
@@ -278,6 +286,12 @@ final class NativeTunnelControl implements TunnelControl {
   Future<SubscriptionSnapshot> showNode(String nodeId) async =>
       SubscriptionSnapshot.fromMap(
         await _mapResult('showNode', {'nodeId': nodeId}),
+      );
+
+  @override
+  Future<ProcessRuleChecks> checkProcessRules(List<String> rules) async =>
+      ProcessRuleChecks.fromMap(
+        await _mapResult('checkProcessRules', {'rules': rules}),
       );
 
   @override
@@ -675,6 +689,14 @@ final class NativeTunnelControl implements TunnelControl {
       _mapResult('readLogs', {'after': after});
 
   @override
+  Future<RecentConnections> readConnections({
+    int epoch = 0,
+    int after = 0,
+  }) async => RecentConnections.fromMap(
+    await _mapResult('readConnections', {'epoch': epoch, 'after': after}),
+  );
+
+  @override
   Future<void> saveLogs(String text) async {
     await _mapResult('saveLogs', {'content': text});
   }
@@ -702,6 +724,158 @@ final class NativeTunnelControl implements TunnelControl {
       ? await _invoke(method, arguments)
       : await _channel.invokeMapMethod<String, Object?>(method, arguments) ??
             const <String, Object?>{};
+}
+
+/// A per-app rule's check: running programs it matches and warnings, each a
+/// code (missing, folder, notFolder, script, symlink, case, launcher,
+/// bundleName) with an optional suggested rule.
+final class ProcessRuleCheck {
+  const ProcessRuleCheck(this.rule, this.running, this.warnings);
+  final String rule;
+  final int running;
+  final List<(String code, String? suggestion)> warnings;
+}
+
+final class ProcessRuleChecks {
+  const ProcessRuleChecks(this.rules, {this.listed = true});
+
+  factory ProcessRuleChecks.fromMap(Map<String, Object?> value) {
+    final rules = <String, ProcessRuleCheck>{};
+    for (final item in value['rules'] as List? ?? const []) {
+      if (item is! Map || item['rule'] is! String) continue;
+      final warnings = <(String, String?)>[
+        for (final warning in item['warnings'] as List? ?? const [])
+          if (warning is Map && warning['code'] is String)
+            (
+              warning['code'] as String,
+              warning['suggestion'] is String &&
+                      (warning['suggestion'] as String).isNotEmpty
+                  ? warning['suggestion'] as String
+                  : null,
+            ),
+      ];
+      final rule = item['rule'] as String;
+      rules[rule] = ProcessRuleCheck(
+        rule,
+        item['running'] is int ? item['running'] as int : 0,
+        warnings,
+      );
+    }
+    return ProcessRuleChecks(rules, listed: value['listed'] == true);
+  }
+
+  final Map<String, ProcessRuleCheck> rules;
+
+  /// False when the running programs could not be listed.
+  final bool listed;
+}
+
+/// One routed connection: the app per-app routing found and the outbound that
+/// took it. A connection a per-app rule sent through normal routing again is
+/// one entry with the later decision's outbound.
+final class RecentConnection {
+  const RecentConnection({
+    required this.key,
+    required this.seq,
+    required this.time,
+    required this.network,
+    required this.host,
+    required this.port,
+    required this.outbound,
+    required this.kind,
+    this.inbound = '',
+    this.rules = const [],
+    this.owner = '',
+    this.pid = 0,
+    this.name = '',
+    this.path = '',
+    this.app = '',
+    this.via = '',
+    this.before = '',
+  });
+
+  static RecentConnection? fromMap(Object? value) {
+    if (value is! Map || value['key'] is! int || value['seq'] is! int) {
+      return null;
+    }
+    String text(String key) => value[key] is String ? value[key] as String : '';
+    int number(String key) => value[key] is int ? value[key] as int : 0;
+    return RecentConnection(
+      key: value['key'] as int,
+      seq: value['seq'] as int,
+      time: DateTime.fromMillisecondsSinceEpoch(number('time')),
+      network: text('network'),
+      host: text('host'),
+      port: number('port'),
+      inbound: text('inbound'),
+      outbound: text('outbound'),
+      kind: text('kind'),
+      rules: [
+        for (final rule in value['rules'] as List? ?? const [])
+          if (rule is String) rule,
+      ],
+      owner: text('owner'),
+      pid: number('pid'),
+      name: text('name'),
+      path: text('path'),
+      app: text('app'),
+      via: text('via'),
+      before: text('before'),
+    );
+  }
+
+  final int key, seq, port, pid;
+  final DateTime time;
+  final String network, host, inbound, outbound, name, path;
+
+  /// The rule for the app when its path does not name it: "flatpak:<app id>",
+  /// "appimage:<file>" or "service:<name>"; else empty.
+  final String app;
+
+  /// The listed program that started this one, when its "children:" rule
+  /// took the connection; else empty.
+  final String via;
+
+  /// A listed app's connection that was open before the tunnel started:
+  /// "reset" when the core closed it, so the app reconnects through the
+  /// tunnel; "kept" when the system did not let it. Else empty.
+  final String before;
+
+  /// direct, block, proxy, dns, or routing while it waits for its next decision.
+  final String kind;
+
+  /// Tags of the rules that took it; the per-app rules' start "elarni-per-app-".
+  final List<String> rules;
+
+  /// found; unknown when the lookup failed (the "-1" rule's traffic); empty
+  /// when no per-app rule asked.
+  final String owner;
+
+  /// A per-app rule for a listed app (or unidentified traffic) took it; each
+  /// target's rule is numbered: elarni-per-app-listed-0, -1, ...
+  bool get listed =>
+      rules.any((rule) => rule.startsWith('elarni-per-app-listed'));
+
+  /// The per-app rules passed it on: not listed.
+  bool get unlisted => rules.contains('elarni-per-app-other');
+}
+
+final class RecentConnections {
+  const RecentConnections(this.epoch, this.seq, this.connections);
+
+  factory RecentConnections.fromMap(Map<String, Object?> value) =>
+      RecentConnections(
+        value['epoch'] is int ? value['epoch'] as int : 0,
+        value['seq'] is int ? value['seq'] as int : 0,
+        [
+          for (final item in value['connections'] as List? ?? const [])
+            ?RecentConnection.fromMap(item),
+        ],
+      );
+
+  /// Names the core's list; 0 when no tunnel is running.
+  final int epoch, seq;
+  final List<RecentConnection> connections;
 }
 
 final class PingResult {
@@ -928,7 +1102,12 @@ final class TunnelSettings {
             name.isNotEmpty &&
             utf8.encode(name).length <= 1024 &&
             name == name.trim() &&
-            !RegExp(r'[\x00-\x1f\x7f-\x9f]').hasMatch(name),
+            !RegExp(r'[\x00-\x1f\x7f-\x9f]').hasMatch(name) &&
+            // "children:" wraps one rule of a program.
+            !(name.startsWith('children:') &&
+                (name.length == 9 ||
+                    name == 'children:-1' ||
+                    name.startsWith('children:children:'))),
       ) &&
       perAppTargets.entries.every(
         (entry) =>

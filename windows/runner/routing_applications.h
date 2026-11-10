@@ -4,7 +4,9 @@
 #include <flutter/encodable_value.h>
 #include <flutter/method_result.h>
 #include <memory>
+#include <set>
 #include <string>
+#include <vector>
 #include <winrt/base.h>
 
 // Imported match strings get names without accessing their filesystem targets.
@@ -15,6 +17,19 @@ flutter::EncodableMap RoutingApplication(const std::wstring& path, bool running 
 // Discord run from <root>\app-<version>\, which each update replaces, and start
 // through <root>\Update.exe or a stub, so they match their whole <root>\ folder.
 std::wstring ExecutableRule(const std::wstring& path);
+// For a saved rule that names one version of a local app, the rule that matches every
+// version; otherwise empty. Store paths need none: the core matches them by package.
+std::wstring UpdateProofRule(const std::wstring& path);
+// Running programs by their rules; svchost processes also by the services they run
+// ("service:<name>", named by the service's display name).
+flutter::EncodableList RunningApplications();
+// Apps the shortcuts in folders (searched four levels deep) start, by their executables' rules
+// and the shortcuts' names, leaving out uninstallers, setups and rules in seen, which it extends.
+flutter::EncodableList ShortcutApplications(const std::vector<std::wstring>& folders, std::set<std::wstring>& seen);
+// The Start menu's apps: the shortcuts of this user and of all users.
+flutter::EncodableList StartMenuApplications(std::set<std::wstring>& seen);
+// Installed Microsoft Store apps by their package family rules (WindowsApps\<name>_<publisher>\).
+flutter::EncodableList PackagedApplications(std::set<std::wstring>& seen);
 
 class RoutingApplicationLookup : public std::enable_shared_from_this<RoutingApplicationLookup> {
  public:

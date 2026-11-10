@@ -89,7 +89,9 @@ type linuxReply struct {
 	PID     int                  `json:"helperPid,omitempty"`
 	Metrics *xray.RuntimeMetrics `json:"metrics,omitempty"`
 	Logs    []xray.LogEntry      `json:"logs,omitempty"`
-	Lost    bool                 `json:"lost,omitempty"` // the tunnel ended without a stop; its supervisor waits
+	// The connections view's entries that changed since the last frame.
+	Connections *xray.ConnectionsResult `json:"connections,omitempty"`
+	Lost        bool                    `json:"lost,omitempty"` // the tunnel ended without a stop; its supervisor waits
 }
 type linuxChild struct {
 	command *exec.Cmd
@@ -178,12 +180,20 @@ func linuxWriteCommand(writer io.Writer, command linuxCommand) error {
 	return nil
 }
 func validLinuxRequest(request vpnRequest) error {
+	if err := validLinuxLimits(request); err != nil {
+		return err
+	}
+	_, err := linuxTunnelConfig([]byte(request.Config), linuxNetwork{Name: "rvvalidate", DNSPort: 5353}, request.RoutePolicy)
+	return err
+}
+
+// validLinuxLimits checks what building the tunnel config does not.
+func validLinuxLimits(request vpnRequest) error {
 	if request.MemoryLimitMB < 0 || request.MemoryLimitMB > 4096 || request.TCPMaxConnections < 0 || request.TCPMaxConnections > 4096 || request.UDPMaxConnections < 0 || request.UDPMaxConnections > 4096 ||
 		request.LogLevel != "" && xray.SetLogLevel(request.LogLevel) != nil {
 		return errors.New("invalid_vpn_request")
 	}
-	_, err := linuxTunnelConfig([]byte(request.Config), linuxNetwork{Name: "rvvalidate", DNSPort: 5353}, request.RoutePolicy)
-	return err
+	return nil
 }
 
 func startLinuxChild(command *exec.Cmd, events func(linuxReply)) (*linuxChild, error) {
@@ -217,8 +227,8 @@ func startLinuxChild(command *exec.Cmd, events func(linuxReply)) (*linuxChild, e
 			if linuxReadFrame(output, &reply) != nil {
 				break
 			}
-			// Metrics, log lines and a tunnel loss are events, not replies.
-			if reply.Metrics != nil || len(reply.Logs) > 0 || reply.Lost {
+			// Metrics, log lines, connections and a tunnel loss are events, not replies.
+			if reply.Metrics != nil || len(reply.Logs) > 0 || reply.Connections != nil || reply.Lost {
 				if reply.Lost {
 					child.up.Store(false)
 				}
@@ -348,11 +358,7 @@ func startVPN(payload json.RawMessage) (any, error) {
 		linuxBroker.Unlock()
 		return nil, errors.New("cancelled")
 	}
-	if child == nil && command == nil {
-		// The running child exited between the locks; start over as idle.
-		linuxBroker.Unlock()
-		return startVPN(payload)
-	}
+	// Only a stop clears the child, and it closes the broker too: a child seen above is still here.
 	if child == nil {
 		child, err = startLinuxChild(command, func(reply linuxReply) {
 			linuxBroker.Lock()
@@ -362,6 +368,7 @@ func startVPN(payload json.RawMessage) (any, error) {
 					linuxBroker.metrics = reply.Metrics
 				}
 				xray.AppendLogs(reply.Logs)
+				relayedConnections.add(reply.Connections)
 			}
 		})
 		if err != nil {
@@ -792,7 +799,8 @@ func linuxWorker(ctx context.Context, input io.Reader, output io.Writer) (code i
 			code = 1
 		}
 	}()
-	if validLinuxRequest(command.Request) != nil || installAssets(command.assets) != nil {
+	// The config is built for this network below, which checks it as well.
+	if validLinuxLimits(command.Request) != nil || installAssets(command.assets) != nil {
 		return 1
 	}
 	filesystem.NewFileReader = func(string) (io.ReadCloser, error) { return nil, errors.New("file_access_denied") }
@@ -854,9 +862,12 @@ func linuxWorker(ctx context.Context, input io.Reader, output io.Writer) (code i
 	if linuxWriteFrame(output, linuxReply{Ready: true}) != nil {
 		return 1
 	}
+	// A listed app's connections opened before the tunnel are not routed per app.
+	go moveOpenedConnections()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	var gate metricsGate
+	var connections connectionsCursor
 	for {
 		select {
 		case <-ctx.Done():
@@ -882,8 +893,9 @@ func linuxWorker(ctx context.Context, input io.Reader, output io.Writer) (code i
 				if metrics, err := xray.GetRuntimeMetrics(); err == nil && gate.due(metrics, reply.Logs != nil, now) {
 					reply.Metrics = &metrics
 				}
+				reply.Connections = connections.read()
 			}
-			if (reply.Metrics != nil || reply.Logs != nil) && linuxWriteFrame(output, reply) != nil {
+			if (reply.Metrics != nil || reply.Logs != nil || reply.Connections != nil) && linuxWriteFrame(output, reply) != nil {
 				return 1
 			}
 		}

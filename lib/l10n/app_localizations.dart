@@ -1043,7 +1043,7 @@ abstract class AppLocalizations {
   /// No description provided for @appRoutingUses.
   ///
   /// In en, this message translates to:
-  /// **'App routing uses {engine}. In bypass mode, unlisted or unidentified processes follow normal routing. In only-selected mode, they connect directly.'**
+  /// **'App routing uses {engine}. Unlisted apps connect directly in only-selected mode and follow normal routing in bypass mode. Traffic Elarni cannot link to an app (WSL, virtual machines, containers, connections that closed early) may come from a listed app: in only-selected mode it follows normal routing. Add Unidentified traffic to the list to choose where it goes.'**
   String appRoutingUses(String engine);
 
   /// No description provided for @systemWideVpn.
@@ -1237,12 +1237,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Loading apps…'**
   String get loadingApps;
-
-  /// No description provided for @runningApps.
-  ///
-  /// In en, this message translates to:
-  /// **'Running apps'**
-  String get runningApps;
 
   /// No description provided for @installedAndRunningApps.
   ///
@@ -1445,7 +1439,7 @@ abstract class AppLocalizations {
   /// No description provided for @perAppLauncherRule.
   ///
   /// In en, this message translates to:
-  /// **'Snap, Flatpak and script launchers start another program, so their rules match nothing. Start the app, then choose it from the app list.'**
+  /// **'Snap, Flatpak and script launchers start another program, so their rules match nothing. Choose the app from the app list; start a Snap or script app first.'**
   String get perAppLauncherRule;
 
   /// No description provided for @useProxy.
@@ -1507,6 +1501,114 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Windows executable paths cannot be used in a {platform} profile. Select the apps on this device.'**
   String perAppWindowsPathsElsewhere(Object platform);
+
+  /// No description provided for @perAppLinuxRulesElsewhere.
+  ///
+  /// In en, this message translates to:
+  /// **'Flatpak and AppImage rules name Linux apps and cannot be used in a {platform} profile.'**
+  String perAppLinuxRulesElsewhere(Object platform);
+
+  /// No description provided for @perAppServiceRulesElsewhere.
+  ///
+  /// In en, this message translates to:
+  /// **'Service rules name Windows services and cannot be used in a {platform} profile.'**
+  String perAppServiceRulesElsewhere(Object platform);
+
+  /// No description provided for @perAppFlatpakRule.
+  ///
+  /// In en, this message translates to:
+  /// **'Flatpak app: also its other programs in the sandbox'**
+  String get perAppFlatpakRule;
+
+  /// No description provided for @perAppAppImageRule.
+  ///
+  /// In en, this message translates to:
+  /// **'AppImage: the programs in that image file'**
+  String get perAppAppImageRule;
+
+  /// No description provided for @perAppServiceRule.
+  ///
+  /// In en, this message translates to:
+  /// **'Windows service: also the services that share its process'**
+  String get perAppServiceRule;
+
+  /// No description provided for @perAppKindService.
+  ///
+  /// In en, this message translates to:
+  /// **'Windows service'**
+  String get perAppKindService;
+
+  /// No description provided for @perAppIncludeChildren.
+  ///
+  /// In en, this message translates to:
+  /// **'Include programs it starts'**
+  String get perAppIncludeChildren;
+
+  /// No description provided for @perAppIncludeChildrenHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Also routes the programs this app starts, and theirs, such as helpers, updaters and command-line tools. A program listed on its own keeps its own target. A browser the app starts is included too, but not one that was already running.'**
+  String get perAppIncludeChildrenHelp;
+
+  /// No description provided for @perAppWithChildren.
+  ///
+  /// In en, this message translates to:
+  /// **'with the programs it starts'**
+  String get perAppWithChildren;
+
+  /// No description provided for @perAppPresets.
+  ///
+  /// In en, this message translates to:
+  /// **'Presets'**
+  String get perAppPresets;
+
+  /// No description provided for @perAppPresetSteam.
+  ///
+  /// In en, this message translates to:
+  /// **'Steam and games'**
+  String get perAppPresetSteam;
+
+  /// No description provided for @perAppPresetBrowsers.
+  ///
+  /// In en, this message translates to:
+  /// **'Browsers'**
+  String get perAppPresetBrowsers;
+
+  /// No description provided for @perAppPresetAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'Added'**
+  String get perAppPresetAdded;
+
+  /// No description provided for @perAppPresetNotFound.
+  ///
+  /// In en, this message translates to:
+  /// **'Not found'**
+  String get perAppPresetNotFound;
+
+  /// No description provided for @perAppPresetWithChildren.
+  ///
+  /// In en, this message translates to:
+  /// **'With the programs it starts'**
+  String get perAppPresetWithChildren;
+
+  /// No description provided for @perAppPresetsHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'A preset offers the apps the app list found, each with the rule this computer gives it. For an app it does not find, use Choose app file.'**
+  String get perAppPresetsHelp;
+
+  /// No description provided for @perAppAddPresetApps.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Add 1 app} other{Add {count} apps}}'**
+  String perAppAddPresetApps(int count);
+
+  /// No description provided for @perAppConnectionStartedBy.
+  ///
+  /// In en, this message translates to:
+  /// **'Started by {name}'**
+  String perAppConnectionStartedBy(String name);
 
   /// No description provided for @perAppAndroidPackages.
   ///
@@ -5065,6 +5167,216 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Mark problem'**
   String get markProblem;
+
+  /// Per-app list entry for traffic whose app could not be identified (rule "-1").
+  ///
+  /// In en, this message translates to:
+  /// **'Unidentified traffic'**
+  String get perAppUnknownOwner;
+
+  /// No description provided for @perAppUnknownOwnerHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Traffic without an app: WSL, virtual machines, closed connections'**
+  String get perAppUnknownOwnerHelp;
+
+  /// No description provided for @perAppRunningNow.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 program running} other{{count} programs running}}'**
+  String perAppRunningNow(int count);
+
+  /// No description provided for @perAppNotRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Not running now'**
+  String get perAppNotRunning;
+
+  /// No description provided for @perAppWarningMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'Not found on this computer.'**
+  String get perAppWarningMissing;
+
+  /// No description provided for @perAppWarningFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'This is a folder. A folder rule ends with a separator and matches the programs inside.'**
+  String get perAppWarningFolder;
+
+  /// No description provided for @perAppWarningNotFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'This is a file, not a folder.'**
+  String get perAppWarningNotFolder;
+
+  /// No description provided for @perAppWarningScript.
+  ///
+  /// In en, this message translates to:
+  /// **'A script: its interpreter runs, not the script. Add the program it starts.'**
+  String get perAppWarningScript;
+
+  /// No description provided for @perAppWarningSymlink.
+  ///
+  /// In en, this message translates to:
+  /// **'A link: the program runs as the file it points to.'**
+  String get perAppWarningSymlink;
+
+  /// No description provided for @perAppWarningCase.
+  ///
+  /// In en, this message translates to:
+  /// **'The letter case differs from the file on disk, and rules compare it.'**
+  String get perAppWarningCase;
+
+  /// No description provided for @perAppWarningLauncher.
+  ///
+  /// In en, this message translates to:
+  /// **'A launcher: it starts another program, which this rule does not match.'**
+  String get perAppWarningLauncher;
+
+  /// No description provided for @perAppWarningBundleName.
+  ///
+  /// In en, this message translates to:
+  /// **'A bare name matches a program file, not an app bundle. Pick the app from the list.'**
+  String get perAppWarningBundleName;
+
+  /// No description provided for @perAppWarningVersioned.
+  ///
+  /// In en, this message translates to:
+  /// **'Names one version of the app, so it stops matching after the next update.'**
+  String get perAppWarningVersioned;
+
+  /// No description provided for @perAppWarningUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'This rule may not match any program.'**
+  String get perAppWarningUnknown;
+
+  /// No description provided for @perAppSuggestedRule.
+  ///
+  /// In en, this message translates to:
+  /// **'Suggested rule: {rule}'**
+  String perAppSuggestedRule(String rule);
+
+  /// No description provided for @perAppUseSuggested.
+  ///
+  /// In en, this message translates to:
+  /// **'Use suggested rule'**
+  String get perAppUseSuggested;
+
+  /// No description provided for @perAppConnections.
+  ///
+  /// In en, this message translates to:
+  /// **'Recent connections'**
+  String get perAppConnections;
+
+  /// No description provided for @perAppConnectionsHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Connections apps opened while Elarni is connected, newest first, with where each one went. It names the program behind an app\'s traffic, such as a helper or updater, so you can add it. Kept in memory until you disconnect.'**
+  String get perAppConnectionsHelp;
+
+  /// No description provided for @perAppConnectionsDisconnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect to see which apps open connections and where they go.'**
+  String get perAppConnectionsDisconnected;
+
+  /// No description provided for @perAppConnectionsOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Per-app routing is off, so apps are not named. Turn it on and save to see them.'**
+  String get perAppConnectionsOff;
+
+  /// No description provided for @perAppConnectionsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No connections yet.'**
+  String get perAppConnectionsEmpty;
+
+  /// No description provided for @perAppConnectionsSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Search apps and addresses'**
+  String get perAppConnectionsSearch;
+
+  /// No description provided for @perAppConnectionNoApp.
+  ///
+  /// In en, this message translates to:
+  /// **'App not looked up'**
+  String get perAppConnectionNoApp;
+
+  /// No description provided for @perAppConnectionDirect.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct'**
+  String get perAppConnectionDirect;
+
+  /// No description provided for @perAppConnectionProxy.
+  ///
+  /// In en, this message translates to:
+  /// **'Through a server'**
+  String get perAppConnectionProxy;
+
+  /// No description provided for @perAppConnectionBlocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Blocked'**
+  String get perAppConnectionBlocked;
+
+  /// No description provided for @perAppConnectionDns.
+  ///
+  /// In en, this message translates to:
+  /// **'DNS'**
+  String get perAppConnectionDns;
+
+  /// No description provided for @perAppConnectionRouting.
+  ///
+  /// In en, this message translates to:
+  /// **'Routing'**
+  String get perAppConnectionRouting;
+
+  /// No description provided for @perAppConnectionListed.
+  ///
+  /// In en, this message translates to:
+  /// **'Per-app rule'**
+  String get perAppConnectionListed;
+
+  /// No description provided for @perAppConnectionNotListed.
+  ///
+  /// In en, this message translates to:
+  /// **'Not listed'**
+  String get perAppConnectionNotListed;
+
+  /// No description provided for @perAppConnectionAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add to list'**
+  String get perAppConnectionAdd;
+
+  /// No description provided for @perAppConnectionAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} added. Save changes to apply.'**
+  String perAppConnectionAdded(String name);
+
+  /// No description provided for @perAppConnectionOpenedReset.
+  ///
+  /// In en, this message translates to:
+  /// **'Open before Elarni connected · Closed, so the app reconnects through per-app routing'**
+  String get perAppConnectionOpenedReset;
+
+  /// No description provided for @perAppConnectionOpenedKept.
+  ///
+  /// In en, this message translates to:
+  /// **'Open before Elarni connected · Skips per-app routing until the app reconnects'**
+  String get perAppConnectionOpenedKept;
+
+  /// No description provided for @perAppConnectionsRestart.
+  ///
+  /// In en, this message translates to:
+  /// **'Restart {apps}: their connections opened before Elarni connected skip per-app routing until they reconnect.'**
+  String perAppConnectionsRestart(String apps);
 }
 
 class _AppLocalizationsDelegate

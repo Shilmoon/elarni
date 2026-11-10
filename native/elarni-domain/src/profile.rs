@@ -70,18 +70,8 @@ pub fn compile_profile(
     }
     // These sections are supplied by the app, never activated from a subscription.
     // Reverse would let the provider open connections into this device.
-    for field in [
-        "inbounds",
-        "log",
-        "api",
-        "env",
-        "transport",
-        "metrics",
-        "reverse",
-    ] {
-        if field != "inbounds" {
-            root.remove(field);
-        }
+    for field in ["log", "api", "env", "transport", "metrics", "reverse"] {
+        root.remove(field);
     }
     const SUPPORTED: &[&str] = &[
         "remarks",
@@ -547,6 +537,7 @@ pub fn compile_profile(
     }
     crate::compiler::close_with_app(&mut owned);
     crate::compiler::apply_per_app_routing(&mut owned, runtime, &prefix)?;
+    crate::compiler::block_tun_own_subnets(&mut owned, &format!("{prefix}block"));
     let endpoints = profile_endpoints(&owned)?;
     Ok(CompiledProfile {
         config: serde_json::to_vec(&owned).map_err(|_| CompileError::InvalidOutbound)?,
@@ -858,7 +849,9 @@ fn is_physical_dependency(
 }
 
 pub fn profile_endpoints(config: &Value) -> Result<Vec<ProfileEndpoint>, CompileError> {
-    let mut migrated = config.clone();
+    // The migration rewrites outbounds only, so the routing rules are not copied.
+    let dns_hosts = &config["dns"]["hosts"];
+    let mut migrated = json!({"outbounds": config["outbounds"]});
     migrate_removed_keys(&mut migrated)?;
     let config = &migrated;
     let mut endpoints = Vec::new();
@@ -1010,7 +1003,7 @@ pub fn profile_endpoints(config: &Value) -> Result<Vec<ProfileEndpoint>, Compile
     }
     // First matching key wins, as in a linear search; built once for all endpoints.
     let mut hosts = BTreeMap::new();
-    for (key, value) in config["dns"]["hosts"].as_object().into_iter().flatten() {
+    for (key, value) in dns_hosts.as_object().into_iter().flatten() {
         hosts
             .entry(
                 key.strip_prefix("full:")

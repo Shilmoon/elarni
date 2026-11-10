@@ -71,6 +71,17 @@ class CatalogTest {
         assertFalse(Catalog.isRoutingLink("https://routing/"))
     }
 
+    @Test fun onlyAPublishedCopyKeepsWhatItRead() {
+        fun data() = obj("subscriptions" to JSONArray(listOf(obj("id" to "s", "nodes" to JSONArray(listOf(obj("id" to "a")))))))
+        val working = Catalog(data()); val published = Catalog(data(), snapshot = true)
+        working.putSource(obj("id" to "t", "nodes" to JSONArray(listOf(obj("id" to "b")))))
+        assertEquals("An editor's copy shows each edit", listOf("a", "b"), working.nodes.map { it.getString("id") })
+        assertEquals("b", working.node("b").getString("id"))
+        assertSame("A published copy reads its servers once", published.nodes, published.nodes)
+        assertEquals("a", published.node("a").getString("id"))
+        assertNull(published.nodeOrNull("b"))
+    }
+
     @Test fun probeKeyNamesTheHandshakeSNI() {
         fun node(security: String, serverName: String? = null, address: String = "1.2.3.4") = obj("config" to obj("outbounds" to JSONArray(listOf(obj(
             "protocol" to "vless", "settings" to obj("vnext" to JSONArray(listOf(obj("address" to address, "port" to 443)))),
@@ -96,6 +107,21 @@ class CatalogTest {
             apps("bypass", listOf("com.shared.one", "com.shared.two"), obj("com.shared.two" to "routing")))
         assertEquals("The first listed target wins for a shared UID", false to listOf("com.shared.one", "com.shared.two"),
             apps("bypass", listOf("com.shared.one", "com.shared.two"), obj("com.shared.one" to "direct", "com.shared.two" to "routing")))
+    }
+
+    @Test fun listedAppUidsChangeOnlyWhenAListedAppIsInstalledRemovedOrReinstalled() {
+        val settings = obj("perAppMode" to "bypass", "perAppProcesses" to JSONArray(listOf("com.a", "com.later")))
+        val started = mutableMapOf("com.a" to 10001, "com.other" to 10002)
+        val taken = Catalog.listedUids(settings) { started[it] }
+        assertEquals("An app not installed yet has no UID", mapOf("com.a" to 10001, "com.later" to null), taken)
+        assertNull("Without per-app routing no UID matters", Catalog.listedUids(JSONObject(settings.toString()).put("perAppMode", "off")) { started[it] })
+        fun now(vararg uids: Pair<String, Int>) = Catalog.listedUids(settings) { (started + uids)[it] }
+        assertEquals("An update keeps the UID", taken, now("com.a" to 10001))
+        assertEquals("An app nobody listed changes nothing", taken, now("com.new" to 10003))
+        assertNotEquals("A listed app installed meanwhile", taken, now("com.later" to 10004))
+        assertNotEquals("A listed app reinstalled with another UID", taken, now("com.a" to 10005))
+        started.remove("com.a")
+        assertNotEquals("A listed app removed, whose UID another app may get", taken, Catalog.listedUids(settings) { started[it] })
     }
 
     @Test fun retryDelayAndCanonicalForm() {

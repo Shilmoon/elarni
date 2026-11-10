@@ -155,37 +155,6 @@ pub fn compile_xray_config(request: &CompileRequest) -> Result<Vec<u8>, CompileE
     )
 }
 
-pub fn compile_xray_outbound_config(
-    outbound: Value,
-    routes: &crate::model::RouteModel,
-    socks_port: u16,
-) -> Result<(Vec<u8>, String), CompileError> {
-    compile_xray_outbound_config_for_backend(
-        outbound,
-        routes,
-        socks_port,
-        PacketBackend::NativeTun2Proxy,
-        1500,
-    )
-}
-
-pub fn compile_xray_outbound_config_for_backend(
-    outbound: Value,
-    routes: &crate::model::RouteModel,
-    socks_port: u16,
-    packet_backend: PacketBackend,
-    tun_mtu: u16,
-) -> Result<(Vec<u8>, String), CompileError> {
-    compile_xray_outbound_config_with_options(
-        outbound,
-        routes,
-        socks_port,
-        packet_backend,
-        tun_mtu,
-        &RuntimeOptions::default(),
-    )
-}
-
 pub fn compile_xray_outbound_config_with_options(
     mut outbound: Value,
     routes: &crate::model::RouteModel,
@@ -979,7 +948,40 @@ pub(crate) fn compile_owned_config(
     });
     close_with_app(&mut config);
     apply_per_app_routing(&mut config, runtime, "elarni-")?;
+    block_tun_own_subnets(&mut config, "elarni-block");
     serde_json::to_vec(&config).map_err(|_| CompileError::InvalidRoute)
+}
+
+/// The TUN's own subnets: Android's VpnService (Platform.kt) and the desktop TUN
+/// (windows_tun_config.go) hold their resolver there. Nothing else answers in them, so a
+/// Private DNS probe on 853 or a subnet broadcast (NetBIOS, Spotify discovery) would
+/// leave by a rule for private ranges and hang until its timeout.
+const TUN_OWN_SUBNETS: [&str; 3] = [
+    "198.51.100.252/30",
+    "fdfe:dcba:9876::/126",
+    "fd76:6f75:7465::/126",
+];
+
+/// Ends TUN traffic to its own subnets, except DNS, ahead of every other rule, the
+/// per-app gate included.
+pub(crate) fn block_tun_own_subnets(config: &mut Value, block_tag: &str) {
+    let Some(tun_tag) = config["inbounds"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|inbound| inbound["protocol"] == "tun")
+        .and_then(|inbound| inbound["tag"].as_str())
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    if let Some(rules) = config["routing"]["rules"].as_array_mut() {
+        rules.insert(
+            0,
+            json!({"type": "field", "inboundTag": [tun_tag], "network": "tcp,udp",
+                "ip": TUN_OWN_SUBNETS, "port": "1-52,54-65535", "outboundTag": block_tag}),
+        );
+    }
 }
 
 /// A per-app proxy target: SOCKS5 or HTTP on this device, without credentials.
@@ -1083,6 +1085,10 @@ pub(crate) fn apply_per_app_routing(
                 || name.len() > 1024
                 || name.trim() != name
                 || name.chars().any(char::is_control)
+                // "children:" wraps one rule of a program.
+                || name.strip_prefix("children:").is_some_and(|inner| {
+                    inner.is_empty() || inner == "-1" || inner.starts_with("children:")
+                })
         })
     {
         return Err(CompileError::InvalidRoute);
@@ -1186,9 +1192,11 @@ pub(crate) fn apply_per_app_routing(
         .map(String::as_str)
         .filter(|name| !targeted.contains(name))
         .collect();
-    // Android names the owner of a flow it could not look up "-1"; a listed app's
-    // flow must not leave the tunnel for that.
-    if runtime.per_app_mode == PerAppMode::ProxyOnly {
+    // "-1" names the owner of a flow the lookup could not find, on every platform; a listed
+    // app's flow must not leave the tunnel for that. Listing "-1" gives it a target instead.
+    if runtime.per_app_mode == PerAppMode::ProxyOnly
+        && !runtime.per_app_processes.iter().any(|name| name == "-1")
+    {
         others.push("-1");
     }
     if !others.is_empty() {
@@ -1204,17 +1212,42 @@ pub(crate) fn apply_per_app_routing(
     {
         return Err(CompileError::InvalidOutbound);
     }
+    // Rule tags let the connections view tell a per-app decision from normal routing. Xray
+    // refuses two rules with one tag, so each target's rule is numbered.
     let mut gate = vec![
         json!({"type":"field", "inboundTag":[tun_tag], "network":"tcp,udp",
-        "port":53, "outboundTag":reentry}),
+        "port":53, "outboundTag":reentry, "ruleTag":"elarni-per-app-dns"}),
     ];
-    gate.extend(groups.iter().map(|(tag, processes)| {
-        json!({"type":"field", "inboundTag":[tun_tag],
-        "network":"tcp,udp", "process":processes, "outboundTag":tag})
-    }));
+    // A listed program takes its own target before a rule that matches the program that started
+    // it ("children:"): Claude Code listed on its own, started by a listed Claude.
+    let direct = groups.iter().map(|(tag, processes)| {
+        let own: Vec<&str> = processes
+            .iter()
+            .map(|process| process.strip_prefix("children:").unwrap_or(process))
+            .collect();
+        (tag, own)
+    });
+    let started = groups.iter().filter_map(|(tag, processes)| {
+        let children: Vec<&str> = processes
+            .iter()
+            .copied()
+            .filter(|process| process.starts_with("children:"))
+            .collect();
+        (!children.is_empty()).then_some((tag, children))
+    });
+    gate.extend(
+        direct
+            .chain(started)
+            .enumerate()
+            .map(|(index, (tag, processes))| {
+                json!({"type":"field", "inboundTag":[tun_tag],
+        "network":"tcp,udp", "process":processes, "outboundTag":tag,
+        "ruleTag":format!("elarni-per-app-listed-{index}")})
+            }),
+    );
     gate.push(
         json!({"type":"field", "inboundTag":[tun_tag], "network":"tcp,udp",
-        "outboundTag":remaining}),
+        "outboundTag":remaining, "ruleTag":"elarni-per-app-other"}),
     );
     config["routing"]["rules"]
         .as_array_mut()

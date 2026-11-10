@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"slices"
 	"strconv"
@@ -50,22 +51,38 @@ func FindProcess(network, srcIP string, srcPort uint16, destIP string, destPort 
 		panic("Unsupported network type for process lookup.")
 	}
 
-	targetHexAddr, err := formatLittleEndianString(net.ParseIP(srcIP), Port(srcPort))
-	if err != nil {
-		return 0, "", "", errors.New("failed to format address: ", err)
-	}
-
-	remote := ""
-	if destIP != "" && destPort != 0 {
-		remote, err = formatLittleEndianString(net.ParseIP(destIP), Port(destPort))
+	query := func(file string, mapped bool) (*socketQuery, error) {
+		local, err := formatLittleEndianString(net.ParseIP(srcIP), Port(srcPort), mapped)
 		if err != nil {
+			return nil, errors.New("failed to format address: ", err)
+		}
+		remote := ""
+		if destIP != "" && destPort != 0 {
+			remote, err = formatLittleEndianString(net.ParseIP(destIP), Port(destPort), mapped)
+			if err != nil {
+				return nil, err
+			}
+		}
+		q := newSocketQuery(file, local, remote, network == "udp")
+		lookupSocket(q)
+		return q, q.err
+	}
+	// Elarni: a TCP connection's socket by its addresses, without reading every row of the table.
+	var q *socketQuery
+	if network == "tcp" && destIP != "" && destPort != 0 {
+		q = keyedQuery(procFile, srcIP, srcPort, destIP, destPort)
+	}
+	if q == nil {
+		if q, err = query(procFile, false); err != nil {
 			return 0, "", "", err
 		}
 	}
-	q := newSocketQuery(procFile, targetHexAddr, remote, network == "udp")
-	lookupSocket(q)
-	if q.err != nil {
-		return 0, "", "", q.err
+	// Elarni: an IPv6 socket without IPV6_V6ONLY (Java's default, or one bound to [::]) that
+	// talks to an IPv4 address is listed only in the IPv6 table, with the address mapped.
+	if q.inode == "" && !strings.HasSuffix(procFile, "6") {
+		if q, err = query(procFile+"6", true); err != nil {
+			return 0, "", "", err
+		}
 	}
 	if q.inode == "" {
 		return 0, "", "", errors.New("connection for ", srcIP, ":", srcPort, " not found in ", procFile)
@@ -91,10 +108,38 @@ func FindProcess(network, srcIP string, srcPort uint16, destIP string, destPort 
 	return pid, procName, absPath, nil
 }
 
-func formatLittleEndianString(addr net.IP, port Port) (string, error) {
+// findTCPSocketInode is tcpSocketInode; tests that count table reads replace it.
+var findTCPSocketInode = tcpSocketInode
+
+// keyedQuery looks up a TCP connection's socket by its addresses and then its owner, or returns
+// nil when the kernel did not find it, so the lookup reads the table instead.
+func keyedQuery(file, srcIP string, srcPort uint16, destIP string, destPort uint16) *socketQuery {
+	local, err := netip.ParseAddr(srcIP)
+	if err != nil {
+		return nil
+	}
+	remote, err := netip.ParseAddr(destIP)
+	if err != nil {
+		return nil
+	}
+	inode, err := findTCPSocketInode(netip.AddrPortFrom(local.Unmap(), srcPort), netip.AddrPortFrom(remote.Unmap(), destPort))
+	if err != nil || inode == 0 {
+		return nil
+	}
+	q := &socketQuery{file: file, inode: strconv.FormatUint(uint64(inode), 10), best: -1, done: make(chan struct{})}
+	lookupSocket(q)
+	if q.err != nil || q.pid == "" {
+		return nil
+	}
+	return q
+}
+
+// formatLittleEndianString formats an address as /proc/net prints it; mapped formats an
+// IPv4 address as the IPv4-mapped IPv6 address of the IPv6 tables.
+func formatLittleEndianString(addr net.IP, port Port, mapped bool) (string, error) {
 	ip := addr
 	var ipBytes []byte
-	if ip.To4() != nil {
+	if ip.To4() != nil && !mapped {
 		ipBytes = ip.To4()
 	} else {
 		ipBytes = ip.To16()
@@ -224,12 +269,18 @@ func lookupSocket(q *socketQuery) {
 
 // runLookups reads each table once for the batch, starts the next batch, and then walks the
 // descriptors once for this batch's sockets, so a slow walk does not hold back later lookups.
+// A batch of sockets found by their addresses reads no table; it walks before the next starts.
 func runLookups(batch []*socketQuery) {
 	tables := map[string][]*socketQuery{}
+	wanted := map[string][]*socketQuery{}
 	for _, q := range batch {
+		if q.inode != "" { // found by its addresses: only its owner is left to find
+			link := "socket:[" + q.inode + "]"
+			wanted[link] = append(wanted[link], q)
+			continue
+		}
 		tables[q.file] = append(tables[q.file], q)
 	}
-	wanted := map[string][]*socketQuery{}
 	for file, queries := range tables {
 		err := scanTable(file, queries)
 		for _, q := range queries {
@@ -247,6 +298,18 @@ func runLookups(batch []*socketQuery) {
 		}
 	}
 
+	if len(tables) == 0 {
+		// Found by address, the owner walk is the whole lookup: lookups that arrive meanwhile
+		// wait and walk once together, rather than each walking the same descriptors.
+		findOwners(wanted)
+		startNextLookups()
+		return
+	}
+	startNextLookups()
+	findOwners(wanted)
+}
+
+func startNextLookups() {
 	lookups.Lock()
 	next := lookups.next
 	lookups.next = nil
@@ -255,7 +318,6 @@ func runLookups(batch []*socketQuery) {
 	if next != nil {
 		go runLookups(next)
 	}
-	findOwners(wanted)
 }
 
 // recentOwners lists the processes that owned the last looked-up sockets, newest
@@ -313,16 +375,24 @@ func rememberOwner(pid string) {
 	recentOwners.pids = append([]string{pid}, others[:min(len(others), 7)]...)
 }
 
-// claimSockets hands pid the wanted sockets among its descriptors; true once none is left.
+// claimSockets hands pid the wanted sockets among its descriptors; true once none is left. It
+// reads the newest descriptors first: a new connection's socket usually has the highest number.
 func claimSockets(pid string, wanted map[string][]*socketQuery) bool {
 	fdPath := "/proc/" + pid + "/fd"
 	fdDir, err := os.ReadDir(fdPath)
 	if err != nil {
 		return false
 	}
-	remembered := false
+	fds := make([]int, 0, len(fdDir))
 	for _, fdEntry := range fdDir {
-		link, err := readLink(fdPath + "/" + fdEntry.Name())
+		if fd, err := strconv.Atoi(fdEntry.Name()); err == nil {
+			fds = append(fds, fd)
+		}
+	}
+	slices.Sort(fds)
+	remembered := false
+	for _, fd := range slices.Backward(fds) {
+		link, err := readLink(fdPath + "/" + strconv.Itoa(fd))
 		queries, ok := wanted[link]
 		if err != nil || !ok {
 			continue
@@ -344,6 +414,8 @@ func claimSockets(pid string, wanted map[string][]*socketQuery) bool {
 }
 
 func getAbsPath(pid string) (string, error) {
-	path := fmt.Sprintf("/proc/%s/exe", pid)
-	return readLink(path)
+	path, err := readLink(fmt.Sprintf("/proc/%s/exe", pid))
+	// Elarni: a program whose file a package upgrade replaced reads "<path> (deleted)" until it
+	// restarts. Rules name the path.
+	return strings.TrimSuffix(path, " (deleted)"), err
 }

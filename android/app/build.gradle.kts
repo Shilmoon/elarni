@@ -10,8 +10,8 @@ android {
         applicationId = "com.elarni"
         minSdk = 30
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.5.1"
+        versionCode = 15
+        versionName = "0.6.0"
         // scripts/check-android passes x86_64 for emulators on x86_64 hosts; releases ship arm64-v8a.
         ndk { abiFilters += (findProperty("elarni.abi") as String?) ?: "arm64-v8a" }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

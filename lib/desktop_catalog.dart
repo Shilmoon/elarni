@@ -15,9 +15,10 @@ List<CatalogMap> catalogList(Object? value) =>
     (value as List? ?? []).map(catalogMap).toList();
 CatalogMap copyCatalog(CatalogMap value) =>
     catalogMap(jsonDecode(jsonEncode(value)));
+final _secureRandom = Random.secure();
 String desktopID() => List.generate(
   32,
-  (_) => Random.secure().nextInt(256),
+  (_) => _secureRandom.nextInt(256),
 ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
 PlatformException desktopError(
   String code, {
@@ -469,16 +470,23 @@ final class DesktopCatalog {
     };
   }
 
-  CatalogMap route(String id) => routes.firstWhere(
-    (item) => item['id'] == id,
-    orElse: () => throw desktopError('invalid_routing'),
-  );
-  CatalogMap node(String id) => sources
-      .expand((item) => catalogList(item['nodes']))
-      .firstWhere(
-        (item) => item['id'] == id,
-        orElse: () => throw desktopError('invalid_profile'),
-      );
+  // Lookups copy the one item they return, not every item they pass.
+  CatalogMap route(String id) {
+    for (final Map route in data['profiles'] as List? ?? const []) {
+      if (route['id'] == id) return catalogMap(route);
+    }
+    throw desktopError('invalid_routing');
+  }
+
+  CatalogMap node(String id) {
+    for (final Map source in data['subscriptions'] as List? ?? const []) {
+      for (final Map node in source['nodes'] as List? ?? const []) {
+        if (node['id'] == id) return catalogMap(node);
+      }
+    }
+    throw desktopError('invalid_profile');
+  }
+
   void putSource(CatalogMap value) {
     final items = sources;
     final index = items.indexWhere((item) => item['id'] == value['id']);
@@ -977,7 +985,6 @@ final class DesktopCatalog {
     'happ://routing/',
     'incy://routing/',
     'elarni://routing/',
-    '://routing/',
   ].any(value.startsWith);
 
   // Panels such as 3x-ui send their Happ routing to every client

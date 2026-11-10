@@ -275,6 +275,11 @@ func createHTTPClient(releaseCtx context.Context, dest net.Destination, streamSe
 	dialContext := func(ctxInner context.Context) (net.Conn, error) {
 		ctxInner, cancel := context.WithTimeout(ctxInner, setupTimeout)
 		defer cancel()
+		// net/http detaches connection dials from the request's cancellation. A dial for
+		// a released dialer or an ended probe must still end, or the probe's cleanup
+		// waited for it until the setup timeout.
+		defer context.AfterFunc(releaseCtx, cancel)()
+		defer probe.AfterEnd(ctxInner, cancel)()
 		finished, admitted := probe.Begin(ctxInner)
 		if !admitted {
 			return nil, context.Canceled

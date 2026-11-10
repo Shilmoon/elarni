@@ -79,7 +79,9 @@ type vpnReply struct {
 	Error   string               `json:"error,omitempty"`
 	Metrics *xray.RuntimeMetrics `json:"metrics,omitempty"`
 	Logs    []xray.LogEntry      `json:"logs,omitempty"`
-	Lost    bool                 `json:"lost,omitempty"` // the tunnel ended without a stop; the child waits
+	// The connections view's entries that changed since the last frame.
+	Connections *xray.ConnectionsResult `json:"connections,omitempty"`
+	Lost        bool                    `json:"lost,omitempty"` // the tunnel ended without a stop; the child waits
 }
 
 // SHELLEXECUTEINFOW is pointer-aligned by Go on the supported Windows x64 build.
@@ -277,7 +279,7 @@ func stopVPN() (any, error) {
 		if ok && reply.Ready {
 			return map[string]any{}, nil
 		}
-	case <-time.After(8 * time.Second):
+	case <-awakeAfter(8 * time.Second):
 	}
 	platformStop()
 	return nil, errors.New("vpn_failed")
@@ -359,7 +361,7 @@ func connectVPN() error {
 	}
 	select {
 	case err = <-connected:
-	case <-time.After(15 * time.Second):
+	case <-awakeAfter(15 * time.Second):
 		err = errors.New("vpn_peer_rejected")
 	}
 	if err != nil {
@@ -383,14 +385,15 @@ func connectVPN() error {
 			if readFrame(pipe, &reply) != nil {
 				return
 			}
-			// Metrics, log lines and a tunnel loss are events, not replies.
-			event := reply.Metrics != nil || len(reply.Logs) > 0 || reply.Lost
+			// Metrics, log lines, connections and a tunnel loss are events, not replies.
+			event := reply.Metrics != nil || len(reply.Logs) > 0 || reply.Connections != nil || reply.Lost
 			vpnBroker.Lock()
 			if vpnBroker.pipe == pipe && !vpnBroker.closed {
 				if reply.Metrics != nil || reply.Lost {
 					vpnBroker.metrics = reply.Metrics
 				}
 				xray.AppendLogs(reply.Logs)
+				relayedConnections.add(reply.Connections)
 				if reply.Lost {
 					vpnBroker.up = false
 				} else if !event {
@@ -825,7 +828,7 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 			}
 		// Below the broker's 8 s stop wait. Hundreds of flows and the Wintun close can
 		// pass 2 s, which then ended the elevated owner on a server switch.
-		case <-time.After(6 * time.Second):
+		case <-awakeAfter(6 * time.Second):
 			fatal = true // Never reuse globals while a previous runtime is stopping.
 		}
 	}()
@@ -833,7 +836,7 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 	case err = <-started:
 	case <-closed:
 		return 1, false, true
-	case <-time.After(30 * time.Second):
+	case <-awakeAfter(30 * time.Second):
 		if flightrecorder.Enabled() {
 			flightrecorder.Record(flightrecorder.Event{Name: "windows_vpn_failure", Code: "startup_timeout"})
 		}
@@ -861,10 +864,14 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 	if writeFrame(pipe, map[string]any{"ready": true, "adapter": iface.Alias()}) != nil {
 		return 1, true, true
 	}
+	// Windows keeps a connection on the network it was opened on: a listed app that was already
+	// running would skip per-app routing until it reconnects.
+	go moveOpenedConnections()
 	sleep := newResumeClock(windowsSuspended)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	var gate metricsGate
+	var connections connectionsCursor
 	for {
 		select {
 		case <-closed:
@@ -897,8 +904,9 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 				if metrics, err := xray.GetRuntimeMetrics(); err == nil && gate.due(metrics, reply.Logs != nil, now) {
 					reply.Metrics = &metrics
 				}
+				reply.Connections = connections.read()
 			}
-			if (reply.Metrics != nil || reply.Logs != nil) && writeFrame(pipe, reply) != nil {
+			if (reply.Metrics != nil || reply.Logs != nil || reply.Connections != nil) && writeFrame(pipe, reply) != nil {
 				return 1, true, true
 			}
 		}

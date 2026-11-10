@@ -129,11 +129,11 @@ fn per_app_policy_gates_tun_then_preserves_provider_and_app_routing() {
         )
         .unwrap();
         let config: Value = serde_json::from_slice(&result.config).unwrap();
-        let rules = config["routing"]["rules"].as_array().unwrap();
+        let rules = after_own_subnet_block(&config);
         let entry = rules[0]["outboundTag"].as_str().unwrap();
         assert_ne!(entry, "elarni-apps-0");
         assert_eq!(rules[0]["port"], 53);
-        // In "Only listed" a flow whose owner Android could not look up ("-1") stays proxied.
+        // In "Only listed" a flow whose owner the lookup could not find ("-1") stays proxied.
         let mut listed = runtime.per_app_processes.clone();
         if mode == PerAppMode::ProxyOnly {
             listed.push("-1".into());
@@ -141,6 +141,14 @@ fn per_app_policy_gates_tun_then_preserves_provider_and_app_routing() {
         assert_eq!(rules[1]["process"], json!(listed));
         assert_eq!(rules[1]["inboundTag"], json!(["elarni-tun"]));
         assert_eq!(rules[2]["outboundTag"] == entry, mode == PerAppMode::Bypass);
+        // The connections view names the per-app rule that took a connection.
+        for (rule, tag) in rules.iter().zip([
+            "elarni-per-app-dns",
+            "elarni-per-app-listed-0",
+            "elarni-per-app-other",
+        ]) {
+            assert_eq!(rule["ruleTag"], tag);
+        }
         assert_eq!(
             rules[1]["outboundTag"] == entry,
             mode == PerAppMode::ProxyOnly
@@ -176,6 +184,21 @@ fn per_app_policy_gates_tun_then_preserves_provider_and_app_routing() {
             .is_err()
         );
     }
+}
+
+// The TUN's own-subnet block (compiler.rs block_tun_own_subnets) precedes the per-app gate.
+fn after_own_subnet_block(config: &Value) -> &[Value] {
+    let rules = config["routing"]["rules"].as_array().unwrap();
+    assert_eq!(rules[0]["inboundTag"], json!(["elarni-tun"]));
+    assert_eq!(rules[0]["port"], "1-52,54-65535");
+    let block = config["outbounds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|outbound| outbound["tag"] == rules[0]["outboundTag"])
+        .unwrap();
+    assert_eq!(block["protocol"], "blackhole");
+    &rules[1..]
 }
 
 fn per_app_runtime(targets: Value) -> RuntimeOptions {
@@ -221,7 +244,7 @@ fn per_app_targets_send_each_listed_app_to_its_own_outbound() {
         {"process":"steam", "target":"routing"},
     ])))
     .unwrap();
-    let rules = config["routing"]["rules"].as_array().unwrap();
+    let rules = after_own_subnet_block(&config);
     let reentry = rules[0]["outboundTag"].as_str().unwrap();
     assert_eq!(rules[0]["port"], 53);
     let target = |process: &str| {
@@ -243,6 +266,13 @@ fn per_app_targets_send_each_listed_app_to_its_own_outbound() {
     };
     assert_eq!(outbound(&target("game.exe"))["protocol"], "blackhole");
     assert_eq!(target("steam"), reentry);
+    // Xray refuses two rules with one tag.
+    let tags: Vec<&str> = rules
+        .iter()
+        .filter_map(|rule| rule["ruleTag"].as_str())
+        .collect();
+    let unique: std::collections::HashSet<&&str> = tags.iter().collect();
+    assert_eq!(unique.len(), tags.len(), "{tags:?}");
     // Unlisted targets keep the mode's: bypass sends them directly.
     assert_eq!(target("curl"), "elarni-direct");
     let nl = outbound(&target("telegram"));
@@ -293,7 +323,7 @@ fn per_app_targets_send_each_listed_app_to_its_own_outbound() {
     );
 }
 
-// Android names the owner of a flow it could not look up "-1". In "Only listed" that flow
+// "-1" names the owner of a flow the lookup could not find. In "Only listed" that flow
 // could belong to a listed app, so it must not go direct.
 #[test]
 fn only_listed_keeps_unattributed_flows_in_the_tunnel() {
@@ -305,7 +335,7 @@ fn only_listed_keeps_unattributed_flows_in_the_tunnel() {
     ]));
     runtime.per_app_mode = PerAppMode::ProxyOnly;
     let config = compile_per_app(&runtime).unwrap();
-    let rules = config["routing"]["rules"].as_array().unwrap();
+    let rules = after_own_subnet_block(&config);
     let reentry = &rules[0]["outboundTag"];
     let miss = rules
         .iter()
@@ -2516,5 +2546,85 @@ fn dns_outbound_skips_a_resolver_limited_to_its_domains() {
             .find(|outbound| outbound["protocol"] == "dns")
             .unwrap();
         assert_eq!(dns["settings"]["address"], address, "{servers}");
+    }
+}
+
+// Listing "-1" gives unidentified traffic (WSL, virtual machines, closed sockets) a target
+// of its own, in either mode, instead of the one "Only listed" adds.
+#[test]
+fn listed_unknown_owner_takes_its_own_target() {
+    use crate::model::PerAppMode;
+    let mut runtime = per_app_runtime(json!([{"process":"-1", "target":"direct"}]));
+    runtime.per_app_processes = vec!["-1".into(), "telegram".into()];
+    for mode in [PerAppMode::ProxyOnly, PerAppMode::Bypass] {
+        runtime.per_app_mode = mode;
+        let config = compile_per_app(&runtime).unwrap();
+        let unknown: Vec<&Value> = config["routing"]["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|rule| {
+                rule["process"]
+                    .as_array()
+                    .is_some_and(|names| names.contains(&json!("-1")))
+            })
+            .collect();
+        assert_eq!(unknown.len(), 1, "{mode:?}");
+        assert_eq!(unknown[0]["process"], json!(["-1"]), "{mode:?}");
+        assert_eq!(unknown[0]["outboundTag"], "elarni-direct", "{mode:?}");
+    }
+    // Listed without a target, it follows the mode like any listed app.
+    runtime.per_app_targets.clear();
+    runtime.per_app_mode = PerAppMode::Bypass;
+    let config = compile_per_app(&runtime).unwrap();
+    let rules = config["routing"]["rules"].as_array().unwrap();
+    let listed = rules
+        .iter()
+        .find(|rule| rule.get("process").is_some())
+        .unwrap();
+    assert_eq!(listed["process"], json!(runtime.per_app_processes));
+    assert_eq!(listed["outboundTag"], "elarni-direct");
+}
+
+// "children:<rule>" also takes the programs a listed app starts. A program listed on its own
+// keeps its own target: every app's direct rule comes before any rule that matches parents.
+#[test]
+fn per_app_children_rules_follow_the_direct_ones() {
+    let mut runtime = per_app_runtime(json!([
+        {"process":"children:/opt/claude/claude", "target":"routing"},
+        {"process":"/home/u/.local/bin/claude-code", "target":"direct"}
+    ]));
+    runtime.per_app_processes = vec![
+        "children:/opt/claude/claude".into(),
+        "/home/u/.local/bin/claude-code".into(),
+        "telegram".into(),
+    ];
+    let config = compile_per_app(&runtime).unwrap();
+    let listed: Vec<&Value> = config["routing"]["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|rule| {
+            rule["ruleTag"]
+                .as_str()
+                .is_some_and(|tag| tag.starts_with("elarni-per-app-listed-"))
+        })
+        .collect();
+    let processes: Vec<&Value> = listed.iter().map(|rule| &rule["process"]).collect();
+    assert_eq!(
+        processes,
+        [
+            &json!(["/opt/claude/claude"]),
+            &json!(["/home/u/.local/bin/claude-code"]),
+            &json!(["telegram"]),
+            &json!(["children:/opt/claude/claude"]),
+        ]
+    );
+    assert_eq!(listed[0]["outboundTag"], listed[3]["outboundTag"]);
+    assert_eq!(listed[1]["outboundTag"], "elarni-direct");
+    for invalid in ["children:", "children:-1", "children:children:/opt/x"] {
+        runtime.per_app_processes = vec![invalid.into()];
+        runtime.per_app_targets.clear();
+        assert!(compile_per_app(&runtime).is_err(), "{invalid}");
     }
 }

@@ -574,7 +574,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String appRoutingUses(String engine) {
-    return 'Маршрутизация приложений работает через $engine. В режиме обхода неуказанные и неопознанные процессы идут по обычной маршрутизации. В режиме «Только выбранные» они подключаются напрямую.';
+    return 'Маршрутизация приложений работает через $engine. Неуказанные приложения в режиме «Только выбранные» подключаются напрямую, а в режиме обхода идут по обычной маршрутизации. Трафик, который Elarni не может связать с приложением (WSL, виртуальные машины, контейнеры, рано закрытые соединения), может быть от выбранного приложения: в режиме «Только выбранные» он идёт по обычной маршрутизации. Добавьте в список «Неопознанный трафик», чтобы выбрать, куда он пойдёт.';
   }
 
   @override
@@ -690,9 +690,6 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get loadingApps => 'Загрузка приложений…';
-
-  @override
-  String get runningApps => 'Запущенные приложения';
 
   @override
   String get installedAndRunningApps => 'Установленные и запущенные приложения';
@@ -814,7 +811,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get perAppLauncherRule =>
-      'Snap, Flatpak и скрипты-лаунчеры запускают другую программу, поэтому их правила ничего не находят. Запустите приложение и выберите его в списке приложений.';
+      'Snap, Flatpak и скрипты-лаунчеры запускают другую программу, поэтому их правила ничего не находят. Выберите приложение в списке приложений; Snap-приложение или скрипт сначала запустите.';
 
   @override
   String get useProxy => 'Использовать прокси';
@@ -852,6 +849,80 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String perAppWindowsPathsElsewhere(Object platform) {
     return 'Пути исполняемых файлов Windows нельзя использовать в профиле $platform. Выберите приложения на этом устройстве.';
+  }
+
+  @override
+  String perAppLinuxRulesElsewhere(Object platform) {
+    return 'Правила Flatpak и AppImage называют приложения Linux и не подходят для профиля $platform.';
+  }
+
+  @override
+  String perAppServiceRulesElsewhere(Object platform) {
+    return 'Правила служб называют службы Windows и не подходят для профиля $platform.';
+  }
+
+  @override
+  String get perAppFlatpakRule =>
+      'Приложение Flatpak: и другие его программы в песочнице';
+
+  @override
+  String get perAppAppImageRule => 'AppImage: программы из этого файла образа';
+
+  @override
+  String get perAppServiceRule =>
+      'Служба Windows: и службы, которые работают в том же процессе';
+
+  @override
+  String get perAppKindService => 'Служба Windows';
+
+  @override
+  String get perAppIncludeChildren => 'Включать запущенные им программы';
+
+  @override
+  String get perAppIncludeChildrenHelp =>
+      'Направляет и программы, которые запускает это приложение, и запущенные ими: вспомогательные процессы, обновления, инструменты командной строки. Программа, добавленная в список отдельно, сохраняет свою цель. Браузер, который запустит приложение, тоже попадёт под правило, а уже запущенный — нет.';
+
+  @override
+  String get perAppWithChildren => 'вместе с запущенными им программами';
+
+  @override
+  String get perAppPresets => 'Наборы';
+
+  @override
+  String get perAppPresetSteam => 'Steam и игры';
+
+  @override
+  String get perAppPresetBrowsers => 'Браузеры';
+
+  @override
+  String get perAppPresetAdded => 'Добавлено';
+
+  @override
+  String get perAppPresetNotFound => 'Не найдено';
+
+  @override
+  String get perAppPresetWithChildren => 'Вместе с запущенными им программами';
+
+  @override
+  String get perAppPresetsHelp =>
+      'Набор предлагает приложения, найденные в списке приложений, каждое с правилом, которое дает этот компьютер. Если приложение не найдено, нажмите «Выбрать файл приложения».';
+
+  @override
+  String perAppAddPresetApps(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Добавить $count приложения',
+      many: 'Добавить $count приложений',
+      few: 'Добавить $count приложения',
+      one: 'Добавить $count приложение',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String perAppConnectionStartedBy(String name) {
+    return 'Запущено из $name';
   }
 
   @override
@@ -2951,4 +3022,139 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get markProblem => 'Отметить проблему';
+
+  @override
+  String get perAppUnknownOwner => 'Неопознанный трафик';
+
+  @override
+  String get perAppUnknownOwnerHelp =>
+      'Трафик без приложения: WSL, виртуальные машины, закрытые соединения';
+
+  @override
+  String perAppRunningNow(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'запущено $count программы',
+      many: 'запущено $count программ',
+      few: 'запущено $count программы',
+      one: 'запущена 1 программа',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get perAppNotRunning => 'Сейчас не запущено';
+
+  @override
+  String get perAppWarningMissing => 'Не найдено на этом компьютере.';
+
+  @override
+  String get perAppWarningFolder =>
+      'Это папка. Правило для папки заканчивается разделителем и охватывает программы внутри.';
+
+  @override
+  String get perAppWarningNotFolder => 'Это файл, а не папка.';
+
+  @override
+  String get perAppWarningScript =>
+      'Скрипт: запускается его интерпретатор, а не сам скрипт. Добавьте программу, которую он запускает.';
+
+  @override
+  String get perAppWarningSymlink =>
+      'Ссылка: программа запускается как файл, на который она указывает.';
+
+  @override
+  String get perAppWarningCase =>
+      'Регистр букв отличается от файла на диске, а правила его учитывают.';
+
+  @override
+  String get perAppWarningLauncher =>
+      'Ярлык или загрузчик: он запускает другую программу, которой это правило не соответствует.';
+
+  @override
+  String get perAppWarningBundleName =>
+      'Имя без пути соответствует файлу программы, а не пакету приложения. Выберите приложение из списка.';
+
+  @override
+  String get perAppWarningVersioned =>
+      'Указывает одну версию приложения и перестанет срабатывать после следующего обновления.';
+
+  @override
+  String get perAppWarningUnknown =>
+      'Это правило может не соответствовать ни одной программе.';
+
+  @override
+  String perAppSuggestedRule(String rule) {
+    return 'Предлагаемое правило: $rule';
+  }
+
+  @override
+  String get perAppUseSuggested => 'Использовать';
+
+  @override
+  String get perAppConnections => 'Недавние подключения';
+
+  @override
+  String get perAppConnectionsHelp =>
+      'Подключения, которые приложения открыли, пока Elarni подключён, — сначала новые, и куда ушло каждое. Здесь видно, какая программа стоит за трафиком приложения, например вспомогательный процесс или программа обновления, и её можно добавить. Хранится в памяти до отключения.';
+
+  @override
+  String get perAppConnectionsDisconnected =>
+      'Подключитесь, чтобы увидеть, какие приложения открывают подключения и куда они идут.';
+
+  @override
+  String get perAppConnectionsOff =>
+      'Маршрутизация по приложениям выключена, поэтому приложения не определяются. Включите её и сохраните.';
+
+  @override
+  String get perAppConnectionsEmpty => 'Подключений пока нет.';
+
+  @override
+  String get perAppConnectionsSearch => 'Поиск по приложениям и адресам';
+
+  @override
+  String get perAppConnectionNoApp => 'Приложение не определялось';
+
+  @override
+  String get perAppConnectionDirect => 'Напрямую';
+
+  @override
+  String get perAppConnectionProxy => 'Через сервер';
+
+  @override
+  String get perAppConnectionBlocked => 'Заблокировано';
+
+  @override
+  String get perAppConnectionDns => 'DNS';
+
+  @override
+  String get perAppConnectionRouting => 'Маршрутизация';
+
+  @override
+  String get perAppConnectionListed => 'Правило приложения';
+
+  @override
+  String get perAppConnectionNotListed => 'Не в списке';
+
+  @override
+  String get perAppConnectionAdd => 'Добавить в список';
+
+  @override
+  String perAppConnectionAdded(String name) {
+    return '$name добавлено. Сохраните изменения, чтобы применить.';
+  }
+
+  @override
+  String get perAppConnectionOpenedReset =>
+      'Открыто до подключения Elarni · Закрыто, приложение переподключится по правилам приложений';
+
+  @override
+  String get perAppConnectionOpenedKept =>
+      'Открыто до подключения Elarni · Идёт мимо правил приложений, пока приложение не переподключится';
+
+  @override
+  String perAppConnectionsRestart(String apps) {
+    return 'Перезапустите $apps: их подключения, открытые до подключения Elarni, идут мимо правил приложений, пока они не переподключатся.';
+  }
 }

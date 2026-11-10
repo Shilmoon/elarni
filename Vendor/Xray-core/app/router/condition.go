@@ -298,16 +298,57 @@ type ProcessNameMatcher struct {
 	AbsPaths      []string
 	Folders       []string
 	MatchXraySelf bool
+	// Elarni: "-1" also names the owner of a local flow that the lookup could not find
+	// (Android's finder already returns that name). Such a flow may belong to a listed
+	// app, so "Only listed" keeps it in the tunnel.
+	MatchUnknown bool
+	// Elarni: apps that a path does not name. "flatpak:<app id>" is a Flatpak sandbox,
+	// "appimage:<file>" an AppImage, or every AppImage in "appimage:<folder>/" (Linux), and
+	// "service:<name>" a Windows service by its name, the process that runs it.
+	FlatpakApps []string
+	AppImages   []string
+	Services    []string
+	// Elarni: "children:<rule>" also matches the programs that a program matching <rule> started,
+	// and theirs: Claude starts Claude Code, Discord its updater.
+	Ancestors *ProcessNameMatcher
 }
+
+// maxProcessAncestors bounds the walk from a program to the programs that started it.
+const maxProcessAncestors = 32
+
+// Elarni: what the system knows of a process beyond its path; tests replace these.
+var (
+	processFlatpakApp = net.FlatpakApp
+	processAppImage   = net.AppImage
+	processServices   = net.ProcessServices
+	parentProcess     = net.ParentProcess
+)
 
 func NewProcessNameMatcher(names []string) *ProcessNameMatcher {
 	processNames := []string{}
 	folders := []string{}
 	absPaths := []string{}
+	var flatpakApps, appImages, services, ancestors []string
 	matchXraySelf := false
 	for _, name := range names {
+		if rule, ok := strings.CutPrefix(name, "children:"); ok {
+			ancestors = append(ancestors, rule)
+			continue
+		}
 		if name == "self/" {
 			matchXraySelf = true
+			continue
+		}
+		if id, ok := strings.CutPrefix(name, "flatpak:"); ok {
+			flatpakApps = append(flatpakApps, id)
+			continue
+		}
+		if image, ok := strings.CutPrefix(name, "appimage:"); ok {
+			appImages = append(appImages, image)
+			continue
+		}
+		if service, ok := strings.CutPrefix(name, "service:"); ok {
+			services = append(services, strings.ToLower(service))
 			continue
 		}
 		// replace xray/ with self executable path
@@ -321,7 +362,7 @@ func NewProcessNameMatcher(names []string) *ProcessNameMatcher {
 		}
 		name := filepath.ToSlash(name)
 		if runtime.GOOS == "windows" {
-			name = strings.ToLower(name)
+			name = windowsPackageFamilyPath(strings.ToLower(name))
 		}
 		// /usr/bin/
 		if strings.HasSuffix(name, "/") {
@@ -336,12 +377,63 @@ func NewProcessNameMatcher(names []string) *ProcessNameMatcher {
 		// curl.exe or curl
 		processNames = append(processNames, strings.TrimSuffix(name, ".exe"))
 	}
+	var ancestorMatcher *ProcessNameMatcher
+	if len(ancestors) > 0 {
+		ancestorMatcher = NewProcessNameMatcher(ancestors)
+		// "children:" wraps one rule; nested, it adds nothing.
+		ancestorMatcher.Ancestors = nil
+	}
 	return &ProcessNameMatcher{
+		Ancestors:     ancestorMatcher,
 		ProcessNames:  processNames,
 		AbsPaths:      absPaths,
 		Folders:       folders,
 		MatchXraySelf: matchXraySelf,
+		MatchUnknown:  slices.Contains(processNames, "-1"),
+		FlatpakApps:   flatpakApps,
+		AppImages:     appImages,
+		Services:      services,
 	}
+}
+
+// Elarni: Microsoft Store (MSIX) apps run from <volume>\WindowsApps\<name>_<version>_<arch>_<resource>_<publisher>\,
+// a new folder with every update. Rules and process paths compare that folder as <name>_<publisher>, its
+// package family, so a rule saved for one version matches the next. Only Windows can install there: the
+// folder is writable by the system alone. Takes a lowercased path with forward slashes.
+func windowsPackageFamilyPath(path string) string {
+	const parent = "/windowsapps/"
+	start := strings.Index(path, parent)
+	if start < 0 {
+		return path
+	}
+	start += len(parent)
+	end := strings.IndexByte(path[start:], '/')
+	if end < 0 {
+		end = len(path)
+	} else {
+		end += start
+	}
+	parts := strings.Split(path[start:end], "_")
+	if len(parts) != 5 || !packageName(parts[0]) || !packageVersion(parts[1]) ||
+		!slices.Contains([]string{"x86", "x64", "arm", "arm64", "neutral", "x86a64"}, parts[2]) ||
+		len(parts[4]) != 13 || strings.Trim(parts[4], "abcdefghijklmnopqrstuvwxyz0123456789") != "" {
+		return path
+	}
+	return path[:start] + parts[0] + "_" + parts[4] + path[end:]
+}
+
+func packageName(name string) bool {
+	return name != "" && strings.Trim(name, "abcdefghijklmnopqrstuvwxyz0123456789.-") == ""
+}
+
+func packageVersion(version string) bool {
+	fields := strings.Split(version, ".")
+	for _, field := range fields {
+		if field == "" || strings.Trim(field, "0123456789") != "" {
+			return false
+		}
+	}
+	return len(fields) == 4
 }
 
 // lookupProcess finds the owner of a local socket; tests replace it.
@@ -352,7 +444,7 @@ func (m *ProcessNameMatcher) Apply(ctx routing.Context) (matched bool) {
 	if flightrecorder.Enabled() {
 		started := time.Now()
 		defer func() {
-			if matched {
+			if matched && code == "not_matched" {
 				code = "matched"
 			}
 			flightrecorder.Record(flightrecorder.Event{Name: "process_match", Code: code, Values: map[string]int64{"network": int64(ctx.GetNetwork()), "elapsed_us": time.Since(started).Microseconds()}})
@@ -397,7 +489,7 @@ func (m *ProcessNameMatcher) Apply(ctx routing.Context) (matched bool) {
 		pid, name, path, err := lookupProcess(network, srcIP, srcPort, dstIP, dstPort)
 		if err != nil && err != net.ErrNotLocal {
 			// Elarni: once per connection rather than per process rule, and at info: the connection is still routed by the other rules.
-			errors.LogInfo(context.Background(), "Unables to find local process name: ", err)
+			errors.LogInfo(context.Background(), "Unable to find the process of ", network, " ", srcIP, ":", srcPort, ": ", err)
 		}
 		return pid, name, path, err
 	}
@@ -410,21 +502,69 @@ func (m *ProcessNameMatcher) Apply(ctx routing.Context) (matched bool) {
 		pid, name, absPath, err = find()
 	}
 	if err != nil {
-		code = "lookup_failed"
 		if err == net.ErrNotLocal {
 			code = "not_local"
+			return false
 		}
-		return false
+		code = "lookup_failed"
+		if m.MatchUnknown {
+			code = "unknown_owner"
+		}
+		return m.MatchUnknown
 	}
 	code = "not_matched"
-	if m.MatchXraySelf {
-		if pid == os.Getpid() {
-			return true
+	matched, via := m.matchProcess(pid, name, absPath)
+	if via != "" {
+		if original, ok := lookupContext.(*routingsession.Context); ok {
+			original.NoteProcessAncestor(via)
 		}
 	}
+	return matched
+}
+
+// MatchesProcess reports whether the rule names a process, as FindProcess describes it.
+// Elarni: the per-app editor counts running programs with it, as routing would match them.
+func (m *ProcessNameMatcher) MatchesProcess(pid int, name, absPath string) bool {
+	matched, _ := m.matchProcess(pid, name, absPath)
+	return matched
+}
+
+// matchProcess also returns the path of the program that started this one, when a children
+// rule matched that program rather than this one.
+func (m *ProcessNameMatcher) matchProcess(pid int, name, absPath string) (bool, string) {
+	if m.matchesSelf(pid, name, absPath) {
+		return true, ""
+	}
+	if m.Ancestors == nil || pid <= 0 {
+		return false, ""
+	}
+	if m.Ancestors.matchesSelf(pid, name, absPath) {
+		return true, ""
+	}
+	seen := map[int]bool{pid: true}
+	for depth := 0; depth < maxProcessAncestors; depth++ {
+		parent, ok := parentProcess(pid)
+		if !ok || seen[parent.PID] {
+			return false, ""
+		}
+		if m.Ancestors.matchesSelf(parent.PID, parent.Name, parent.Path) {
+			return true, parent.Path
+		}
+		seen[parent.PID] = true
+		pid = parent.PID
+	}
+	return false, ""
+}
+
+func (m *ProcessNameMatcher) matchesSelf(pid int, name, absPath string) bool {
+	if m.MatchXraySelf && pid == os.Getpid() {
+		return true
+	}
+	// Identity lookups take the process as the lookup reported it.
+	reportedName, reportedPath := name, absPath
 	if runtime.GOOS == "windows" {
 		name = strings.TrimSuffix(strings.ToLower(name), ".exe")
-		absPath = strings.ToLower(absPath)
+		absPath = windowsPackageFamilyPath(strings.ToLower(absPath))
 	}
 	if slices.Contains(m.ProcessNames, name) {
 		return true
@@ -435,6 +575,30 @@ func (m *ProcessNameMatcher) Apply(ctx routing.Context) (matched bool) {
 	for _, f := range m.Folders {
 		if strings.HasPrefix(absPath, f) {
 			return true
+		}
+	}
+	if pid <= 0 {
+		return false
+	}
+	if len(m.FlatpakApps) > 0 {
+		if id := processFlatpakApp(pid); id != "" && slices.Contains(m.FlatpakApps, id) {
+			return true
+		}
+	}
+	if len(m.AppImages) > 0 {
+		if image := processAppImage(pid, reportedPath); image != "" {
+			for _, rule := range m.AppImages {
+				if image == rule || strings.HasSuffix(rule, "/") && strings.HasPrefix(image, rule) {
+					return true
+				}
+			}
+		}
+	}
+	if len(m.Services) > 0 {
+		for _, service := range processServices(pid, reportedName) {
+			if slices.Contains(m.Services, strings.ToLower(service)) {
+				return true
+			}
 		}
 	}
 	return false

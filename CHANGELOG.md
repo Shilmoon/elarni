@@ -4,6 +4,147 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+## 0.6.0 - 2026-11-10
+
+### Added
+
+- The per-app rule list shows, on Windows, macOS and Linux, how many running programs each rule
+  matches, and warns when a rule may match nothing: a missing file, a folder without its
+  trailing separator, a script, link or launcher, the wrong letter case, or a rule for one
+  version of an app. **Use suggested rule** fixes it where it can, including rules for one
+  Squirrel or Claude Code version saved before. On Android, listed apps that are not installed
+  are shown and can be removed.
+- **Recent connections** in the per-app editor, on Windows, macOS, Linux and Android, lists the
+  connections apps opened while connected: which program made each one, its address, and
+  whether a per-app rule took it and where it went. **Add to list** adds a program that is not
+  listed, such as an app's helper or updater. The list stays in memory until you disconnect.
+- Per-app rules for Flatpak apps and AppImages on Linux, and for services on Windows. A Flatpak
+  app matches by its app ID, with every program in its sandbox; an AppImage by its image file,
+  although each start mounts it at a new path; a service by name, in the svchost process that
+  runs it, so Delivery Optimization or Windows Update can take a target of its own. The app list
+  offers them and **Recent connections** adds them. Before, a running AppImage was listed by its
+  mount path, which the next start changes, and Flatpak apps could not be listed until running.
+- **Include programs it starts** for a listed app on Windows, macOS and Linux: its rule also
+  matches the programs the app starts, and theirs, such as helpers, updaters or a terminal's
+  command-line tools. A program listed on its own keeps its own target, and **Recent
+  connections** shows which listed app started a program.
+- Listed apps that were running before Elarni connected no longer keep connections that skip
+  per-app routing: on Windows (IPv4) and Linux, Elarni closes them when the tunnel starts, so
+  the app reconnects through it. Where the system does not allow that (IPv6 on Windows,
+  macOS), **Recent connections** lists them and asks you to restart the app.
+- The Windows app list also offers the Start menu's apps and installed Microsoft Store apps,
+  such as Claude, when they are not running. On Linux the list loads without freezing the
+  window.
+- **Presets** in the desktop per-app app list add Discord, Telegram, Claude with Claude Code,
+  Steam with its games, or browsers at once, each with the rule the app list gives it.
+
+### Changed
+
+- The Xray core is updated to upstream v26.11.9. Its default TLS fingerprint ("chrome") now
+  imitates Chrome 155, which upstream reports Russia's TSPU does not target yet. Multiplexed
+  (mux) connections no longer write to their server connection from two streams at once and
+  carry up to 128 streams each by default, an inbound that fails to start is closed instead of
+  left half-registered, and on Windows the VPN adapter's IPv6 setup errors are only logged
+  when the registry's DisabledComponents turns IPv6 off, with IPv6 outside the tunnel blocked
+  when leak blocking is on.
+- Per-app routing finds each new connection's app faster. Windows and Linux ask the system for
+  that one connection instead of reading every socket on the computer (Windows: 0.64 ms to
+  25 µs per connection), and macOS reads its socket table once for connections that open
+  together, as a browser's do (64 at once: 70 ms to 2.6 ms).
+- Editing a large catalog no longer compiles every server again. On Windows and Linux a favorite,
+  rename, selection, settings toggle or refresh compiles only the servers it changes: with 300
+  servers on a route of 20,000 rules, a favorite or a rename went from 9.4 s to 0.11 s. Android,
+  macOS and iOS likewise validate and hash a server again only after its configuration, its
+  routes or the settings changed.
+- A TCP or ICMP ping on Windows, Linux and Android no longer compiles the server's whole
+  configuration to learn its address; the address is kept until the server changes.
+- macOS and iOS read, compare and reduce geofiles off the main thread, so the window stays
+  responsive during a geofile refresh. Android no longer copies the stored geofiles for each
+  rule edit that keeps them.
+- The Subscriptions page builds the server rows of open cards only, the Settings page builds
+  only the open category, and the Windows Settings page asks for the VPN service state at
+  most once in 30 seconds instead of starting a core process on every reload.
+- Android scans QR codes from the camera's brightness plane instead of encoding each frame
+  as JPEG and decoding it again.
+- The macOS and iOS tunnel resolves a profile's server hosts together when it starts.
+- Removed code no platform runs: the tun2proxy command-line programs, its HTTP and SOCKS4
+  proxies, virtual DNS and UDP gateway, with 90 crates from the Rust lockfile, and libXray
+  methods no app calls. A routing link that starts with `://routing/`, without a scheme, is no
+  longer imported on Windows, Linux, macOS and iOS; nothing writes such links and Android
+  never took them.
+- The per-app app list opens faster the second time on macOS and Linux: app icons are drawn
+  once and kept until the app or the icon theme changes, and macOS builds the list off the
+  main thread, so the window no longer freezes while it loads.
+
+### Fixed
+
+- On iPhone, iPad and Mac, apps' UDP traffic now reaches the server. The packet bridge's relay
+  socket to the core was not bound to loopback, and iOS and macOS dropped every datagram sent
+  on it, so each UDP session ended at its first datagram: games such as Brawl Stars fell back
+  to TCP and lagged in battles, and QUIC fell back to TCP.
+- Traffic to the VPN adapter's own subnet, other than DNS, now ends at once instead of
+  following routing rules for private ranges. On Android, each connect set off 2,000-4,000
+  Private DNS connections (port 853 on the VPN's resolver) in about 3 s, and the check hung
+  for 16 s or more before it fell back to plain DNS; Windows sent subnet broadcasts (NetBIOS,
+  Spotify device discovery) out the direct route.
+- A Windows connect that the PC slept through no longer fails when it wakes. The helper's
+  30 s startup wait and the app's 120 s connect wait counted the time asleep, so both ran out
+  at resume, the helper exited and the app started over, although the core was ready seconds
+  later. Helper and app waits on Windows now count only the time the PC is awake.
+- A server test whose XHTTP connection was still connecting when the test ended no longer
+  holds its cleanup for up to 16 s. The app reported "An earlier server test is still
+  closing" meanwhile (iOS refused further tests until restarted), and macOS paused automatic
+  server switching. The XHTTP dial now ends with the test, and with the connection it served.
+- Android now names the app of short-lived connections, so per-app rules match them. About
+  16% of QUIC flows to Vision servers and about 5% of TCP connections had no app, because the
+  app had closed its socket by the time routing asked Android who owned it. With per-app rules
+  on, the VPN now asks when the connection arrives and remembers a socket's app for 30 s after
+  it closes.
+- Automatic server tests on Windows, macOS and Linux start 50 ms apart instead of 40 ms, so
+  uneven dial times no longer put three handshakes to one server name within 50 ms. Russia's
+  TSPU freezes a server name after more than three handshakes that close together.
+- Per-app rules for the Claude app on Windows, and for other Microsoft Store apps, stopped
+  matching after each app update: the app runs from a folder named after its version. Rules now
+  match the package in any version, including rules saved before. Claude Code, which the Claude
+  app keeps in a new `claude-code\<version>\` folder with each update, is listed as one app that
+  matches every version, on Windows, macOS and Linux; so are Snap apps on Linux, whose path
+  changes with each refresh. Pick Claude Code and Snap apps again from the list to get the new
+  rule; Store app rules need nothing.
+- On Android, an app listed for per-app routing that was installed or reinstalled while
+  connected missed its route until the next connect: in **Only listed** it stayed out of the
+  VPN, and in **Bypass** its traffic went through it. Elarni now builds the tunnel again when a
+  listed app is installed, removed or reinstalled; app updates change nothing.
+- In per-app **Only listed** mode on Windows, macOS and Linux, a connection whose app could not
+  be found went direct, so a listed app's connection could leave outside the VPN. It now follows
+  normal routing, as on Android. Such traffic can include WSL, virtual machines and containers:
+  to send it direct as before, add **Unidentified traffic** to the app list and set it to Direct.
+- On Linux, per-app rules missed IPv4 connections made from IPv6 sockets, which Java apps
+  (Minecraft, JetBrains IDEs) and many servers use, and rules stopped matching a program whose
+  package was upgraded while it ran, until it restarted.
+- macOS and iOS: an app whose connection the packet stack had given up, as during a server
+  switch or at the session limit, waited for its own timeout. The stack now resets such a
+  connection, so the app reconnects at once.
+- macOS: an automatic switch that the provider refused (missing credentials, an invalid
+  configuration, failed resolution) disconnected the VPN although the previous server was
+  still running. The VPN now stays up, and the app waits 20 s for a switch reply instead of 15.
+- macOS and iOS: after one failed geofile refresh, such as being offline at the weekly
+  refresh, a routing profile's geofiles were never refreshed automatically again. A failed
+  refresh is retried after 15 minutes.
+- **Share** wrote a dead link (`<nil>:0`) for a server imported from Xray JSON in the usual
+  `vnext` or `servers` form, and dropped a REALITY `publicKey` and the path, host, mode and
+  seed of transports named `websocket`, `splithttp`, `mkcp` or `tcp` with an HTTP header.
+- Android and iOS: saving a second new routing profile overwrote the first one's rules,
+  because both started as "My routing". A new profile now takes a free name.
+- Android: with **Disconnect on sleep**, a tunnel started while the screen was off (tile,
+  boot, an external request) was restarted when the screen turned on.
+- A subscription's connect address and HTTP Host override were also used for its mirrors and
+  the provider's fallback URL, which are other hosts, so none could take over.
+- A UDP flow in VPN mode could start again from a new source port after its full queue
+  refused a datagram.
+- Windows and Linux: a system proxy restore that failed was retried and reported every
+  second, and the proxy was never set.
+- macOS: the log level dropdown stayed disabled after a change.
+
 ## 0.5.1 - 2026-11-08
 
 ### Changed

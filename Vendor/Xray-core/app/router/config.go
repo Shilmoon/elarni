@@ -16,6 +16,8 @@ type Rule struct {
 	Balancer  *Balancer
 	Condition Condition
 	Webhook   *WebhookNotifier
+	// Elarni: the rule has a process condition.
+	matchesProcess bool
 }
 
 func (r *Rule) GetTag() (string, error) {

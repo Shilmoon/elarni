@@ -117,6 +117,33 @@ void main() {
     expect(os.current, {'user': 'pac'});
   });
 
+  test('a restore that keeps failing is reported once', () async {
+    await backup.parent.create(recursive: true);
+    await backup.writeAsString('not a backup');
+    expect(await session.sync(10891), contains('could not be restored'));
+    expect(await session.sync(10891), isNull, reason: 'the failed port waits');
+    expect(os.current, {'user': 'pac'});
+
+    await backup.delete();
+    expect(await session.sync(null), isNull);
+    expect(await session.sync(10891), isNull);
+    expect(os.current, {'port': 10891}, reason: 'a new session tries again');
+  });
+
+  test('a restore that fails at disconnect is reported once', () async {
+    await session.sync(10891);
+    os.readFailure = const OSError('gsettings failed');
+    expect(await session.sync(null), contains('could not be restored'));
+    expect(await session.sync(null), isNull, reason: 'the next tick is quiet');
+    expect(os.current, {'port': 10891});
+
+    os.readFailure = null;
+    expect(await session.sync(10891), isNull);
+    expect(await session.sync(null), isNull);
+    expect(os.current, {'user': 'pac'}, reason: 'the next session restores');
+    expect(await backup.exists(), isFalse);
+  });
+
   test('overlapping calls run in order', () async {
     final results = await Future.wait([
       session.sync(10891),

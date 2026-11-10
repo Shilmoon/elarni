@@ -52,18 +52,9 @@ const (
 	PingDelayError   int64 = 10000
 )
 
-// get the delay of some outbound.
+// MeasureDelayContext gets the delay of a request to url.
 // timeout means how long the http request will be cancelled if no response, in units of seconds.
-// url means the website we use to test speed. "https://www.google.com" is a good choice for most cases.
 // proxy means the local http/socks5 proxy, like "socks5://[::1]:1080". If proxy is empty, it means no proxy.
-func MeasureDelay(timeout int, url string, proxy string) (int64, error) {
-	return MeasureDelayWithOptions(timeout, url, proxy, "HEAD", "default")
-}
-
-func MeasureDelayWithOptions(timeout int, url string, proxy string, method string, mode string) (int64, error) {
-	return MeasureDelayContext(context.Background(), timeout, url, proxy, method, mode)
-}
-
 func MeasureDelayContext(ctx context.Context, timeout int, url string, proxy string, method string, mode string, expected ...*ExpectedResponse) (int64, error) {
 	if method == "" {
 		method = "HEAD"
@@ -100,10 +91,6 @@ func MeasureDelayContext(ctx context.Context, timeout int, url string, proxy str
 		return second, nil
 	}
 	return first, nil
-}
-
-func CoreHTTPClient(timeout time.Duration, proxy string) (*http.Client, error) {
-	return coreHTTPClient(timeout, proxy, false)
 }
 
 func coreHTTPClient(timeout time.Duration, proxy string, keepAlive bool) (*http.Client, error) {

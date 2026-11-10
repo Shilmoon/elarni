@@ -58,9 +58,10 @@ extension _ProxyProbes on DesktopProxy {
     final timeout = args['timeout']! as int;
     if (automatic) {
       // TSPU freezes an SNI after more than 3 handshakes under ~50 ms apart.
-      // A near server's probe can end sooner, so starts 40 ms apart keep any
-      // 50 ms window to two.
-      final wait = _lastAutomaticProbe + 40 - _clock.elapsedMilliseconds;
+      // A near server's probe can end sooner, so starts 50 ms apart keep any
+      // 50 ms window to two even when one dial takes up to 50 ms longer than
+      // the next (40 ms let two handshakes 46 ms apart through on loaded CI).
+      final wait = _lastAutomaticProbe + 50 - _clock.elapsedMilliseconds;
       if (wait > 0) await Future<void>.delayed(Duration(milliseconds: wait));
       _lastAutomaticProbe = _clock.elapsedMilliseconds;
     }
@@ -86,16 +87,7 @@ extension _ProxyProbes on DesktopProxy {
       int latency;
       Object? exit;
       if (protocol == 'tcp' || protocol == 'icmp') {
-        final probeConfig = await _compile(catalog, catalog.node(id));
-        final endpoints = catalogList(
-          (await DesktopProxy._domainOff(domainPath, 'profileEndpoints', {
-            'config': jsonDecode(probeConfig),
-          }))['endpoints'],
-        );
-        final endpoint = endpoints
-            .where((e) => e['physical'] == true)
-            .firstOrNull;
-        if (endpoint == null) throw desktopError('invalid_profile');
+        final (:endpoint, :mapping) = await _probeTarget(catalog, id);
         if (protocol == 'tcp' && endpoint['supportsTcpProbe'] != true) {
           throw PlatformException(
             code: 'unsupported_ping_method',
@@ -103,11 +95,10 @@ extension _ProxyProbes on DesktopProxy {
                 "Direct TCP is not supported by this endpoint's transport. Use Proxy testing.",
           );
         }
-        final mappings = await _hostMappings(probeConfig, [endpoint]);
         final addresses = await _endpointAddresses(
           endpoint,
           DesktopProxy._nodeSettings(catalog, catalog.node(id)),
-          mapping: mappings[endpoint['host']] as Map?,
+          mapping: await mapping,
         );
         _checkGeneration(generation);
         if (protocol == 'tcp') {
@@ -285,6 +276,44 @@ extension _ProxyProbes on DesktopProxy {
       _workers.remove(process);
       process.kill();
     }
+  }
+
+  // What a direct probe dials: the server's first physical endpoint, and the
+  // profile's own address for its host. Both follow from the compiled config,
+  // which the configuration revision stands for, so a probe compiles the
+  // server once, not on each run.
+  Future<({CatalogMap endpoint, Future<Map?> mapping})> _probeTarget(
+    DesktopCatalog catalog,
+    String id,
+  ) {
+    final node = catalog.node(id);
+    final revision = node['configurationRevision'] ?? id;
+    final known = _probeTargets[id];
+    if (known != null && known.revision == revision) return known.target;
+    void forget(Object _) {
+      if (_probeTargets[id]?.revision == revision) _probeTargets.remove(id);
+    }
+
+    final target = () async {
+      final config = await _compile(catalog, node);
+      final endpoint = catalogList(
+        (await DesktopProxy._domainOff(domainPath, 'profileEndpoints', {
+          'config': jsonDecode(config),
+        }))['endpoints'],
+      ).where((e) => e['physical'] == true).firstOrNull;
+      if (endpoint == null) throw desktopError('invalid_profile');
+      final mapping = _hostMappings(config, [
+        endpoint,
+      ]).then((mappings) => mappings[endpoint['host']] as Map?);
+      // Whoever awaits it gets the failure; the next probe tries again.
+      mapping.then((_) {}, onError: forget);
+      return (endpoint: endpoint, mapping: mapping);
+    }();
+    target.then((_) {}, onError: forget);
+    // Servers that were deleted since leave their entries behind.
+    if (_probeTargets.length >= 2048) _probeTargets.clear();
+    _probeTargets[id] = (revision: revision, target: target);
+    return target;
   }
 
   Future<List<InternetAddress>> _endpointAddresses(

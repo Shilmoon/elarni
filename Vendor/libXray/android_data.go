@@ -35,6 +35,19 @@ func DecodeAndroidQRImage(data []byte) (string, error) {
 	if err != nil {
 		return "", errors.New("invalid_qr_image")
 	}
+	return decodeAndroidQR(decoded)
+}
+
+// DecodeAndroidQRLuma reads a camera frame's brightness plane, width*height bytes row by row,
+// so a frame needs no image file in between.
+func DecodeAndroidQRLuma(luma []byte, width, height int) (string, error) {
+	if width <= 0 || height <= 0 || width > 8192 || height > 8192 || len(luma) != width*height {
+		return "", errors.New("invalid_qr_image")
+	}
+	return decodeAndroidQR(&image.Gray{Pix: luma, Stride: width, Rect: image.Rect(0, 0, width, height)})
+}
+
+func decodeAndroidQR(decoded image.Image) (string, error) {
 	bitmap, err := gozxing.NewBinaryBitmapFromImage(decoded)
 	if err != nil {
 		return "", errors.New("invalid_qr_image")

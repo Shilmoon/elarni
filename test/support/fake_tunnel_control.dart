@@ -69,6 +69,14 @@ class FakeTunnelControl implements TunnelControl {
   @override
   Future<String> subscriptionDeviceID(String id) async => deviceID;
 
+  final checkedRules = <List<String>>[];
+  ProcessRuleChecks ruleChecks = const ProcessRuleChecks({});
+  @override
+  Future<ProcessRuleChecks> checkProcessRules(List<String> rules) async {
+    checkedRules.add(rules);
+    return ruleChecks;
+  }
+
   @override
   Future<SubscriptionSnapshot> resetSubscriptionDeviceID(String id) async {
     resetDeviceIDs.add(id);
@@ -334,6 +342,31 @@ class FakeTunnelControl implements TunnelControl {
   Future<Map<String, Object?>> runtimeMetrics() async {
     metricsReads++;
     return {};
+  }
+
+  /// The core's list: entries with a seq after the read's are returned.
+  int connectionsEpoch = 0;
+  final connections = <Map<String, Object?>>[];
+  final connectionReads = <(int, int)>[];
+  @override
+  Future<RecentConnections> readConnections({
+    int epoch = 0,
+    int after = 0,
+  }) async {
+    connectionReads.add((epoch, after));
+    final since = epoch == connectionsEpoch ? after : 0;
+    final entries = [
+      for (final entry in connections)
+        if ((entry['seq']! as int) > since) entry,
+    ];
+    return RecentConnections.fromMap({
+      'epoch': connectionsEpoch,
+      'seq': connections.fold<int>(
+        0,
+        (seq, entry) => entry['seq']! as int > seq ? entry['seq']! as int : seq,
+      ),
+      'connections': entries,
+    });
   }
 
   final logLines = <Map<String, Object?>>[];

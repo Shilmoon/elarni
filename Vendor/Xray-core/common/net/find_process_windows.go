@@ -3,6 +3,7 @@
 package net
 
 import (
+	"encoding/binary"
 	"net"
 	"net/netip"
 	"path/filepath"
@@ -102,6 +103,13 @@ func FindProcess(network, srcIP string, srcPort uint16, destIP string, destPort 
 		dstAddr = dstAddr.Unmap()
 	}
 
+	// Elarni: a connection's owner by its addresses, without scanning every row of the table.
+	if network == "tcp" && dstAddr.IsValid() && addr.Is4() == dstAddr.Is4() {
+		if pid := nsiTCPOwner(netip.AddrPortFrom(addr, srcPort), netip.AddrPortFrom(dstAddr, destPort)); pid != 0 {
+			return windowsProcess(pid)
+		}
+	}
+
 	family := windows.AF_INET
 	if addr.Is6() {
 		family = windows.AF_INET6
@@ -133,6 +141,10 @@ func FindProcess(network, srcIP string, srcPort uint16, destIP string, destPort 
 	if err != nil {
 		return 0, "", "", err
 	}
+	return windowsProcess(pid)
+}
+
+func windowsProcess(pid uint32) (PID int, Name string, AbsolutePath string, err error) {
 	NameWithPath, err := getExecPathFromPID(pid)
 	NameWithPath = filepath.ToSlash(NameWithPath)
 
@@ -274,6 +286,75 @@ func getTransportTable(fn uintptr, family int, class int, rowSize int, sizeHint 
 
 func readNativeUint32(b []byte) uint32 {
 	return *(*uint32)(unsafe.Pointer(&b[0]))
+}
+
+// NsiGetParameter is undocumented. Wine's include/wine/nsi.h describes the TCP connection
+// table that GetExtendedTcpTable reads for TCP_TABLE_OWNER_PID_CONNECTIONS: its key is the
+// local and the remote SOCKADDR_INET, and its static parameter holds the owning process.
+var nsiGetParameter = windows.NewLazySystemDLL("nsi.dll").NewProc("NsiGetParameter")
+
+// npiModuleID is NPI_MODULEID.
+type npiModuleID struct {
+	Length uint16
+	_      uint16
+	Type   uint32
+	GUID   windows.GUID
+}
+
+// npiTCPModule is NPI_MS_TCP_MODULEID.
+var npiTCPModule = npiModuleID{
+	Length: uint16(unsafe.Sizeof(npiModuleID{})),
+	Type:   1, // MIT_GUID
+	GUID:   windows.GUID{Data1: 0xeb004a03, Data2: 0x9b1a, Data3: 0x11d4, Data4: [8]byte{0x91, 0x23, 0x00, 0x50, 0x04, 0x77, 0x59, 0xbc}},
+}
+
+const (
+	nsiActiveStore    = 1 // the store iphlpapi reads its tables from
+	nsiTCPConnections = 4 // NSI_TCP_ESTAB_TABLE: every connection that is not listening
+	nsiStaticParam    = 2 // NSI_PARAM_TYPE_STATIC
+	sockaddrInetSize  = 28
+)
+
+// nsiTCPConnectionStatic is struct nsi_tcp_conn_static.
+type nsiTCPConnectionStatic struct {
+	_       [3]uint32
+	PID     uint32
+	Created uint64
+	Module  uint64
+}
+
+// nsiTCPOwner returns the process that owns the TCP connection from local to remote, or 0
+// when the system has no such connection or does not say: a closed connection waiting out
+// TIME_WAIT has no owner. One call costs microseconds, a table scan about 1.2 us per socket.
+func nsiTCPOwner(local, remote netip.AddrPort) uint32 {
+	if nsiGetParameter.Find() != nil {
+		return 0
+	}
+	var key [2 * sockaddrInetSize]byte
+	putSockaddrInet(key[:sockaddrInetSize], local)
+	putSockaddrInet(key[sockaddrInetSize:], remote)
+	var static nsiTCPConnectionStatic
+	code, _, _ := nsiGetParameter.Call(nsiActiveStore, uintptr(unsafe.Pointer(&npiTCPModule)), nsiTCPConnections,
+		uintptr(unsafe.Pointer(&key[0])), uintptr(len(key)), nsiStaticParam,
+		uintptr(unsafe.Pointer(&static)), unsafe.Sizeof(static), 0)
+	if code != 0 {
+		return 0
+	}
+	return static.PID
+}
+
+// putSockaddrInet writes a SOCKADDR_INET: SOCKADDR_IN or SOCKADDR_IN6, port in network order.
+func putSockaddrInet(b []byte, address netip.AddrPort) {
+	binary.BigEndian.PutUint16(b[2:], address.Port())
+	if address.Addr().Is4() {
+		binary.NativeEndian.PutUint16(b, windows.AF_INET)
+		ip := address.Addr().As4()
+		copy(b[4:], ip[:])
+		return
+	}
+	binary.NativeEndian.PutUint16(b, windows.AF_INET6)
+	ip := address.Addr().As16()
+	copy(b[8:], ip[:])
 }
 
 func getExecPathFromPID(pid uint32) (string, error) {

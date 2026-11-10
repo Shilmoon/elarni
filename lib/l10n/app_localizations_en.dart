@@ -568,7 +568,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String appRoutingUses(String engine) {
-    return 'App routing uses $engine. In bypass mode, unlisted or unidentified processes follow normal routing. In only-selected mode, they connect directly.';
+    return 'App routing uses $engine. Unlisted apps connect directly in only-selected mode and follow normal routing in bypass mode. Traffic Elarni cannot link to an app (WSL, virtual machines, containers, connections that closed early) may come from a listed app: in only-selected mode it follows normal routing. Add Unidentified traffic to the list to choose where it goes.';
   }
 
   @override
@@ -682,9 +682,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get loadingApps => 'Loading apps…';
-
-  @override
-  String get runningApps => 'Running apps';
 
   @override
   String get installedAndRunningApps => 'Installed and running apps';
@@ -805,7 +802,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get perAppLauncherRule =>
-      'Snap, Flatpak and script launchers start another program, so their rules match nothing. Start the app, then choose it from the app list.';
+      'Snap, Flatpak and script launchers start another program, so their rules match nothing. Choose the app from the app list; start a Snap or script app first.';
 
   @override
   String get useProxy => 'Use proxy';
@@ -842,6 +839,78 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String perAppWindowsPathsElsewhere(Object platform) {
     return 'Windows executable paths cannot be used in a $platform profile. Select the apps on this device.';
+  }
+
+  @override
+  String perAppLinuxRulesElsewhere(Object platform) {
+    return 'Flatpak and AppImage rules name Linux apps and cannot be used in a $platform profile.';
+  }
+
+  @override
+  String perAppServiceRulesElsewhere(Object platform) {
+    return 'Service rules name Windows services and cannot be used in a $platform profile.';
+  }
+
+  @override
+  String get perAppFlatpakRule =>
+      'Flatpak app: also its other programs in the sandbox';
+
+  @override
+  String get perAppAppImageRule => 'AppImage: the programs in that image file';
+
+  @override
+  String get perAppServiceRule =>
+      'Windows service: also the services that share its process';
+
+  @override
+  String get perAppKindService => 'Windows service';
+
+  @override
+  String get perAppIncludeChildren => 'Include programs it starts';
+
+  @override
+  String get perAppIncludeChildrenHelp =>
+      'Also routes the programs this app starts, and theirs, such as helpers, updaters and command-line tools. A program listed on its own keeps its own target. A browser the app starts is included too, but not one that was already running.';
+
+  @override
+  String get perAppWithChildren => 'with the programs it starts';
+
+  @override
+  String get perAppPresets => 'Presets';
+
+  @override
+  String get perAppPresetSteam => 'Steam and games';
+
+  @override
+  String get perAppPresetBrowsers => 'Browsers';
+
+  @override
+  String get perAppPresetAdded => 'Added';
+
+  @override
+  String get perAppPresetNotFound => 'Not found';
+
+  @override
+  String get perAppPresetWithChildren => 'With the programs it starts';
+
+  @override
+  String get perAppPresetsHelp =>
+      'A preset offers the apps the app list found, each with the rule this computer gives it. For an app it does not find, use Choose app file.';
+
+  @override
+  String perAppAddPresetApps(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Add $count apps',
+      one: 'Add 1 app',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String perAppConnectionStartedBy(String name) {
+    return 'Started by $name';
   }
 
   @override
@@ -2910,4 +2979,136 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get markProblem => 'Mark problem';
+
+  @override
+  String get perAppUnknownOwner => 'Unidentified traffic';
+
+  @override
+  String get perAppUnknownOwnerHelp =>
+      'Traffic without an app: WSL, virtual machines, closed connections';
+
+  @override
+  String perAppRunningNow(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count programs running',
+      one: '1 program running',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get perAppNotRunning => 'Not running now';
+
+  @override
+  String get perAppWarningMissing => 'Not found on this computer.';
+
+  @override
+  String get perAppWarningFolder =>
+      'This is a folder. A folder rule ends with a separator and matches the programs inside.';
+
+  @override
+  String get perAppWarningNotFolder => 'This is a file, not a folder.';
+
+  @override
+  String get perAppWarningScript =>
+      'A script: its interpreter runs, not the script. Add the program it starts.';
+
+  @override
+  String get perAppWarningSymlink =>
+      'A link: the program runs as the file it points to.';
+
+  @override
+  String get perAppWarningCase =>
+      'The letter case differs from the file on disk, and rules compare it.';
+
+  @override
+  String get perAppWarningLauncher =>
+      'A launcher: it starts another program, which this rule does not match.';
+
+  @override
+  String get perAppWarningBundleName =>
+      'A bare name matches a program file, not an app bundle. Pick the app from the list.';
+
+  @override
+  String get perAppWarningVersioned =>
+      'Names one version of the app, so it stops matching after the next update.';
+
+  @override
+  String get perAppWarningUnknown => 'This rule may not match any program.';
+
+  @override
+  String perAppSuggestedRule(String rule) {
+    return 'Suggested rule: $rule';
+  }
+
+  @override
+  String get perAppUseSuggested => 'Use suggested rule';
+
+  @override
+  String get perAppConnections => 'Recent connections';
+
+  @override
+  String get perAppConnectionsHelp =>
+      'Connections apps opened while Elarni is connected, newest first, with where each one went. It names the program behind an app\'s traffic, such as a helper or updater, so you can add it. Kept in memory until you disconnect.';
+
+  @override
+  String get perAppConnectionsDisconnected =>
+      'Connect to see which apps open connections and where they go.';
+
+  @override
+  String get perAppConnectionsOff =>
+      'Per-app routing is off, so apps are not named. Turn it on and save to see them.';
+
+  @override
+  String get perAppConnectionsEmpty => 'No connections yet.';
+
+  @override
+  String get perAppConnectionsSearch => 'Search apps and addresses';
+
+  @override
+  String get perAppConnectionNoApp => 'App not looked up';
+
+  @override
+  String get perAppConnectionDirect => 'Direct';
+
+  @override
+  String get perAppConnectionProxy => 'Through a server';
+
+  @override
+  String get perAppConnectionBlocked => 'Blocked';
+
+  @override
+  String get perAppConnectionDns => 'DNS';
+
+  @override
+  String get perAppConnectionRouting => 'Routing';
+
+  @override
+  String get perAppConnectionListed => 'Per-app rule';
+
+  @override
+  String get perAppConnectionNotListed => 'Not listed';
+
+  @override
+  String get perAppConnectionAdd => 'Add to list';
+
+  @override
+  String perAppConnectionAdded(String name) {
+    return '$name added. Save changes to apply.';
+  }
+
+  @override
+  String get perAppConnectionOpenedReset =>
+      'Open before Elarni connected · Closed, so the app reconnects through per-app routing';
+
+  @override
+  String get perAppConnectionOpenedKept =>
+      'Open before Elarni connected · Skips per-app routing until the app reconnects';
+
+  @override
+  String perAppConnectionsRestart(String apps) {
+    return 'Restart $apps: their connections opened before Elarni connected skip per-app routing until they reconnect.';
+  }
 }

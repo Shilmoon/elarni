@@ -58,15 +58,8 @@ func TestFindProcessChild(t *testing.T) {
 func TestFindProcessAttributesForeignTCPAndUDP(t *testing.T) {
 	for _, ip := range []string{"127.0.0.1", "::1"} {
 		t.Run(ip, func(t *testing.T) {
-			listener, err := net.Listen("tcp", net.JoinHostPort(ip, "0"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			listener, udp := tcpAndUDPOnOnePort(t, ip)
 			defer listener.Close()
-			udp, err := net.ListenPacket("udp", listener.Addr().String())
-			if err != nil {
-				t.Fatal(err)
-			}
 			defer udp.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -131,5 +124,69 @@ func TestFindProcessAttributesForeignTCPAndUDP(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// tcpAndUDPOnOnePort listens on one port number for both: the child dials both
+// at the listener's address. Another process may hold the UDP port of a free TCP
+// one (seen on macOS CI), so it takes the next free TCP port then.
+func tcpAndUDPOnOnePort(t *testing.T, ip string) (net.Listener, net.PacketConn) {
+	t.Helper()
+	var err error
+	for range 20 {
+		var listener net.Listener
+		if listener, err = net.Listen("tcp", net.JoinHostPort(ip, "0")); err != nil {
+			t.Fatal(err)
+		}
+		var udp net.PacketConn
+		if udp, err = net.ListenPacket("udp", listener.Addr().String()); err == nil {
+			return listener, udp
+		}
+		listener.Close() // address in use: try another port
+	}
+	t.Fatalf("no port number free for both TCP and UDP: %v", err)
+	return nil, nil
+}
+
+// An IPv6 socket can connect to an IPv4 address (IPV6_V6ONLY off, as Java and Go
+// sockets bound to [::] are). The TUN sees an IPv4 flow, while Linux lists the socket
+// only in its IPv6 tables, with the address mapped into IPv6.
+func TestFindProcessOfADualStackSocket(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	server, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	target, udpTarget := listener.Addr().(*net.TCPAddr), server.LocalAddr().(*net.UDPAddr)
+	dialer := net.Dialer{LocalAddr: &net.TCPAddr{IP: net.IPv6zero}}
+	tcp, err := dialer.Dial("tcp", target.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tcp.Close()
+	client, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv6zero})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if _, err := client.WriteTo([]byte("dual"), udpTarget); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		network        string
+		source, target int
+	}{
+		{"tcp", tcp.LocalAddr().(*net.TCPAddr).Port, target.Port},
+		{"udp", client.LocalAddr().(*net.UDPAddr).Port, udpTarget.Port},
+	} {
+		pid, _, _, err := xnet.FindProcess(c.network, "127.0.0.1", uint16(c.source), "127.0.0.1", uint16(c.target))
+		if err != nil || pid != os.Getpid() {
+			t.Errorf("%s from a dual-stack socket: pid %d, %v; want %d", c.network, pid, err, os.Getpid())
+		}
 	}
 }

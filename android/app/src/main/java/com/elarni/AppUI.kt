@@ -219,7 +219,7 @@ private val LocalReselect = compositionLocalOf { 0 }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun ElarniUI(activity: MainActivity) {
     val state by activity.repository.state.collectAsStateWithLifecycle()
-    val catalog = remember(state.catalog) { Catalog(state.catalog) }
+    val catalog = remember(state.catalog) { Catalog(state.catalog, snapshot = true) }
     var page by rememberSaveable { mutableStateOf("home") }
     var detail by rememberSaveable { mutableStateOf("") }
     var id by rememberSaveable { mutableStateOf("") }
@@ -1228,7 +1228,7 @@ fun pingScope(result: JSONObject) = when (result.string("protocol")) { "tcp" -> 
                 SettingsTile(tr(R.string.logs)) { navigate("logs", "") }
             }
             if (BuildConfig.ELARNI_RECORDING) SettingsGroup(tr(R.string.connection_recording), tr(R.string.turn_on_record_connection_diagnostics_in)) {
-                SettingsTile(tr(R.string.mark_a_problem_now), enabled = Catalog(state.catalog).settings.optBoolean("recordDiagnostics")) { activity.markRecording() }
+                SettingsTile(tr(R.string.mark_a_problem_now), enabled = remember(state.catalog) { Catalog(state.catalog).settings.optBoolean("recordDiagnostics") }) { activity.markRecording() }
                 SettingsTile(tr(R.string.save_recording_as_zip)) { activity.saveRecording() }
             }
         } else {

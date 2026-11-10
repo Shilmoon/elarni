@@ -7,6 +7,15 @@ system VPN mode.
 - **Only listed:** listed apps use normal routing; everything else connects directly.
 - **Off:** normal routing for all apps.
 
+Each listed app can also take a target of its own: Direct, Follow routing rules, Block,
+a server from any subscription, or a local SOCKS5 or HTTP proxy without a login (for
+example ByeByeDPI). Per-app routing covers only traffic that enters the VPN:
+
+- DNS queries are not per-app: every app's queries that enter the VPN go to the
+  resolver your routing profile sets. On Android, apps kept out of the VPN use the
+  system resolver.
+- Apps that use Elarni's own SOCKS or HTTP listener follow normal routing.
+
 Rules match the program's path or name, which any program can copy. In Bypass
 mode, list only apps you trust, by exact path in folders other users can't write.
 This is routing, not a firewall or kill switch.
@@ -14,12 +23,136 @@ This is routing, not a firewall or kill switch.
 | Platform | Rules match |
 |---|---|
 | macOS | `.app/` bundles, including their helpers |
-| Windows | exact `.exe` paths, case-insensitive; Squirrel apps such as Discord by install folder |
-| Linux | resolved binary paths, case-sensitive; pick Snap/Flatpak apps from running processes |
+| Windows | exact `.exe` paths, case-insensitive; Squirrel apps such as Discord by install folder; Microsoft Store apps such as Claude by package; services by name |
+| Linux | resolved binary paths, case-sensitive; Snap apps by `/snap/<name>/`; Flatpak apps by app ID; AppImages by image file |
 | Android | package names; apps sharing a UID share a rule |
 
 A bare name matches in any folder, and a path ending in `/` matches everything
 below it.
+
+The app list shows running programs and installed apps: on Windows the Start menu's
+programs and installed Microsoft Store apps, such as Claude, on macOS the Applications
+folders, and on Linux the apps with a desktop entry. **Choose app file** adds any other program.
+
+**Presets** under the app list add a group of apps at once: Discord, Telegram, Claude
+(the app with the programs it starts, and Claude Code), Steam with the games it starts,
+and browsers. A preset finds its apps in the app list, by name or by Flatpak app ID or
+Snap, so each gets the same rule as when picked from the list; an app it does not find is
+shown as not found. Apps that show web pages through WebView2 on Windows run
+`msedgewebview2.exe`, which the browsers preset does not include.
+
+Apps picked from the list get a rule that still matches after the app updates. On
+desktop platforms an app that keeps each version in its own folder beside the
+previous one matches that folder of versions, when it holds nothing else. Claude
+Code, which the Claude app installs as `claude-code/<version>/<build>/`, is one; on
+Linux, so is `~/.local/share/claude/versions/`. On Windows, a Microsoft Store app's
+folder `WindowsApps\<name>_<version>_<arch>_<resource>_<publisher>\` matches as
+`WindowsApps\<name>_<publisher>\`, its package family, so rules saved for an earlier
+version match too.
+
+## Apps a path does not name
+
+Some apps run from a path that says nothing about them. Their rules name the app instead,
+and the app list gives them these rules:
+
+- `flatpak:<app id>` (Linux), such as `flatpak:org.mozilla.firefox`: a Flatpak app's
+  programs run inside its sandbox, from paths like `/app/bin/...`. The rule matches every
+  program in that app's sandbox, found as the desktop portal finds it.
+- `appimage:<file>` (Linux): an AppImage mounts itself at a new `/tmp/.mount_...` folder each
+  time it starts. The rule names the image file and matches the programs in its mount,
+  not programs it starts from elsewhere, such as a browser it opens. `appimage:<folder>/`
+  matches every AppImage in that folder.
+- `service:<name>` (Windows), such as `service:DoSvc` for Delivery Optimization: svchost runs
+  most Windows services, so a rule for `svchost.exe` would take all of them. The rule matches
+  the process that runs the service. Most PCs run each service in its own process; where
+  services share one, they are routed together. The app list shows running services by
+  their display names.
+
+## Programs an app starts
+
+On Windows, macOS and Linux, an app's details have **Include programs it starts**. Its rule
+becomes `children:<rule>`, such as `children:C:\Program Files\Example\example.exe`, and it
+also matches every program that app starts, and the programs those start: helpers,
+updaters, a terminal's shells and command-line tools, a game launcher's games. A connection
+it takes shows **Started by** with the listed app in **Recent connections**.
+
+- A program listed on its own keeps its own target, whatever started it.
+- A program started through the system is not the app's: an app the macOS app opens with
+  **Open**, or a browser that was already running when the app opened a link. A browser the
+  app starts on Windows or Linux is included.
+- A program whose starter has exited is no longer included, nor is one started by a
+  program that did.
+- Android routes by package, so it has no such option.
+
+## Apps that were running before you connected
+
+A connection an app opened before Elarni connected can keep its old route: Windows keeps
+a connection on the network it was opened on. A listed app's such connections would skip
+per-app routing until the app reconnects. When the tunnel starts, Elarni looks for them:
+
+- On Windows (IPv4) and Linux it closes them, and the app reconnects through per-app
+  routing. Connections to this computer and to local networks are left alone, as are apps
+  whose target is Direct.
+- Windows cannot close IPv6 connections, macOS lets no program close another's, and some
+  Linux kernels are built without it. Those stay open, and **Recent connections** asks you to
+  restart those apps.
+
+**Recent connections** lists each such connection as open before Elarni connected, and
+whether it was closed. Android needs nothing: it closes the apps' connections itself when
+a VPN starts.
+
+## Apps installed while connected
+
+Android takes the VPN's apps by user ID when the tunnel starts, and so do the per-app
+rules. When a listed app is installed, removed or reinstalled while connected, Elarni
+builds the tunnel again a few seconds later, so the app takes its route at once. This
+resets the tunnel's open connections, as reconnecting does. An app update keeps the
+app's user ID and changes nothing.
+
+## Checking rules
+
+On desktop, each listed rule shows how many running programs it matches now, counted
+with the same matcher routing uses, and warns when it may match nothing:
+
+- the file or folder is not on this computer;
+- a folder rule lacks its trailing separator, or names a file;
+- the file is a script, a link or a launcher (`.lnk`, `.bat`, a Squirrel app's root
+  `.exe`), so another program makes the connections;
+- the letter case differs from the disk (macOS and Linux compare it);
+- a bare `Example.app` on macOS, which names no program;
+- the rule names one version of an app that keeps each version in its own folder;
+- a Flatpak app or Windows service that is not installed, or an AppImage file that is gone.
+
+Where a better rule exists, **Use suggested rule** replaces it, keeping its target.
+On Windows only rules on local fixed drives are checked, so a network path in an
+imported profile is never opened. On Android, a listed app that is not installed is
+shown as such.
+
+## Recent connections
+
+**Recent connections** in the per-app editor lists the connections apps opened while
+Elarni is connected, newest first: the app per-app routing found for each, its address,
+and where it went (direct, through a server, blocked or DNS), with **Per-app rule** when a
+listed app's rule took it and **Not listed** when it was passed on. It shows which program
+makes an app's connections, such as a helper, updater or a new version's folder, and
+**Add to list** adds that program with the same update-proof rule as the app list gives it,
+including a Flatpak, AppImage or service rule. A svchost process that runs several services
+has no service rule to add.
+
+The app is the one routing already looked up, so the list adds no lookups: with per-app
+routing off, or for connections through the local SOCKS or HTTP listener, no app is named.
+It keeps the last 500 connections in memory and empties when the tunnel stops; nothing is
+written to disk. On Android, apps are named by their user ID.
+
+## Traffic without an app
+
+Some traffic reaches the VPN without an app Elarni can find: connections that closed
+before routing looked them up, and traffic the computer forwards for WSL, virtual
+machines or containers under its own address. Such traffic may come from a listed app, so in **Only listed** it follows normal
+routing; in **Bypass** it does too. To send it elsewhere, add **Unidentified traffic**
+from the app list (rule `-1`) and give it a target, such as Direct. Traffic from other
+devices on the network is not an app on this computer and is not affected.
+On Android only listed apps enter the VPN in **Only listed**, so there is nothing to choose.
 
 ## Sharing
 
