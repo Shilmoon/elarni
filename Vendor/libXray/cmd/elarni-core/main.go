@@ -238,7 +238,7 @@ func serve(input io.Reader, output io.Writer, invoke func(string) response, stop
 			if logs != nil {
 				events = append(events, logs)
 			}
-			if result.run && options.Payload.StreamMetrics {
+			if result.run && request.Payload.StreamMetrics {
 				if event := connectionsEvent(&connections); event != nil {
 					events = append(events, event)
 				}
