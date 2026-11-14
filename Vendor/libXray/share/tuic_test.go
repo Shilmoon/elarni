@@ -31,6 +31,8 @@ func TestTUICStrictImportContract(t *testing.T) {
 		strings.Replace(link, "00000000-0000-4000-8000-000000000001", "invalid", 1),
 		strings.Replace(link, "allow_insecure=0", "allow_insecure=0&allow_insecure=1", 1),
 		strings.Replace(link, "allow_insecure=0", "allow_insecure=perhaps", 1),
+		strings.Replace(link, "allow_insecure=0", "allow_insecure=0&insecure=1", 1),
+		strings.Replace(link, "allow_insecure=0", "insecure=1&allowInsecure=0", 1),
 		strings.Replace(link, "udp_relay_mode=native", "udp_over_stream=true", 1),
 		strings.Replace(link, "congestion_control=cubic", "congestion_control=unknown", 1),
 		strings.Replace(link, "?sni", "?token=v4&sni", 1),
@@ -38,6 +40,30 @@ func TestTUICStrictImportContract(t *testing.T) {
 	} {
 		if _, err := ImportClientProfiles(input); err == nil {
 			t.Fatal("accepted invalid TUIC input")
+		}
+	}
+}
+
+// Panels write the verification flag under the aliases other link types accept.
+func TestTUICInsecureAliases(t *testing.T) {
+	const link = "tuic://00000000-0000-4000-8000-000000000001:secret@127.0.0.1:443?sni=127.0.0.1&"
+	for query, want := range map[string]bool{
+		"insecure=1":                     true,
+		"allowInsecure=true":             true,
+		"insecure=1&allow_insecure=1":    true,
+		"insecure=0":                     false,
+		"insecure=false&allowInsecure=0": false,
+	} {
+		imported, err := ImportClientProfiles(link + query)
+		if err != nil {
+			t.Fatalf("%s: %v", query, err)
+		}
+		var profile conf.Config
+		if err := json.Unmarshal(imported.Profiles[0].Config, &profile); err != nil {
+			t.Fatal(err)
+		}
+		if got := profile.OutboundConfigs[0].StreamSetting.TLSSettings.AllowInsecure; got != want {
+			t.Fatalf("%s: allowInsecure %v, want %v", query, got, want)
 		}
 	}
 }
