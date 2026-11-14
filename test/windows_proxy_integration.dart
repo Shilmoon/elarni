@@ -1760,7 +1760,10 @@ for line in sys.stdin:
     await events.delete();
     await backend.control.connect();
     await noAnswer.writeAsString('the tunnel answers no lookups');
-    final unknown = await named('unknown.invalid', 'Unknown');
+    // A label over 63 characters is no DNS name, so this lookup fails by
+    // itself, also on a network whose resolver answers every name.
+    final unresolvable = '${'u' * 64}.invalid';
+    final unknown = await named(unresolvable, 'Unknown');
     await expectLater(
       backend.control.selectNode(unknown),
       throwsA(isA<PlatformException>()),
@@ -1769,7 +1772,7 @@ for line in sys.stdin:
     expect((await backend.control.subscriptions()).selectedNodeId, fixture);
     expect(await events.readAsLines(), [
       'runVPN',
-      'lookupHost unknown.invalid',
+      'lookupHost $unresolvable',
       'stopVPN hold',
       'stopVPN',
       'runVPN',
