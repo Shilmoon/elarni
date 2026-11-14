@@ -204,7 +204,7 @@ func tuicLink(proxy conf.OutboundDetourConfig, link *url.URL) error {
 	} else {
 		host = settings.Address.Domain()
 	}
-	link.Scheme, link.Host, link.User, link.Fragment = "tuic", net.JoinHostPort(host, strconv.Itoa(int(settings.Port))), url.UserPassword(settings.UUID, *settings.Password), getOutboundName(proxy)
+	link.Scheme, link.Host, link.User, link.Fragment = "tuic", net.JoinHostPort(host, strconv.Itoa(int(settings.Port))), url.UserPassword(settings.UUID, *settings.Password), shareName(proxy)
 	query := url.Values{}
 	if tls.ServerName != "" {
 		query.Set("sni", tls.ServerName)

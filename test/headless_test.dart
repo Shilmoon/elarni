@@ -77,6 +77,25 @@ void main() {
     },
   );
 
+  test(
+    'the saved listener login can be read, as the documentation says',
+    () async {
+      final control = HeadlessControl(
+        (method, args) async => method == 'inboundCredentials'
+            ? {'username': 'user', 'password': 'synthetic'}
+            : throw StateError(method),
+      );
+      expect(await control.call('inboundCredentials'), {
+        'username': 'user',
+        'password': 'synthetic',
+      });
+      expect(
+        (await control.request({'command': 'commands'}))['methods'],
+        contains('inboundCredentials'),
+      );
+    },
+  );
+
   test('connection recording is headless only in recording builds', () async {
     var calls = 0;
     final control = HeadlessControl((method, args) async {

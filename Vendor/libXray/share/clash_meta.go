@@ -635,11 +635,7 @@ func parseXHTTPOpts(xhttpOpts ClashProxyXhttpOpts) (*conf.SplitHTTPConfig, error
 		extra.DownloadSettings = downloadSettings
 	}
 
-	extraRawMessage, err := convertJsonToRawMessage(extra)
-	if err != nil {
-		return nil, err
-	}
-	xhttpSettings.Extra = extraRawMessage
+	xhttpSettings.Extra = setJSON(extra)
 	return xhttpSettings, nil
 }
 

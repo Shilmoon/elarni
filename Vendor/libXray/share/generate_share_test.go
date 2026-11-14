@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/xtls/xray-core/app/proxyman"
+	"github.com/xtls/xray-core/common/serial"
 	"github.com/xtls/xray-core/infra/conf"
 	"github.com/xtls/xray-core/transport/internet"
+	"github.com/xtls/xray-core/transport/internet/splithttp"
+	"github.com/xtls/xray-core/transport/internet/tls"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -100,6 +104,210 @@ func TestShareLinksSkipAnOutboundWithoutAServer(t *testing.T) {
 		if err == nil {
 			t.Errorf("%s exported %q", outbound, links)
 		}
+	}
+}
+
+// XHTTP settings beyond host, path and mode travel in the link's "extra" parameter, wherever the profile
+// keeps them: in its own "extra" (links, Clash) or beside the path (Xray JSON).
+func TestShareLinksKeepXHTTPSettings(t *testing.T) {
+	const id = "00000000-0000-4000-8000-000000000001"
+	for _, test := range []struct{ name, source string }{
+		{"a link with extra", "vless://" + id + "@up.example.com:443?encryption=none&security=tls&sni=a.example.com&type=xhttp&path=%2Fup&mode=auto&extra=" +
+			`%7B%22xmux%22%3A%7B%22maxConcurrency%22%3A%222-4%22%7D%2C%22noGRPCHeader%22%3Atrue%2C%22xPaddingBytes%22%3A%2220-40%22%7D#x`},
+		{"Xray JSON with the settings beside the path", `{"outbounds":[{"protocol":"vless","settings":{"address":"203.0.113.11","port":443,"id":"` + id + `","encryption":"none"},
+			"streamSettings":{"network":"xhttp","security":"tls","tlsSettings":{"serverName":"example.com"},
+			  "xhttpSettings":{"host":"cdn.example.com","path":"/x","mode":"packet-up","noGRPCHeader":true,"xPaddingBytes":"20-40","headers":{"X-Fixture":""},
+			    "xmux":{"maxConcurrency":"2-4","hKeepAlivePeriod":20},
+			    "downloadSettings":{"address":"down.example.com","port":8443,"network":"xhttp","security":"tls","tlsSettings":{"serverName":"d.example.com"},"xhttpSettings":{"path":"/down"}}}}}]}`},
+		{"Clash with a separate download server", `proxies:
+ - name: fixture
+   type: vless
+   server: upload.example.com
+   port: 443
+   uuid: ` + id + `
+   tls: true
+   servername: front.example.com
+   network: xhttp
+   xhttp-opts:
+     path: /up
+     mode: auto
+     session-id-placement: header
+     session-id-key: X-Session
+     x-padding-bytes: 20-40
+     reuse-settings: {max-concurrency: 2-4, h-keep-alive-period: 20}
+     download-settings:
+       server: download.example.com
+       port: 8443
+       tls: true
+       servername: download-front.example.com
+       path: /down
+`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			imported, err := ImportClientProfiles(test.source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			links, err := ConvertXrayJsonToShareLinks(imported.Profiles[0].Config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			again, err := ImportClientProfiles(links)
+			if err != nil {
+				t.Fatalf("the exported link does not import: %v\n%s", err, links)
+			}
+			want, got := builtOutbound(t, imported.Profiles[0].Config), builtOutbound(t, again.Profiles[0].Config)
+			if !proto.Equal(want.stream, got.stream) {
+				t.Errorf("transport changed:\n%v\nwas\n%v\nlink %s", got.stream, want.stream, links)
+			}
+			// A link is also shown as a QR code: it names only what the server sets.
+			if link, err := url.Parse(links); err != nil || strings.Contains(link.Query().Get("extra"), "seqKey") {
+				t.Errorf("extra carries settings the server leaves unset: %s (%v)", links, err)
+			}
+			// The name after "#" is the profile's, not the server's.
+			second, err := ConvertXrayJsonToShareLinks(again.Profiles[0].Config)
+			second, _, _ = strings.Cut(second, "#")
+			if links, _, _ := strings.Cut(links, "#"); err != nil || second != links {
+				t.Errorf("the imported link exports as\n%s\nnot\n%s (%v)", second, links, err)
+			}
+		})
+	}
+}
+
+// What a link has a parameter for must come back as it was: a round trip changes neither the server nor
+// its transport.
+func TestShareLinksKeepWhatALinkCanSay(t *testing.T) {
+	const id = "00000000-0000-4000-8000-000000000001"
+	hysteria := func(mask string) string {
+		return `{"outbounds":[{"protocol":"hysteria","settings":{"version":2,"address":"203.0.113.11","port":443},"streamSettings":{"network":"hysteria","security":"tls",
+			"tlsSettings":{"serverName":"h.example"},"hysteriaSettings":{"version":2,"auth":"pw"},"finalmask":` + mask + `}}]}`
+	}
+	for _, test := range []struct{ name, source string }{
+		{"Hysteria2 congestion settings in fm", "hy2://pw@203.0.113.9:443?sni=h.example&fm=" + url.QueryEscape(`{"quicParams":{"congestion":"bbr","maxIdleTimeout":40}}`) + "#fm"},
+		{"Hysteria2 hop interval range", "proxies:\n  - {name: H2, type: hysteria2, server: 203.0.113.23, port: 443, password: pw, sni: h.example, ports: '20000-30000', hop-interval: '30-60'}\n"},
+		{"Hysteria2 hop mode", hysteria(`{"udp":[{"type":"udphop","settings":{"mode":"perConnRemote","interval":30,"remotePorts":"20000-30000"}}]}`)},
+		{"Hysteria2 hop, obfuscation and brutal", "hy2://pw@203.0.113.9:443?sni=h.example&ports=20000-30000&hop-interval=30&obfs=salamander&obfs-password=secret&up=20mbps&down=100mbps#all"},
+		{"Hysteria2 obfuscation with another congestion", hysteria(`{"quicParams":{"congestion":"bbr"},"udp":[{"type":"salamander","settings":{"password":"secret"}}]}`)},
+		{"WebSocket behind a front name without an SNI", `{"outbounds":[{"protocol":"vless","settings":{"address":"front.example","port":443,"id":"` + id + `","encryption":"none"},
+			"streamSettings":{"network":"ws","security":"tls","wsSettings":{"path":"/w","host":"cdn.example"}}}]}`},
+		{"Trojan without TLS", `{"outbounds":[{"protocol":"trojan","settings":{"address":"10.0.0.8","port":443,"password":"pw"}}]}`},
+		{"SOCKS user with a colon", `{"outbounds":[{"protocol":"socks","settings":{"address":"10.0.0.10","port":1080,"user":"us:er","pass":"p:w"}}]}`},
+		{"SOCKS link user with a colon", "socks5://us%3Aer:pw@10.0.0.10:1080#S"},
+		{"Shadowsocks without stream settings", `{"outbounds":[{"protocol":"shadowsocks","settings":{"address":"10.0.0.9","port":8388,"method":"aes-256-gcm","password":"pw"}}]}`},
+		{"VMess without stream settings", `{"outbounds":[{"protocol":"vmess","settings":{"address":"10.0.0.9","port":443,"id":"` + id + `"}}]}`},
+		{"VLESS without stream settings", `{"outbounds":[{"protocol":"vless","settings":{"address":"10.0.0.9","port":443,"id":"` + id + `","encryption":"none"}}]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			imported, err := ImportClientProfiles(test.source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			links, err := ConvertXrayJsonToShareLinks(imported.Profiles[0].Config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			again, err := ImportClientProfiles(links)
+			if err != nil {
+				t.Fatalf("the exported link does not import: %v\n%s", err, links)
+			}
+			want, got := builtOutbound(t, imported.Profiles[0].Config), builtOutbound(t, again.Profiles[0].Config)
+			if !proto.Equal(want.proxy, got.proxy) {
+				t.Errorf("server changed:\n%v\nwas\n%v\nlink %s", got.proxy, want.proxy, links)
+			}
+			// The name a front is reached by is the SNI Xray sends when the profile names none.
+			if stream := want.stream.(*internet.StreamConfig); strings.HasPrefix(test.name, "WebSocket") {
+				settings, err := stream.SecuritySettings[0].GetInstance()
+				if err != nil {
+					t.Fatal(err)
+				}
+				settings.(*tls.Config).ServerName = "front.example"
+				stream.SecuritySettings[0] = serial.ToTypedMessage(settings)
+			}
+			if !proto.Equal(want.stream, got.stream) {
+				t.Errorf("transport changed:\n%v\nwas\n%v\nlink %s", got.stream, want.stream, links)
+			}
+			second, err := ConvertXrayJsonToShareLinks(again.Profiles[0].Config)
+			second, _, _ = strings.Cut(second, "#")
+			if links, _, _ := strings.Cut(links, "#"); err != nil || second != links {
+				t.Errorf("the imported link exports as\n%s\nnot\n%s (%v)", second, links, err)
+			}
+		})
+	}
+}
+
+// A hop interval is seconds in 32 bits; a larger number is a broken link, not a small interval.
+func TestHysteriaHopIntervalOutOfRangeIsRefused(t *testing.T) {
+	for _, interval := range []string{"4294967326", "30-4294967326", "x"} {
+		if imported, err := ImportClientProfiles("hy2://pw@203.0.113.9:443?sni=h.example&ports=20000-30000&hop-interval=" + interval + "#h"); err == nil {
+			t.Errorf("hop-interval %s imported as %s", interval, imported.Profiles[0].Config)
+		}
+	}
+}
+
+// Other clients read the hop range and obfuscation from the link's own parameters, so a mask they can
+// say stays in them; "fm" is for the rest.
+func TestHysteriaLinkPrefersItsOwnParameters(t *testing.T) {
+	imported, err := ImportClientProfiles("hy2://pw@203.0.113.9:443?sni=h.example&ports=20000-30000&hop-interval=30&obfs=salamander&obfs-password=secret#all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	links, err := ConvertXrayJsonToShareLinks(imported.Profiles[0].Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, err := url.Parse(links)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if query := link.Query(); query.Has("fm") || query.Get("ports") != "20000-30000" || query.Get("hop-interval") != "30" || query.Get("obfs-password") != "secret" {
+		t.Errorf("link %s", links)
+	}
+}
+
+// A server may well be named after its address; only a stored bind address is not a name.
+func TestALinkNamedLikeAnAddressKeepsItsName(t *testing.T) {
+	for _, name := range []string{"10.0.0.1", "origin"} {
+		imported, err := ImportClientProfiles("vless://00000000-0000-4000-8000-000000000001@203.0.113.7:443?encryption=none&security=tls&sni=example.com#" + name)
+		if err != nil || imported.Profiles[0].Name != name {
+			t.Fatalf("imported %+v, %v", imported, err)
+		}
+	}
+}
+
+// Xray JSON names a local bind address in sendThrough. It is not the server's name.
+func TestShareLinkIsNotNamedAfterABindAddress(t *testing.T) {
+	for _, bind := range []string{"192.0.2.55", "2001:db8::/64", "origin"} {
+		links, err := ConvertXrayJsonToShareLinks([]byte(`{"outbounds":[{"protocol":"vless","tag":"Home","sendThrough":"` + bind + `",
+			"settings":{"address":"203.0.113.7","port":443,"id":"00000000-0000-4000-8000-000000000001","encryption":"none"}}]}`))
+		if err != nil || !strings.HasSuffix(links, "#Home") {
+			t.Errorf("sendThrough %s: link %s (%v)", bind, links, err)
+		}
+	}
+}
+
+// A link's "extra" can name a separate download server with XHTTP settings of its own. Stored with the
+// unset ones as null, they were read back as an empty "extra" that replaced them.
+func TestLinkExtraKeepsTheDownloadServersSettings(t *testing.T) {
+	extra := `{"downloadSettings":{"address":"download.example.com","port":8443,"network":"xhttp","security":"tls",` +
+		`"xhttpSettings":{"path":"/down","xPaddingBytes":"5-9","noGRPCHeader":true,"xmux":{"maxConcurrency":3}}}}`
+	imported, err := ImportClientProfiles("vless://00000000-0000-4000-8000-000000000001@upload.example.com:443?encryption=none&security=tls" +
+		"&sni=front.example.com&type=xhttp&path=%2Fup&extra=" + url.QueryEscape(extra) + "#fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := builtOutbound(t, imported.Profiles[0].Config).stream.(*internet.StreamConfig)
+	upload, err := stream.TransportSettings[0].Settings.GetInstance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := upload.(*splithttp.Config).DownloadSettings.TransportSettings[0].Settings.GetInstance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	download := settings.(*splithttp.Config)
+	if download.Path != "/down" || download.XPaddingBytes.GetFrom() != 5 || download.XPaddingBytes.GetTo() != 9 ||
+		!download.NoGRPCHeader || download.Xmux.GetMaxConcurrency().GetTo() != 3 {
+		t.Errorf("download server settings %v", download)
 	}
 }
 

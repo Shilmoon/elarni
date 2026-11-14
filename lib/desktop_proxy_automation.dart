@@ -11,11 +11,10 @@ extension _ProxyAutomation on DesktopProxy {
     final catalog = _catalog!, now = _refreshClock();
     bool ready(String key) =>
         !(_refreshBackoff[key]?.until.isAfter(now) ?? false);
-    bool dueAt(Object? at) => at is num && at <= catalog.now;
     final due = catalog.sources
         .where(
           (source) =>
-              dueAt(catalog.nextSubscriptionRefresh(source)) &&
+              catalog.subscriptionRefreshDue(source) &&
               ready('source:${source['id']}'),
         )
         .firstOrNull;
@@ -24,7 +23,7 @@ extension _ProxyAutomation on DesktopProxy {
         : catalog.routes
               .where(
                 (route) =>
-                    dueAt(route['nextManagedRefreshAt']) &&
+                    catalog.refreshDue(route['nextManagedRefreshAt'], 86400) &&
                     ready('managed:${route['id']}'),
               )
               .firstOrNull;
@@ -33,7 +32,7 @@ extension _ProxyAutomation on DesktopProxy {
         : catalog.routes
               .where(
                 (route) =>
-                    dueAt(route['nextGeoRefreshAt']) &&
+                    catalog.refreshDue(route['nextGeoRefreshAt'], 604800) &&
                     ready('geo:${route['id']}'),
               )
               .firstOrNull;

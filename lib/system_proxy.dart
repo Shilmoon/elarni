@@ -42,10 +42,12 @@ final class SystemProxySession {
   /// only after the target changed.
   Future<String?> sync(int? port) => _queue = _queue.then((_) => _sync(port));
 
-  /// Restores a setting that a crashed run left pointing at its listener.
+  /// Restores a setting that a crashed run left pointing at its listener. A
+  /// backup that cannot be read restores nothing and would refuse every later
+  /// session, so it is dropped after this one report.
   Future<String?> recover() => _queue = _queue.then((_) async {
     try {
-      await _restore();
+      await _restore(dropUnreadable: true);
       return null;
     } on Object {
       return _restoreFailed;
@@ -88,18 +90,31 @@ final class SystemProxySession {
         if (previous != null) await _os.write(previous);
         if (await _backup.exists()) await _backup.delete();
       } on Object {
-        /* The backup stays for the next restore. */
+        // The backup stays, and the setting may point here: the next change
+        // of target (a disconnect, a quit) restores from it.
+        _port = port;
       }
       return 'The system proxy could not be set. Apps can still use the HTTP proxy at 127.0.0.1:$port.';
     }
   }
 
-  Future<void> _restore() async {
+  Future<void> _restore({bool dropUnreadable = false}) async {
     if (!await _backup.exists()) return;
-    final saved = jsonDecode(await _backup.readAsString()) as Map;
+    final int port;
+    final ProxySettings previous;
+    try {
+      final text = utf8.decode(await _backup.readAsBytes());
+      final saved = jsonDecode(text) as Map;
+      port = saved['port'] as int;
+      previous = Map.from(saved['previous'] as Map);
+    } on FileSystemException {
+      rethrow; // Not read at all; it may be readable the next time.
+    } on Object {
+      if (dropUnreadable) await _backup.delete();
+      rethrow;
+    }
     // A setting the user changed since stays theirs.
-    if (_os.pointsAt(await _os.read(), saved['port'] as int))
-      await _os.write((saved['previous'] as Map).cast());
+    if (_os.pointsAt(await _os.read(), port)) await _os.write(previous);
     await _backup.delete();
   }
 

@@ -83,14 +83,17 @@ type procNetEntry struct {
 func procNetTCP(data []byte) []procNetEntry {
 	var entries []procNetEntry
 	seen := map[TCPConnection]struct{}{}
+	// The kernel writes the table in pieces; one that changes between them can repeat a socket.
+	listed := map[string]bool{}
 	lines := bufio.NewScanner(bytes.NewReader(data))
 	lines.Buffer(make([]byte, 0, 4096), 1<<20)
 	lines.Scan() // the header
 	for lines.Scan() {
 		fields := strings.Fields(lines.Text())
-		if len(fields) < 10 || fields[3] != "01" || fields[9] == "0" { // TCP_ESTABLISHED
+		if len(fields) < 10 || fields[3] != "01" || fields[9] == "0" || listed[fields[9]] { // TCP_ESTABLISHED
 			continue
 		}
+		listed[fields[9]] = true
 		local, okLocal := procNetAddress(fields[1])
 		remote, okRemote := procNetAddress(fields[2])
 		connection := TCPConnection{Local: local, Remote: remote}

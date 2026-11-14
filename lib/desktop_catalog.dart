@@ -1214,11 +1214,10 @@ final class DesktopCatalog {
       newLinks.removeWhere((_, link) => link == null);
     }
     final hours = refreshHours({...current, 'metadata': metadata});
-    final interval =
-        (hours.clamp(1, 168) *
-                3600 *
-                (0.9 + Random.secure().nextDouble() * 0.2))
-            .clamp(900, 604800);
+    final interval = _refreshSeconds(
+      hours,
+      0.9 + Random.secure().nextDouble() * 0.2,
+    );
     if (migratedURL != null) {
       for (final format in ['raw', 'json', 'clash']) {
         newLinks.remove(format);
@@ -1282,6 +1281,22 @@ final class DesktopCatalog {
             .firstOrNull?['id'];
     return null;
   }
+
+  // Whether a scheduled refresh is due. [longest] is the furthest ahead its
+  // schedule writes a time; one further away than that (and an hour, for a
+  // clock corrected by minutes) was written under a clock that has since been
+  // set back, and waiting for it could take years.
+  bool refreshDue(Object? at, num longest) =>
+      at is num && (at <= now || at > now + longest + 3600);
+
+  // A subscription is scheduled its interval ahead, give or take a tenth.
+  bool subscriptionRefreshDue(CatalogMap source) => refreshDue(
+    nextSubscriptionRefresh(source),
+    _refreshSeconds(refreshHours(source), 1.1),
+  );
+
+  static num _refreshSeconds(int hours, double jitter) =>
+      (hours.clamp(1, 168) * 3600 * jitter).clamp(900, 604800);
 
   num? nextSubscriptionRefresh(CatalogMap source) {
     if (source['url'] == null || source['status'] == 'needsApproval')
