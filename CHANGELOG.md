@@ -26,6 +26,11 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - Windows: uninstalling while Elarni was running left the app and its core running, with the
   network still captured for half a minute or more and their files locked. Uninstall now closes
   the app first.
+- Windows 10: the first Connect after an install, an update, an app restart or a crash of the
+  VPN helper often failed after about 20 seconds, and only the automatic retry connected. The
+  network adapter of the previous helper stays behind as a device that is gone; the new adapter
+  was created while Wintun was still removing it, which Windows 10 answers after 15 seconds
+  with an error. The helper now waits for the removal, which takes a fraction of a second.
 - After a network change (Wi-Fi to mobile data, a new default route), an XHTTP or TUIC connection
   on the dead path could stay open with its apps stalled until the idle timeout, 30 s or more:
   data the old network had still delivered counted as the server's answer to the check. The
