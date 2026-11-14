@@ -10,6 +10,7 @@ final class _FakeOS implements SystemProxy {
   final writes = <ProxySettings>[];
   Object? pointFailure;
   Object? readFailure;
+  Object? writeFailure;
 
   @override
   Future<ProxySettings> read() async {
@@ -26,6 +27,7 @@ final class _FakeOS implements SystemProxy {
 
   @override
   Future<void> write(ProxySettings settings) async {
+    if (writeFailure case final failure?) throw failure;
     writes.add(settings);
     current = {...settings};
   }
@@ -91,6 +93,32 @@ void main() {
     expect(os.writes, hasLength(1));
   });
 
+  test('a backup that cannot be read is dropped at the next start', () async {
+    for (final content in [
+      '{"port":108',
+      '',
+      '[]',
+      '{"port":"10891","previous":{"user":"pac"}}',
+      '{"port":10891}',
+      '{"port":10891,"previous":[]}',
+      '\u00ff\u00fe',
+    ]) {
+      os.current = {'port': 10891};
+      await backup.parent.create(recursive: true);
+      await backup.writeAsBytes(latin1.encode(content));
+      final next = SystemProxySession(os, backup);
+      expect(
+        await next.recover(),
+        contains('could not be restored'),
+        reason: content,
+      );
+      expect(await backup.exists(), isFalse, reason: content);
+      expect(await next.sync(20891), isNull, reason: content);
+      expect(os.current, {'port': 20891}, reason: content);
+      expect(await next.sync(null), isNull, reason: content);
+    }
+  });
+
   test('a failed apply is undone and not retried every second', () async {
     os.pointFailure = const OSError('gsettings failed');
     final message = await session.sync(10891);
@@ -105,6 +133,26 @@ void main() {
     expect(await session.sync(10891), isNull);
     expect(os.current, {'port': 10891}, reason: 'a new session tries again');
   });
+
+  test(
+    'a failed apply that could not be undone is undone at disconnect',
+    () async {
+      os.pointFailure = os.writeFailure = const OSError('gsettings failed');
+      expect(await session.sync(10891), contains('127.0.0.1:10891'));
+      expect(os.current, {'port': 10891}, reason: 'the undo failed too');
+      expect(await backup.exists(), isTrue);
+
+      os.pointFailure = os.writeFailure = null;
+      expect(
+        await session.sync(10891),
+        isNull,
+        reason: 'the failed port waits',
+      );
+      expect(await session.sync(null), isNull);
+      expect(os.current, {'user': 'pac'});
+      expect(await backup.exists(), isFalse);
+    },
+  );
 
   test('an unreadable setting keeps its backup for the next restore', () async {
     await session.sync(10891);

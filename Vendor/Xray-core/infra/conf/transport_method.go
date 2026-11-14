@@ -1,6 +1,7 @@
 package conf
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/x509"
@@ -315,7 +316,8 @@ func newRangeConfig(input Int32Range) *splithttp.RangeConfig {
 
 // Build implements Buildable.
 func (c *SplitHTTPConfig) Build() (proto.Message, error) {
-	if c.Extra != nil {
+	// A null "extra" is an unset one: a profile written back by a client carries it.
+	if c.Extra != nil && string(bytes.TrimSpace(c.Extra)) != "null" {
 		var extra SplitHTTPConfig
 		if err := json.Unmarshal(c.Extra, &extra); err != nil {
 			return nil, errors.New(`Failed to unmarshal "extra".`).Base(err)

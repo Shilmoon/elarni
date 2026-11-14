@@ -335,3 +335,69 @@ func TestGeofilesLargerThan64MiBArePrepared(t *testing.T) {
 		t.Fatalf("stored %d MiB geosite: %v", len(original)>>20, err)
 	}
 }
+
+// A stored geofile that became unreadable (a disk fault, a cleaner) is downloaded again in full: asked
+// with its validators, the server would only answer that the file has not changed.
+func TestDamagedStoredGeofileIsDownloadedAgain(t *testing.T) {
+	root := t.TempDir()
+	original, _ := proto.Marshal(&geodata.GeoSiteList{Entry: []*geodata.GeoSite{
+		{Code: "TEST", Domain: []*geodata.Domain{{Value: "example.com", Type: geodata.Domain_Full}}},
+	}})
+	tagged := assetValidators{ETag: `"v1"`}
+	downloads := 0
+	fetch := func(_ string, stored assetValidators, destination string) (bool, assetValidators, error) {
+		if stored == tagged {
+			return false, stored, nil
+		}
+		downloads++
+		return true, tagged, os.WriteFile(destination, original, 0o600)
+	}
+	request := assetRequest{Files: map[string]string{"geosite": "https://example.invalid/geosite.dat"}, Selectors: []string{"geosite:test"}, Reduce: true}
+	first, err := prepareAssets(root, request, fetch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Previous = first.(map[string]any)["assetRevision"].(string)
+	stored := filepath.Join(root, request.Previous, "geosite.original.dat")
+	if err := os.WriteFile(stored, original[:len(original)/2], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, refresh := range []bool{false, true} {
+		request.Refresh = refresh
+		repaired, err := prepareAssets(root, request, fetch)
+		if err != nil {
+			t.Fatalf("refresh %v: %v", refresh, err)
+		}
+		assets, err := readAssets(root, repaired.(map[string]any)["assetRevision"].(string))
+		if err != nil || len(assets["geosite.dat"]) == 0 {
+			t.Fatalf("refresh %v: assets %d, %v", refresh, len(assets), err)
+		}
+	}
+	if downloads != 3 {
+		t.Fatalf("downloads = %d, want the first and one for each repair", downloads)
+	}
+}
+
+// A revision whose prepared file is gone while the download it was made from is still there is a lost
+// cache, which the app prepares again, not a route without geodata.
+func TestRevisionWithoutItsPreparedFileIsMissing(t *testing.T) {
+	root := t.TempDir()
+	original, _ := proto.Marshal(&geodata.GeoSiteList{Entry: []*geodata.GeoSite{
+		{Code: "TEST", Domain: []*geodata.Domain{{Value: "example.com", Type: geodata.Domain_Full}}},
+	}})
+	request := assetRequest{Files: map[string]string{"geosite": "https://example.invalid/geosite.dat"}, Selectors: []string{"geosite:test"}, Reduce: true}
+	value, err := prepareAssets(root, request, bodies(func(string) ([]byte, error) { return original, nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := value.(map[string]any)["assetRevision"].(string)
+	if assets, err := readAssets(root, revision); err != nil || len(assets) != 1 {
+		t.Fatalf("assets %d, %v", len(assets), err)
+	}
+	if err := os.Remove(filepath.Join(root, revision, "geosite.dat")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readAssets(root, revision); err == nil || err.Error() != "assets_missing" {
+		t.Fatalf("err = %v, want assets_missing", err)
+	}
+}

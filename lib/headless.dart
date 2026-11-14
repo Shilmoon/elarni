@@ -15,6 +15,7 @@ const headlessMethods = {
   'subscriptions',
   'routingProfiles',
   'tunnelSettings',
+  'inboundCredentials',
   'connect',
   'disconnect',
   'repairTunnel',

@@ -19,6 +19,45 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ### Fixed
 
+- **Share** of an XHTTP server imported from a link or subscription wrote a link no client could
+  import (its `extra` listed every unset option, with ranges in a form the importer rejects), and
+  for a server from Xray JSON or Clash it left out the options a link has no parameter for
+  (connection reuse, padding, a separate download server). The link now carries the options the
+  server sets in `extra`, and nothing else. Android, iOS and macOS.
+- A link whose `extra` names a separate XHTTP download server lost that server's own options
+  (padding, connection reuse, headers) on import. All platforms.
+- **Share** changed the server in a few more cases, and now keeps it: a Hysteria2 server lost its
+  congestion settings, the upper bound of a port-hopping interval and the hop mode (what the
+  link's own parameters cannot say now travels in `fm`); a Trojan server without TLS came back
+  with TLS; a SOCKS user name with a colon was cut at it; a WebSocket server behind a front name
+  without an SNI got its Host header as the SNI; and a server from Xray JSON with `sendThrough`
+  was named after that address. Android, iOS and macOS.
+- A Hysteria2 link's `hop-interval` may be a range of seconds (`30-60`), as Clash writes it; it
+  was refused. All platforms.
+- `elarni-cli call inboundCredentials`, which the headless guide names as the way to read the
+  listener login in proxy-only mode, was refused as `unsupported_method`.
+- System proxy mode: when setting the proxy failed and undoing it failed as well, disconnecting
+  or quitting left the system proxy pointing at the closed listener until the next start. The
+  disconnect now restores the saved setting. Windows and Linux.
+- System proxy mode: starting a second copy of Elarni while the first was connected put the
+  system proxy back to the user's setting, so the first copy showed "connected" with the proxy
+  off. A copy that is refused now leaves the setting alone. A saved setting that cannot be read
+  (a damaged file) no longer refuses every later connection: it is reported once and dropped.
+  Windows and Linux.
+- Subscriptions, managed lists and routing data stopped refreshing by themselves, for as long as
+  years, after one refresh under a system clock that was set far ahead and then corrected.
+  Windows and Linux.
+- A damaged copy of a route's geofile in the routing data cache failed every connection and every
+  **Refresh routing data** with "invalid geodata" until the provider published a new file: the
+  server only answered that the file had not changed. The file is now downloaded again. A cache
+  that lost a prepared file is prepared again at Connect. Windows and Linux.
+- A catalog that could be decrypted but was not a catalog failed with an internal error
+  instead of the "catalog is damaged" message. Windows and Linux.
+- Per-app routing on Linux: a connection that a listed app had opened before Connect could be
+  reset and shown twice in **Recent connections** when the system's connection table changed
+  while it was being read.
+- Logs and diagnostic reports kept host names written in a non-Latin script (`пример.рф`); they
+  are now redacted like other host names. All platforms.
 - After a network change (Wi-Fi to mobile data, a new default route), an XHTTP or TUIC connection
   on the dead path could stay open with its apps stalled until the idle timeout, 30 s or more:
   data the old network had still delivered counted as the server's answer to the check. The

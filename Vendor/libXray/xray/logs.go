@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xtls/xray-core/common/log"
 )
@@ -169,9 +170,11 @@ var (
 	logIPv6        = regexp.MustCompile(`\[?[0-9A-Fa-f:]*:[0-9A-Fa-f:]*:[0-9A-Fa-f:.]*\]?`)
 	logIPv4        = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
 	logHost        = regexp.MustCompile(`(?i)\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z][a-z0-9-]{0,61}[a-z0-9])\b`)
-	logToken       = regexp.MustCompile(`[A-Za-z0-9+/_-]{20,}={0,2}`)
-	logHex         = regexp.MustCompile(`\b[0-9A-Fa-f]{16,}\b`)
-	logUserPath    = regexp.MustCompile(`(?i)([\\/](?:users|home)[\\/])[^\\/\s"']+`)
+	// Names in their own script (IDN), which the pattern above and its ASCII word boundaries do not see.
+	logWideHost = regexp.MustCompile(`(?:[\pL\pN](?:[\pL\pN-]{0,61}[\pL\pN])?\.)+\pL[\pL\pN-]{0,61}[\pL\pN]`)
+	logToken    = regexp.MustCompile(`[A-Za-z0-9+/_-]{20,}={0,2}`)
+	logHex      = regexp.MustCompile(`\b[0-9A-Fa-f]{16,}\b`)
+	logUserPath = regexp.MustCompile(`(?i)([\\/](?:users|home)[\\/])[^\\/\s"']+`)
 	// File names in core errors, not hosts. Real top-level domains such as .so or .app stay redacted.
 	logFileSuffixes = map[string]bool{"dat": true, "json": true, "go": true, "db": true, "txt": true, "yaml": true,
 		"yml": true, "log": true, "exe": true, "dll": true, "dylib": true, "conf": true, "mmdb": true, "srs": true}
@@ -194,6 +197,12 @@ func redactLog(text string) string {
 			return match
 		}
 		return "[ip]"
+	})
+	text = logWideHost.ReplaceAllStringFunc(text, func(match string) string {
+		if strings.IndexFunc(match, func(letter rune) bool { return letter >= utf8.RuneSelf }) < 0 {
+			return match // An ASCII name is the next pattern's.
+		}
+		return "[host]"
 	})
 	text = logHost.ReplaceAllStringFunc(text, func(match string) string {
 		if logFileSuffixes[strings.ToLower(match[strings.LastIndexByte(match, '.')+1:])] {

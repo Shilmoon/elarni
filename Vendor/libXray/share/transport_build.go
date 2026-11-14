@@ -127,11 +127,7 @@ func buildStreamFromTransportFields(t shareTransportFields) (*conf.StreamConfig,
 			if err := json.Unmarshal([]byte(t.ExtraJSON), &extraConfig); err != nil {
 				return nil, err
 			}
-			extraRawMessage, err := convertJsonToRawMessage(extraConfig)
-			if err != nil {
-				return nil, err
-			}
-			xhttpSettings.Extra = extraRawMessage
+			xhttpSettings.Extra = setJSON(extraConfig)
 		}
 		streamSettings.XHTTPSettings = xhttpSettings
 	}

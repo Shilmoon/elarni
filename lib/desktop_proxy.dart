@@ -323,28 +323,57 @@ final class DesktopProxy {
   Future<void> _initialize() => _initializing ??=
       () async {
         // A run that ended without restoring the OS proxy left it pointing at
-        // a closed listener, which breaks every app that follows it.
-        if (await _systemProxy?.recover() case final message?)
-          _listener?.call(message);
-        // A retry after a failed load keeps the lease it already holds.
-        if (_catalogIO == null && _lease == null)
-          await _native('acquireCatalog', {});
-        final stored = await _storage('loadCatalog', {});
+        // a closed listener, which breaks every app that follows it. A second
+        // instance is refused first: the setting and its backup belong to the
+        // running one.
+        var recovered = false;
+        Future<void> recoverProxy() async {
+          if (recovered) return;
+          recovered = true;
+          if (await _systemProxy?.recover() case final message?)
+            _listener?.call(message);
+        }
+
+        final CatalogMap stored;
+        try {
+          if (_catalogIO == null) {
+            // A retry after a failed load keeps the lease it already holds.
+            if (_lease == null) await _native('acquireCatalog', {});
+            // The lease excludes a second instance, and the load below can
+            // wait on a keyring prompt.
+            await recoverProxy();
+          }
+          stored = await _storage('loadCatalog', {});
+        } on Object catch (error) {
+          if (error is! PlatformException || error.code != 'storage_busy')
+            await recoverProxy();
+          rethrow;
+        }
+        await recoverProxy();
         _revision = stored['revision'] as String? ?? '';
         final document = stored['catalog'];
         if (document != null) {
-          final envelope = catalogMap(document);
-          if (envelope['version'] != 1 || envelope['committed'] is! Map)
+          final Object? pending;
+          try {
+            final envelope = catalogMap(document);
+            if (envelope['version'] != 1 || envelope['committed'] is! Map)
+              throw const FormatException();
+            pending = envelope['pending'];
+            _catalog = DesktopCatalog(
+              catalogMap(envelope['committed']),
+              _native,
+              _domainRequest,
+              clock: _refreshClock,
+            )..validate();
+          } on PlatformException {
+            rethrow;
+          } on Object {
+            // Not a catalog, whatever it is: it stays on disk untouched.
             throw desktopError('storage_corrupt');
-          _catalog = DesktopCatalog(
-            catalogMap(envelope['committed']),
-            _native,
-            _domainRequest,
-            clock: _refreshClock,
-          )..validate();
+          }
           final migrated = _catalog!.migrateSessionLimits();
           // The lifetime lease excludes another instance still publishing a change.
-          if (migrated || envelope['pending'] != null)
+          if (migrated || pending != null)
             await _save({'version': 1, 'committed': _catalog!.data});
         } else {
           _catalog = DesktopCatalog(
@@ -361,7 +390,10 @@ final class DesktopProxy {
         if (Platform.isWindows || Platform.isLinux)
           await _clearStaleGuard().catchError((Object _) {});
         _automation = DesktopAutomation(
-          catalogMap(_catalog!.data['automationEpisode'] ?? {}),
+          switch (_catalog!.data['automationEpisode']) {
+            final Map episode => catalogMap(episode),
+            _ => {},
+          },
         );
         _automation.intent = _catalog!.data['connectionIntent'] == true;
         try {

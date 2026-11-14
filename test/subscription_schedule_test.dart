@@ -85,6 +85,70 @@ void main() {
     },
   );
 
+  // A refresh under a clock set years ahead writes a time years away; once
+  // the clock is right again, the schedule must not wait for it.
+  test('a schedule written under a clock that was ahead is due again', () {
+    var now = DateTime.utc(2036);
+    final catalog = DesktopCatalog(
+      DesktopCatalog.empty(),
+      (_, _) async => {},
+      (_, _) => {},
+      clock: () => now,
+    );
+    final written = catalog.now + 86400;
+    expect(catalog.refreshDue(written, 86400), isFalse);
+    expect(catalog.refreshDue(null, 86400), isFalse, reason: 'a paused one');
+
+    now = DateTime.utc(2026, 11, 13);
+    expect(catalog.refreshDue(written, 86400), isTrue);
+    expect(catalog.refreshDue(catalog.now + 86400, 86400), isFalse);
+    expect(
+      catalog.refreshDue(catalog.now + 86400 + 600, 86400),
+      isFalse,
+      reason: 'a clock corrected by minutes refreshes nothing early',
+    );
+    expect(catalog.refreshDue(catalog.now - 1, 86400), isTrue);
+  });
+
+  // A refresh is scheduled its interval ahead, give or take a tenth: a
+  // provider's 24 hours can be 26.4 hours away and still be on time.
+  test('a refresh scheduled with its jitter is not due before its time', () {
+    final now = DateTime.utc(2026, 11, 13);
+    final catalog = DesktopCatalog(
+      DesktopCatalog.empty(),
+      (_, _) async => {},
+      (_, _) => {},
+      clock: () => now,
+    );
+    for (final hours in [0, 4, 24, 168, 1000]) {
+      final next =
+          catalog.now +
+          (hours.clamp(1, 168) * 3600 * 1.0999).clamp(900, 604800);
+      final source = {
+        'id': 'source',
+        'url': 'https://example.com/subscription',
+        'status': 'ready',
+        'metadata': {'updateIntervalHours': hours},
+        'lastSuccessfulFetch': catalog.now,
+        'refreshInterval': hours * 3600,
+        'nextRefreshAt': next,
+      };
+      expect(
+        catalog.subscriptionRefreshDue(source),
+        isFalse,
+        reason: '$hours hours',
+      );
+      expect(
+        catalog.subscriptionRefreshDue({
+          ...source,
+          'nextRefreshAt': next + 2 * 86400,
+        }),
+        isTrue,
+        reason: '$hours hours, written under a clock two days ahead',
+      );
+    }
+  });
+
   test('failed routing downloads retry on the subscription schedule', () {
     var now = DateTime.fromMillisecondsSinceEpoch(100000 * 1000);
     final catalog = DesktopCatalog(

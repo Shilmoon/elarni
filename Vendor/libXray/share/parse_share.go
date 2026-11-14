@@ -480,12 +480,15 @@ func (proxy xrayShareLink) hysteriaOutbound() (*conf.OutboundDetourConfig, error
 	}
 	var hopInterval conf.Int32Range
 	if hopStr := query.Get("hop-interval"); hopStr != "" {
-		interval, pErr := strconv.ParseInt(hopStr, 10, 32)
+		// One number of seconds, or a range of them as Clash writes it.
+		left, right, pErr := conf.ParseRangeString(hopStr)
 		if pErr != nil {
 			return nil, pErr
 		}
-		i := int32(interval)
-		hopInterval = conf.Int32Range{Left: i, Right: i, From: i, To: i}
+		if int(int32(left)) != left || int(int32(right)) != right {
+			return nil, fmt.Errorf("hop-interval out of range")
+		}
+		hopInterval = conf.Int32Range{Left: int32(left), Right: int32(right), From: int32(min(left, right)), To: int32(max(left, right))}
 	}
 	finalMask, mErr := buildHy2FinalMask(
 		query.Get("up"), query.Get("down"), query.Get("ports"),
