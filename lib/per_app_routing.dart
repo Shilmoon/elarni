@@ -448,9 +448,15 @@ class _PerAppRoutingEditorState extends State<PerAppRoutingEditor> {
 
   List<String> _rules(String text) {
     final seen = <String>{};
+    // Explorer's "Copy as path" wraps the path in double quotes, which no
+    // process path has.
+    String unquoted(String rule) =>
+        rule.length > 1 && rule.startsWith('"') && rule.endsWith('"')
+        ? rule.substring(1, rule.length - 1).trim()
+        : rule;
     return text
         .split('\n')
-        .map((s) => s.trim())
+        .map((s) => unquoted(s.trim()))
         .where((s) => s.isNotEmpty && seen.add(identity(s)))
         .toList();
   }

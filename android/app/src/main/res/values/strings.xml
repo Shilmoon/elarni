@@ -38,7 +38,7 @@
     <string name="some_settings_are_invalid_check_port">Some settings are invalid. Check port numbers, ranges, DNS addresses, and required login details.</string>
     <string name="the_connection_could_not_start_check">The connection could not start. Check the server, network, proxy ports, and routing assets, then retry.</string>
     <string name="this_profile_could_not_be_imported">This profile could not be imported. Check the complete link or configuration and try again.</string>
-    <string name="your_encrypted_catalog_could_not_be">Your encrypted catalog could not be opened or saved. Existing data has been preserved. Unlock the device and restart the app.</string>
+    <string name="your_encrypted_catalog_could_not_be">Your encrypted catalog could not be opened or saved. Existing data has been preserved. Unlock the device and restart the app. If this does not go away, the only way to start over is to clear Elarni\'s storage in Android Settings › Apps, which removes its servers and settings.</string>
     <string name="android_could_not_start_the_service">Android could not start the service from the background. Open Elarni and tap Connect.</string>
     <string name="android_has_not_made_the_vpn">Android has not made the VPN network ready. Reconnect or check Android VPN settings.</string>
     <string name="android_revoked_vpn_access_open_elarni">Android revoked VPN access. Open Elarni and connect to allow access again.</string>
@@ -614,6 +614,8 @@
     <string name="named_provider_link_removed">%1$s removed or changed this link. Ask the provider for a new one.</string>
     <string name="named_provider_sharing_disabled">%1$s disabled sharing for this profile.</string>
     <string name="unsupported_provider_directives">Unsupported provider directives</string>
+    <string name="servers_not_added">Servers not added</string>
+    <string name="servers_not_added_text">%1$s (%2$s). Elarni does not support these servers; the rest were added.</string>
     <string name="provider_dns_notice">The provider\'s DNS asks this device\'s resolver, outside the tunnel. Elarni uses its own DNS for these servers.</string>
     <string name="your_override_label">Your override</string>
     <string name="set_by_provider_label">Set by your provider</string>

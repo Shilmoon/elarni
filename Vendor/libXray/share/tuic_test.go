@@ -36,10 +36,45 @@ func TestTUICStrictImportContract(t *testing.T) {
 		strings.Replace(link, "udp_relay_mode=native", "udp_over_stream=true", 1),
 		strings.Replace(link, "congestion_control=cubic", "congestion_control=unknown", 1),
 		strings.Replace(link, "?sni", "?token=v4&sni", 1),
-		link + "\n" + strings.Replace(link, ":443?", ":0?", 1),
 	} {
 		if _, err := ImportClientProfiles(input); err == nil {
 			t.Fatal("accepted invalid TUIC input")
+		}
+	}
+	// In a feed the invalid link is skipped and the valid one imports.
+	imported, err := ImportClientProfiles(link + "\n" + strings.Replace(link, ":443?", ":0?", 1))
+	if err != nil || len(imported.Profiles) != 1 || imported.SkippedCount != 1 || imported.Skipped[0] != (SkippedProfile{Name: "TUIC ✓", Kind: "tuic"}) {
+		t.Fatalf("feed with an invalid TUIC link: %+v, %v", imported, err)
+	}
+}
+
+// v2rayN percent-encodes the colon between UUID and password; NekoBox writes a "/" before the query.
+func TestTUICV2rayNAndNekoBoxLinks(t *testing.T) {
+	const credentials, rest = "00000000-0000-4000-8000-000000000001:p%40ss", "127.0.0.1:443?sni=example.com&congestion_control=bbr#T"
+	want, err := ImportClientProfiles("tuic://" + credentials + "@" + rest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, link := range []string{
+		"tuic://" + strings.Replace(credentials, ":", "%3A", 1) + "@" + rest,
+		"tuic://" + credentials + "@" + strings.Replace(rest, "?", "/?", 1),
+		"tuic://" + strings.Replace(credentials, ":", "%3A", 1) + "@" + strings.Replace(rest, "?", "/?", 1),
+	} {
+		got, err := ImportClientProfiles(link)
+		if err != nil {
+			t.Fatalf("%s: %v", link, err)
+		}
+		if string(got.Profiles[0].Config) != string(want.Profiles[0].Config) {
+			t.Fatalf("%s:\n%s\nwant\n%s", link, got.Profiles[0].Config, want.Profiles[0].Config)
+		}
+	}
+	for _, link := range []string{
+		"tuic://" + credentials + "@" + strings.Replace(rest, "?", "/path?", 1),
+		"tuic://" + credentials + "@" + strings.Replace(rest, "?", "//?", 1),
+		"tuic://00000000-0000-4000-8000-000000000001@" + rest,
+	} {
+		if result, err := ImportClientProfiles(link); err == nil {
+			t.Errorf("%s imported as %s", link, result.Profiles[0].Config)
 		}
 	}
 }

@@ -176,6 +176,16 @@
     "%lld" : {
       "shouldTranslate" : false
     },
+    "%lld (%@). Elarni does not support these servers; the rest were added." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld (%@). Elarni не поддерживает эти серверы; остальные добавлены."
+          }
+        }
+      }
+    },
     "%lld milliseconds" : {
       "localizations" : {
         "en" : {
@@ -5101,6 +5111,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Серверы могут быть из любой подписки. Если выбрать другой сервер вручную, он станет основным, а эти резервные сохранятся. Когда перестаёт отвечать сервер на UDP или на порту, отличном от 443, первыми идут резервные на TCP 443. Если проходят только серверы со входом в России, первыми идут они."
+          }
+        }
+      }
+    },
+    "Servers not added" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Серверы не добавлены"
           }
         }
       }

@@ -13,6 +13,7 @@ import (
 	"github.com/xtls/xray-core/common/serial"
 	"github.com/xtls/xray-core/infra/conf"
 	"github.com/xtls/xray-core/transport/internet"
+	"github.com/xtls/xray-core/transport/internet/finalmask/salamander"
 	"github.com/xtls/xray-core/transport/internet/splithttp"
 	"github.com/xtls/xray-core/transport/internet/tls"
 	"google.golang.org/protobuf/proto"
@@ -261,6 +262,53 @@ func TestHysteriaLinkPrefersItsOwnParameters(t *testing.T) {
 	}
 	if query := link.Query(); query.Has("fm") || query.Get("ports") != "20000-30000" || query.Get("hop-interval") != "30" || query.Get("obfs-password") != "secret" {
 		t.Errorf("link %s", links)
+	}
+}
+
+// 3x-ui and v2rayN write Xray's gecko mask, salamander with a packet size range, as obfs=gecko with
+// minPacketSize and maxPacketSize. Without the sizes the mask cannot be built.
+func TestHysteria2GeckoObfuscationImportsAndShares(t *testing.T) {
+	const base = "hysteria2://pw@203.0.113.9:443?sni=h.example&obfs=gecko&obfs-password=secret"
+	imported, err := ImportClientProfiles(base + "&minPacketSize=512&maxPacketSize=1200#g")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := builtOutbound(t, imported.Profiles[0].Config)
+	masks := want.stream.(*internet.StreamConfig).Udpmasks
+	if len(masks) != 1 {
+		t.Fatalf("%d masks: %s", len(masks), imported.Profiles[0].Config)
+	}
+	mask, err := masks[0].GetInstance()
+	if gecko, ok := mask.(*salamander.GeckoConfig); err != nil || !ok || gecko.Password != "secret" || gecko.MinPacketSize != 512 || gecko.MaxPacketSize != 1200 {
+		t.Fatalf("mask %T %v (%v)", mask, mask, err)
+	}
+	links, err := ConvertXrayJsonToShareLinks(imported.Profiles[0].Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, err := url.Parse(links)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if query := link.Query(); query.Has("fm") || query.Get("obfs") != "gecko" || query.Get("obfs-password") != "secret" ||
+		query.Get("minPacketSize") != "512" || query.Get("maxPacketSize") != "1200" {
+		t.Errorf("link %s", links)
+	}
+	again, err := ImportClientProfiles(links)
+	if err != nil {
+		t.Fatalf("the exported link does not import: %v\n%s", err, links)
+	}
+	if got := builtOutbound(t, again.Profiles[0].Config); !proto.Equal(want.proxy, got.proxy) || !proto.Equal(want.stream, got.stream) {
+		t.Errorf("server changed through %s", links)
+	}
+	for _, sizes := range []string{"", "&minPacketSize=512", "&maxPacketSize=1200", "&minPacketSize=0&maxPacketSize=1200",
+		"&minPacketSize=1200&maxPacketSize=512", "&minPacketSize=512&maxPacketSize=2049", "&minPacketSize=a&maxPacketSize=1200"} {
+		if result, err := ImportClientProfiles(base + sizes); err == nil {
+			t.Errorf("%q imported as %s", sizes, result.Profiles[0].Config)
+		}
+	}
+	if _, err := ImportClientProfiles("hysteria2://pw@203.0.113.9:443?obfs=gecko&minPacketSize=512&maxPacketSize=1200"); err == nil {
+		t.Error("gecko without a password imported")
 	}
 }
 

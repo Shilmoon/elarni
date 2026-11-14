@@ -467,7 +467,8 @@ func (proxy ClashProxy) streamSettings(outbound conf.OutboundDetourConfig) (*con
 		if err != nil {
 			return nil, err
 		}
-		fm, err := buildHy2FinalMask(clashBandwidth(proxy.Up), clashBandwidth(proxy.Down), proxy.Ports, hopInterval, proxy.Obfs, proxy.ObfsPassword)
+		// No packet sizes: Clash's gecko stays refused.
+		fm, err := buildHy2FinalMask(clashBandwidth(proxy.Up), clashBandwidth(proxy.Down), proxy.Ports, hopInterval, proxy.Obfs, proxy.ObfsPassword, "", "")
 		if err != nil {
 			return nil, err
 		}

@@ -365,12 +365,12 @@ final class SubscriptionStore {
         }
       }
       let index = try requireRefresh(id, generation)
-      let imported: (nodes: [ParsedNode], directives: [String], hideURL: Bool, newSourceURL: String?, systemResolverDNS: Bool, fallbackURL: String?)
+      let imported: (nodes: [ParsedNode], directives: [String], hideURL: Bool, newSourceURL: String?, systemResolverDNS: Bool, fallbackURL: String?, skippedCount: Int, skippedKinds: String)
       if catalog.subscriptions[index].isLocal == true,
          let container = try? JSONSerialization.jsonObject(with: fetched.data) as? [String: Any],
          let nodes = container["elarniLocalNodes"] as? [[String: Any]] {
         // shortcut: a joined local import forgets the provider DNS notice; carry it in the container if local groups need it.
-        imported = (try nodes.map(parseBackupNode), container["elarniDirectives"] as? [String] ?? [], false, nil, false, nil)
+        imported = (try nodes.map(parseBackupNode), container["elarniDirectives"] as? [String] ?? [], false, nil, false, nil, 0, "")
       } else {
         imported = try parseImport(fetched.data, sourceURL: migrationSource,
           migrationHeaders: fetched.migrationHeaders.merging(initialMigrationHeaders) { _, first in first })
@@ -383,6 +383,11 @@ final class SubscriptionStore {
       if unsupportedDirectives {
         if fetched.metadata == nil { fetched.metadata = ProviderMetadata() }
         fetched.metadata?.directiveNotice = "This provider included Incy directives that Elarni cannot apply. Ask for Xray JSON with the intended routing and DNS settings."
+      }
+      if imported.skippedCount > 0 {
+        if fetched.metadata == nil { fetched.metadata = ProviderMetadata() }
+        fetched.metadata?.skippedServers = imported.skippedCount
+        fetched.metadata?.skippedKinds = imported.skippedKinds
       }
       if imported.systemResolverDNS {
         if fetched.metadata == nil { fetched.metadata = ProviderMetadata() }
@@ -402,7 +407,12 @@ final class SubscriptionStore {
       if let fallback = (requestedFormat == "source" ? imported.fallbackURL : nil) ?? providerLinks(old).urls["fallback"] {
         fetched.links.urls["fallback"] = fallback
       }
-      let routingContent = try selectedRoutingContent(fetched, directives: imported.directives)
+      let providerRouting = selectedRoutingContent(fetched, directives: imported.directives)
+      if providerRouting.refused, fetched.metadata?.directiveNotice == nil {
+        if fetched.metadata == nil { fetched.metadata = ProviderMetadata() }
+        fetched.metadata?.directiveNotice = "This provider sent routing rules that Elarni cannot apply. Its servers were added without them."
+      }
+      let routingContent = providerRouting.content
       if let routingContent { _ = try routing.stageProvider(routingContent, subscriptionID: id) }
       var replacement = try buildReplacement(old: old, parsed: parsed, fetched: fetched)
       replacement.record.preferredFormat = imported.newSourceURL == nil ? requestedFormat : "source"
@@ -932,7 +942,10 @@ final class SubscriptionStore {
         let key = "\(node.outboundRef)\n\(node.format ?? "")\n\(node.ipPreference ?? "")\n\(scope.key)"
         if validated.contains(key) { continue }
         if !parsed { routes = try routing.previewRoutes(subscriptionID: source.id); parsed = true }
-        _ = try compiledPreview(node: node, routes: routes)
+        do { _ = try compiledPreview(node: node, routes: routes) }
+        // A catalog restored on another device names servers whose secrets stayed behind. Such a server cannot
+        // connect until its subscription refreshes, but it must not refuse every other change until then.
+        catch SubscriptionError.keychainFailure where secretIsMissing(ref: node.outboundRef) { continue }
         if validated.count >= 16384 { validated.removeAll() }
         validated.insert(key)
       }
@@ -1337,8 +1350,9 @@ final class SubscriptionStore {
     }
   }
 
-  private func selectedRoutingContent(_ fetched: FeedResponse, directives: [String] = []) throws -> String? {
-    if fetched.metadata?.routingEnabled == false { return nil }
+  /// The provider's routing profile to apply, and whether a profile it sent was refused.
+  private func selectedRoutingContent(_ fetched: FeedResponse, directives: [String] = []) -> (content: String?, refused: Bool) {
+    if fetched.metadata?.routingEnabled == false { return (nil, false) }
     let supplied = [fetched.routingHeader].compactMap { $0 }
       + routingLinks(fetched.data) + directives.filter(RoutingDomainDecoder.isRoutingLink)
     // Panels such as 3x-ui send their Happ routing to every client (3x-ui #5999),
@@ -1346,11 +1360,10 @@ final class SubscriptionStore {
     let own = supplied.filter { $0.hasPrefix("elarni://routing/") }
     let candidates = own.isEmpty ? supplied : own
     // Match Windows: process the header before body directives, with the final
-    // supplied profile taking precedence. Validate every directive before publishing.
-    guard candidates.allSatisfy({ RoutingDomainDecoder.canonicalImport($0) != nil }) else {
-      throw RoutingStoreError.invalidImport
-    }
-    return candidates.last
+    // supplied profile taking precedence. A profile the decoder refuses is left out
+    // and noted: it must not cost the user the servers it came with.
+    let accepted = candidates.filter { RoutingDomainDecoder.canonicalImport($0) != nil }
+    return (accepted.last, accepted.count != candidates.count)
   }
 
   private func routingLinks(_ data: Data) -> [String] {
@@ -1380,7 +1393,7 @@ final class SubscriptionStore {
     return (content, value["name"] as? String, value["shareLink"] as? String)
   }
 
-  func parseImport(_ data: Data, sourceURL: String? = nil, migrationHeaders: [String: String] = [:]) throws -> (nodes: [ParsedNode], directives: [String], hideURL: Bool, newSourceURL: String?, systemResolverDNS: Bool, fallbackURL: String?) {
+  func parseImport(_ data: Data, sourceURL: String? = nil, migrationHeaders: [String: String] = [:]) throws -> (nodes: [ParsedNode], directives: [String], hideURL: Bool, newSourceURL: String?, systemResolverDNS: Bool, fallbackURL: String?, skippedCount: Int, skippedKinds: String) {
     guard let text = String(data: data, encoding: .utf8) else {
       throw SubscriptionError.invalidFeed
     }
@@ -1415,7 +1428,11 @@ final class SubscriptionStore {
           let profiles = imported["profiles"] as? [[String: Any]] else {
       throw SubscriptionError.invalidFeed
     }
-    let nodes = try profiles.map { profile -> ParsedNode in
+    // Members the importer could not read are left out and counted; so are those the compiler refuses below.
+    var skippedKinds = (imported["skipped"] as? [[String: Any]] ?? []).compactMap { $0["kind"] as? String }
+    var skippedCount = imported["skippedCount"] as? Int ?? 0
+    var refusal: SubscriptionError?
+    let nodes = try profiles.compactMap { profile -> ParsedNode? in
       guard let format = profile["format"] as? String else { throw SubscriptionError.invalidFeed }
       if format == "telegram" {
         guard let url = profile["url"] as? String else { throw SubscriptionError.invalidFeed }
@@ -1426,7 +1443,12 @@ final class SubscriptionStore {
             let outbounds = config["outbounds"] as? [[String: Any]], let outbound = outbounds.first,
             let protocolName = outbound["protocol"] as? String else { throw SubscriptionError.invalidFeed }
       do { _ = try RoutingDomainDecoder.request("compileProfile", payload: ["profile": config, "socksPort": 1080]) }
-      catch { throw SubscriptionError.incompatibleProfile("The profile contains an invalid or unsupported routing graph, dependency, or endpoint. The entire import was rejected.") }
+      catch {
+        refusal = .incompatibleProfile("The profile contains an invalid or unsupported routing graph, dependency, or endpoint. The entire import was rejected.")
+        skippedCount += 1
+        skippedKinds.append(protocolName)
+        return nil
+      }
       let stream = outbound["streamSettings"] as? [String: Any]
       let names = ["vless": "VLESS", "vmess": "VMess", "trojan": "Trojan", "shadowsocks": "Shadowsocks",
         "socks": "SOCKS", "http": "HTTP", "hysteria": "Hysteria2", "tuic": "TUIC", "wireguard": "WireGuard", "amneziawg": "AmneziaWG"]
@@ -1448,8 +1470,12 @@ final class SubscriptionStore {
         groups: try profileGroups(config)
       )
     }
+    // With nothing left the import fails, for the reason the last member was refused.
+    if nodes.isEmpty, let refusal { throw refusal }
+    var kinds: [String] = []
+    for kind in skippedKinds where !kind.isEmpty && !kinds.contains(kind) && kinds.count < 5 { kinds.append(kind) }
     return (nodes, imported["directives"] as? [String] ?? [], imported["hideURL"] as? Bool == true, imported["newSourceURL"] as? String,
-      imported["systemResolverDNS"] as? Bool == true, imported["fallbackURL"] as? String)
+      imported["systemResolverDNS"] as? Bool == true, imported["fallbackURL"] as? String, skippedCount, kinds.joined(separator: ", "))
   }
 
   private func profileGroups(_ config: [String: Any]) throws -> [ProfileGroupSelection]? {
@@ -1748,6 +1774,21 @@ final class SubscriptionStore {
   func removeInboundCredentials(ref: String) {
     guard ref.hasPrefix("inbound.") else { return }
     deleteSecret(ref)
+  }
+
+  /// Whether the Keychain holds no item for `ref`, as opposed to one it cannot read now.
+  private func secretIsMissing(ref: String) -> Bool {
+    guard let group = try? effectiveAccessGroup() else { return false }
+    var value: CFTypeRef?
+    return secretAccess.copy([
+      kSecClass: kSecClassGenericPassword,
+      kSecAttrService: Self.service,
+      kSecAttrAccount: ref,
+      kSecAttrAccessGroup: group,
+      kSecUseDataProtectionKeychain: true,
+      kSecReturnData: true,
+      kSecMatchLimit: kSecMatchLimitOne,
+    ] as CFDictionary, &value) == errSecItemNotFound
   }
 
   private func readSecret(ref: String) throws -> Data {

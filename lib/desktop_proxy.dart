@@ -573,6 +573,28 @@ final class DesktopProxy {
     ),
   );
 
+  // The servers among [nodeIds] that the compiler refuses.
+  static Future<Set<String>> _refusedOff(
+    String path,
+    CatalogMap data,
+    Set<String> nodeIds,
+  ) => Isolate.run(
+    () => _withDomain(path, (request) {
+      final refused = <String>{};
+      for (final input in _compileInputs(_workerCatalog(data, request))) {
+        if (input.context == null || !nodeIds.contains(input.node['id']))
+          continue;
+        try {
+          _compileIn(request, input.context!, input.node);
+        } on PlatformException catch (error) {
+          if (error.code != 'unsupported_profile') rethrow;
+          refused.add(input.node['id']! as String);
+        }
+      }
+      return refused;
+    }),
+  );
+
   static Future<String> _compileOff(
     String path,
     CatalogMap data,

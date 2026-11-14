@@ -30,6 +30,9 @@ struct ProviderMetadata: Codable {
   var deviceRegistered: Bool?
   var directiveNotice: String?
   var dnsNotice: String?
+  /// Servers of the last refresh that were left out because the app cannot read them, and their kinds ("ssh, naive").
+  var skippedServers: Int?
+  var skippedKinds: String?
   var updateIntervalHours: Int?
 
   init() {}
@@ -95,6 +98,7 @@ struct ProviderMetadata: Codable {
      "bannerText": bannerText ?? NSNull(), "bannerButtonText": bannerButtonText ?? NSNull(),
      "hideSettings": hideSettings ?? NSNull(), "hideURL": hideURL ?? NSNull(), "deviceRegistered": deviceRegistered ?? NSNull(),
      "directiveNotice": directiveNotice ?? NSNull(), "dnsNotice": dnsNotice ?? NSNull(),
+     "skippedServers": skippedServers ?? NSNull(), "skippedKinds": skippedKinds ?? NSNull(),
      "updateIntervalHours": updateIntervalHours ?? NSNull()]
   }
 }

@@ -80,6 +80,10 @@ struct SubscriptionDetailView: View {
           ForEach([("announcement", String(localized: "Notice")), ("directiveNotice", String(localized: "Configuration notice")), ("dnsNotice", "DNS"), ("bannerText", String(localized: "Message"))], id: \.0) { key, title in
             if let text = source.metadata[key] as? String, !text.isEmpty { VStack(alignment: .leading, spacing: 4) { Text(title).font(.caption).foregroundStyle(AppPalette.secondary); Text(text) } }
           }
+          if let skipped = source.metadata["skippedServers"] as? Int, skipped > 0 {
+            let kinds = source.metadata["skippedKinds"] as? String ?? ""
+            VStack(alignment: .leading, spacing: 4) { Text(String(localized: "Servers not added")).font(.caption).foregroundStyle(AppPalette.secondary); Text(String(localized: "\(skipped) (\(kinds)). Elarni does not support these servers; the rest were added.")) }
+          }
           ForEach([("enabled", String(localized: "Account enabled")), ("online", String(localized: "Online"))], id: \.0) { key, title in
             if let value = source.metadata[key] as? Bool { LabeledContent(title, value: value ? String(localized: "Yes") : String(localized: "No")) }
           }

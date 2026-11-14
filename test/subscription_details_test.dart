@@ -33,7 +33,131 @@ SubscriptionSnapshot _subscriptions({Map<String, String> options = const {}}) =>
       ],
     );
 
+Future<void> _openSubscription(
+  WidgetTester tester,
+  FakeTunnelControl control,
+) async {
+  await tester.pumpWidget(ElarniApp(tunnelControl: control));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const Key('nav-subscriptions')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Acme VPN'));
+  await tester.pumpAndSettle();
+}
+
+SubscriptionSnapshot _group({
+  List<SubscriptionNode> nodes = const [_node],
+  Map<String, Object?> metadata = const {},
+}) => SubscriptionSnapshot(
+  selectedNodeId: nodes.isEmpty ? null : 'a',
+  subscriptions: [
+    SubscriptionGroup(
+      id: 'acme',
+      name: 'Acme VPN',
+      status: 'ready',
+      nodes: nodes,
+      metadata: metadata,
+    ),
+  ],
+);
+
 void main() {
+  // Android stores the count as text, Windows, Linux and macOS as a number.
+  for (final count in [3, '3']) {
+    testWidgets(
+      'subscription details name the servers Elarni did not add (${count.runtimeType})',
+      (tester) async {
+        final control = FakeTunnelControl()
+          ..snapshot = _group(
+            metadata: {'skippedServers': count, 'skippedKinds': 'ssh, naive'},
+          );
+        await _openSubscription(tester, control);
+        await tester.tap(
+          find.byKey(const PageStorageKey('subscription-details:acme')),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Servers not added'), findsOneWidget);
+        expect(
+          find.text(
+            '3 (ssh, naive). Elarni does not support these servers; the rest were added.',
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+  }
+
+  testWidgets('a subscription with every server added has no such row', (
+    tester,
+  ) async {
+    final control = FakeTunnelControl()
+      ..snapshot = _group(metadata: {'skippedServers': 0, 'skippedKinds': ''});
+    await _openSubscription(tester, control);
+    await tester.tap(
+      find.byKey(const PageStorageKey('subscription-details:acme')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Servers not added'), findsNothing);
+  });
+
+  // A provider sending what Elarni cannot read is not a network problem, and
+  // a subscription that never downloaded has no servers to keep.
+  for (final (code, nodes, label, message) in [
+    (
+      'unsupported_profile',
+      [_node],
+      'Unsupported content',
+      'Acme VPN sent nothing Elarni can read: the format or one of its '
+          'settings is not supported. The last working servers were kept.',
+    ),
+    (
+      'unsupported_profile',
+      <SubscriptionNode>[],
+      'Unsupported content',
+      'Acme VPN sent nothing Elarni can read: the format or one of its '
+          'settings is not supported.',
+    ),
+    (
+      'hwid_limit',
+      [_node],
+      'Provider device limit reached',
+      'Acme VPN reached this subscription’s device limit. Remove a device '
+          'in your account with the provider, or contact the provider. '
+          'The last working servers were kept.',
+    ),
+    (
+      'operation_failed',
+      <SubscriptionNode>[],
+      'Refresh failed',
+      'Refresh failed.',
+    ),
+    (
+      'fetch_failed',
+      <SubscriptionNode>[],
+      'Download failed',
+      'The download failed. Check this device’s network, then retry.',
+    ),
+  ]) {
+    testWidgets('a $code refresh of ${nodes.length} servers names its cause', (
+      tester,
+    ) async {
+      final control = FakeTunnelControl()
+        ..snapshot = _group(nodes: nodes)
+        ..onRefresh = (_) async =>
+            throw PlatformException(code: code, message: 'secret');
+      await _openSubscription(tester, control);
+      await tester.tap(find.byKey(const ValueKey('refresh-subscription:acme')));
+      await tester.pumpAndSettle();
+      expect(find.text(message), findsOneWidget);
+      expect(
+        find.textContaining('kept'),
+        nodes.isEmpty ? findsNothing : findsOneWidget,
+      );
+      expect(find.textContaining('· $label'), findsOneWidget);
+      expect(find.textContaining('secret'), findsNothing);
+    });
+  }
+
   testWidgets(
     'subscription details label what the provider set and reset only that device ID',
     (tester) async {

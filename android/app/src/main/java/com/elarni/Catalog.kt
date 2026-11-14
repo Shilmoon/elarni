@@ -167,8 +167,15 @@ class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
         putSource((group ?: obj("id" to id, "name" to input.string("name", "Local profiles"), "format" to "source", "status" to "ready"))
             .put("nodes", JSONArray(kept + nodes)))
         if (selected.isEmpty()) nodes.firstOrNull { it.string("format") == "xrayProfile" }?.let { data.put("selectedNodeId", it.string("id")) }
-        addressedRouting(imported.strings("directives").filter(::isRoutingLink)).forEach { importRouting(it, provider = id) }
+        addressedRouting(imported.strings("directives").filter(::isRoutingLink)).forEach { importsRouting(it, id) }
         return null
+    }
+    /** Imports a provider's routing link. A link the decoder refuses is left out and reported as false:
+     *  it must not cost the user the servers it came with. */
+    private fun importsRouting(link: String, provider: String): Boolean {
+        if (runCatching { Native.domain("decodeRouting", obj("content" to link)) }.isFailure) return false
+        importRouting(link, provider = provider)
+        return true
     }
     fun addSource(url: String, input: JSONObject = JSONObject()): String {
         if (safeURL(url) == null) throw AppFailure("invalid_target")
@@ -225,6 +232,9 @@ class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
         if (migrated.isNotEmpty()) { source.put("url", migrated).put("shareLink", migrated); listOf("raw", "json", "clash").forEach(links::remove) }
         if (targetFormat == "source" && imported.string("fallbackURL").isNotEmpty()) source.put("fallbackURL", imported.getString("fallbackURL"))
         if (imported.strings("directives").any { !isRoutingLink(it) }) metadata.put("directiveNotice", "Unsupported provider directives")
+        // Lines the importer cannot read are left out; the subscription page says how many and of which kind.
+        if (imported.optInt("skippedCount") > 0) metadata.put("skippedServers", imported.optInt("skippedCount").toString())
+            .put("skippedKinds", imported.objects("skipped").map { it.string("kind") }.filter(String::isNotEmpty).distinct().take(5).joinToString(", "))
         if (imported.optBoolean("systemResolverDNS")) metadata.put("dnsNotice", "The provider's DNS asks this device's resolver, outside the tunnel. Elarni uses its own DNS for these servers.")
         val title = display(headers.string("profile-title")) ?: source.string("importedName", source.string("providerName", URI(url).host))
         val hours = refreshHours(source, metadata)
@@ -236,10 +246,25 @@ class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
             .put("lastSuccessfulFetch", now()).put("refreshInterval", hours * 3600)
             .put("nextRefreshAt", now() + hours * 3600 * (0.9 + java.security.SecureRandom().nextDouble() * 0.2))
         if (metadata.opt("routingEnabled") != false) {
-            addressedRouting((listOf(headers.string("routing")) + imported.strings("directives")).filter(::isRoutingLink)).forEach { importRouting(it, provider = id) }
+            // The header is the provider's routing in any form the decoder reads (a link, bare base64 or JSON, "off").
+            addressedRouting(listOf(headers.string("routing")).filter(String::isNotEmpty) + imported.strings("directives").filter(::isRoutingLink))
+                .forEach { if (!importsRouting(it, id)) metadata.put("directiveNotice", "Unsupported provider directives") }
+        }
+        // A server the compiler refuses is left out like a line the importer cannot read; with none left the refresh fails.
+        val refused = mutableListOf<JSONObject>()
+        try { validateNodes(only = id, refused = refused) } catch (_: OutOfMemoryError) { throw AppFailure("input_too_large") }
+        val usable = if (refused.isEmpty()) nodes else {
+            val gone = refused.map { it.string("id") }.toSet()
+            val kept = nodes.filter { it.string("id") !in gone }
+            if (kept.isEmpty()) throw AppFailure("unsupported_profile")
+            val kinds = metadata.string("skippedKinds").split(", ") + refused.map { it.mapObject("config").objects("outbounds").firstOrNull()?.string("protocol").orEmpty() }
+            metadata.put("skippedServers", ((metadata.string("skippedServers").toIntOrNull() ?: 0) + refused.size).toString())
+                .put("skippedKinds", kinds.filter(String::isNotEmpty).distinct().take(5).joinToString(", "))
+            source.put("nodes", JSONArray(kept))
+            kept
         }
         reconcileSelection()
-        if (selected.isEmpty()) nodes.firstOrNull { it.string("format") == "xrayProfile" }?.let { data.put("selectedNodeId", it.string("id")) }
+        if (selected.isEmpty()) usable.firstOrNull { it.string("format") == "xrayProfile" }?.let { data.put("selectedNodeId", it.string("id")) }
         return null
     }
     fun refreshFailed(id: String, code: String) {
@@ -419,8 +444,9 @@ class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
         })
     }
     /** Compiles each server in turn, which validates it: 4,096 compiled trees at once outgrew the API 30 heap.
-     *  A request that compiled before is not compiled again, so an edit costs the servers it changes. */
-    fun validateNodes(valid: () -> Unit = {}) {
+     *  A request that compiled before is not compiled again, so an edit costs the servers it changes.
+     *  With [refused], only the subscription [only] is compiled and a server the compiler refuses is collected, not thrown. */
+    fun validateNodes(only: String? = null, refused: MutableList<JSONObject>? = null, valid: () -> Unit = {}) {
         // Resolve settings and each source's route once; per-node lookups were quadratic.
         val setting = settings
         val vpn = setting.getBoolean("xrayTunEnabled")
@@ -429,6 +455,7 @@ class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
         // Servers with one route and one IP preference differ only in their profile.
         val shared = HashMap<String, Pair<JSONObject, String>>()
         sources.forEach { source ->
+            if (only != null && source.string("id") != only) return@forEach
             valid()
             val routeId = assigned.string(source.string("id"))
             val route = allRoutes.firstOrNull { it.string("id") == routeId && it.optBoolean("enabled", true) }
@@ -440,7 +467,8 @@ class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
                 val profile = node.getJSONObject("config")
                 val key = sha256(context + profile.toString())
                 if (synchronized(validated) { validated[key] } != null) return@forEach
-                compiled(request.put("profile", profile))
+                try { compiled(request.put("profile", profile)) }
+                catch (error: AppFailure) { if (refused == null || error.code != "unsupported_profile") throw error; refused.add(node); return@forEach }
                 synchronized(validated) { validated[key] = true }
             }
         }
@@ -607,7 +635,7 @@ class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
             "sessionLimitsMigrated" to true, "subscriptions" to JSONArray(), "profiles" to JSONArray(), "assignments" to JSONObject()))
         fun safeURL(text: String): String? = try {
             val value = URI(text)
-            if (text.isEmpty() || text.length > 16384 || text.any { it.code < 32 } || value.scheme !in listOf("http", "https") || value.host.isNullOrEmpty() || value.userInfo != null || value.fragment != null) null else text
+            if (text.isEmpty() || text.length > 16384 || text.any { it.code < 32 } || value.scheme?.lowercase() !in listOf("http", "https") || value.host.isNullOrEmpty() || value.userInfo != null || value.fragment != null) null else text
         } catch (_: Exception) { null }
         fun isRoutingLink(text: String) = listOf("happ://routing/", "elarni://routing/", "incy://routing/").any { text.startsWith(it) }
         // Panels such as 3x-ui send their Happ routing to every client (3x-ui #5999), so links addressed to Elarni win when a feed has any.

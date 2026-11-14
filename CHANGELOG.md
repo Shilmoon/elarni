@@ -16,9 +16,61 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   saved at once. Routing-profile editors on iPhone and desktop keep their Cancel and Save.
 - Removed the core's batch latency test and its start from a config file: no platform calls
   them.
+- A subscription no longer fails as a whole because of one server Elarni cannot read. A link,
+  Clash proxy or Xray JSON entry that is unsupported or malformed, or that Elarni reads but
+  cannot run, is left out, the others are added, and the subscription's page shows how many
+  were left out and of which kind (**Servers not added**). Before, one such line cost every
+  server: a 12-server subscription with one unusual TUIC link added nothing. A reply with
+  nothing Elarni can use still fails and keeps the servers from the last refresh. All
+  platforms.
+- A routing profile from a provider that Elarni cannot apply no longer fails the subscription
+  it came with: the servers are added or refreshed without it, and the subscription's page
+  says so. All platforms.
+- **TLS fragmentation** applies to the servers that can carry it (VLESS over TCP or XHTTP with
+  TLS or Reality); every other server now connects without it. Before, the setting could not
+  be turned on while the list held a Trojan, Hysteria2, TUIC or similar server, a refresh that
+  brought one failed while it was on, and such a server could not be connected. All platforms.
+- A subscription address that starts with `http://` and names a domain is accepted after the
+  same "not encrypted" approval as one with an IP address; it was refused as invalid. Panels
+  such as 3x-ui serve subscriptions over plain HTTP unless a certificate is set.
 
 ### Fixed
 
+- Links and files written by other clients and panels now import: TUIC links from v2rayN
+  (`uuid%3Apassword`) and NekoBox (`/` before `?`), and TUIC links that write the
+  skip-verification flag as `insecure` or `allowInsecure`; AmneziaVPN `vpn://` keys;
+  `happ://add/<address>` subscription links, which Remnawave's **Add subscription** button
+  writes; VMess links with `allowInsecure`; WireGuard files with repeated `Address`, `DNS` or
+  `AllowedIPs` lines or a `ListenPort`; Hysteria2 links with `obfs=gecko` and packet sizes;
+  the old all-base64 `ss://` form; and Remnawave's default Clash (Mihomo) file. All platforms.
+- Happ routing profiles that leave the DNS fields or the name empty (Happ's own documented
+  example and the default output of its routing builders do) were refused; missing DNS now
+  takes Happ's defaults. Fields that other clients add are ignored, and the header forms
+  `off`, `...?data=` and, again, a link without a scheme (`://routing/...`, which INCY
+  documents for providers) are accepted. On Android a `routing` header that is not a link
+  (bare base64 or JSON, `off`) was ignored. All platforms.
+- An Xray JSON subscription with extra top-level sections (`meta` in Happ JSON, Xray's
+  `version` and `geodata`) passed the importer and was then refused: a new subscription
+  vanished and a refresh failed without a recorded reason. Such sections are ignored. On
+  Windows and Linux a refresh whose servers cannot be used is now recorded on the subscription.
+- A server whose address is an IPv6 literal imported but could not connect on Windows and
+  Linux.
+- A subscription Elarni could not read was reported as a failed download ("Refresh to retry",
+  "The last working servers were kept" beside 0 servers). The message now says the content is
+  not supported; Remnawave's device limit, which arrives as an empty successful reply, shows
+  the device-limit message. A failed Connect names missing or incomplete routing data, an
+  oversized routing profile and conflicting route settings instead of "retry the server", and
+  an import says when the file is too large or the image has no QR code.
+- **Excluded routes** and **Included routes** take entries separated by commas or spaces and a
+  bare address (`192.168.1.10`); these were saved and then refused. A per-app rule pasted with
+  Explorer's quotes (`"C:\…\app.exe"`) is saved without them. Windows, Linux and macOS.
+- macOS and iPhone: after a move to a new device, where the server list arrives without the
+  Keychain items, every add, refresh and routing change failed until the old subscriptions
+  were deleted. Such servers are passed over until their subscription refreshes. Closing the
+  file or QR image panel on macOS no longer shows "Could not import".
+- Android: with per-app routing on and the VPN connected, a refresh that dropped a server an
+  app was pinned to failed for as long as the VPN stayed up. A subscription address written
+  as `Https://` is accepted. The message for a catalog that cannot be opened names the way out.
 - System info and diagnostics on Windows 11 named the system "Windows 10".
 - Windows: an MSI upgrade to a build whose bundled Visual C++ runtime is older than the
   installed build's removed the runtime files, and Elarni no longer started. The installer now
@@ -88,8 +140,6 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   while it was being read.
 - Logs and diagnostic reports kept host names written in a non-Latin script (`пример.рф`); they
   are now redacted like other host names. All platforms.
-- TUIC links that write the skip-verification flag as `insecure` or `allowInsecure` (as some
-  panels do) now import; before, one such line made the whole subscription fail to add.
 - After a network change (Wi-Fi to mobile data, a new default route), an XHTTP or TUIC connection
   on the dead path could stay open with its apps stalled until the idle timeout, 30 s or more:
   data the old network had still delivered counted as the server's answer to the check. The

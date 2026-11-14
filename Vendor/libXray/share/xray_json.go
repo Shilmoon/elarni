@@ -1,8 +1,10 @@
 package share
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/netip"
+	"strings"
 
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/infra/conf"
@@ -74,5 +76,21 @@ func convertJsonToRawMessage(v any) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return json.RawMessage(vBytes), nil
+	return json.RawMessage(bareIPv6Address(vBytes)), nil
+}
+
+// bareIPv6Address stores a server's IPv6 address as Xray JSON writes it: Xray's own text form of the
+// address, which settings marshal through, puts it in brackets.
+func bareIPv6Address(raw []byte) []byte {
+	var settings struct {
+		Address *string `json:"address"`
+	}
+	if !bytes.Contains(raw, []byte(`"address":"[`)) || json.Unmarshal(raw, &settings) != nil || settings.Address == nil {
+		return raw
+	}
+	inner := strings.TrimSuffix(strings.TrimPrefix(*settings.Address, "["), "]")
+	if address, err := netip.ParseAddr(inner); err != nil || !address.Is6() || "["+inner+"]" != *settings.Address {
+		return raw
+	}
+	return bytes.Replace(raw, []byte(`"address":"`+*settings.Address+`"`), []byte(`"address":"`+inner+`"`), 1)
 }

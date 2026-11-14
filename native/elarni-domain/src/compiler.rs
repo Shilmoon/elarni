@@ -145,7 +145,7 @@ pub fn compile_xray_config(request: &CompileRequest) -> Result<Vec<u8>, CompileE
         },
         "streamSettings": stream_settings
     });
-    compile_owned_config(
+    compile_server_config(
         proxy_outbound,
         &request.routes,
         request.socks_port,
@@ -153,6 +153,36 @@ pub fn compile_xray_config(request: &CompileRequest) -> Result<Vec<u8>, CompileE
         request.tun_mtu,
         &request.runtime,
     )
+}
+
+/// One server's config. Fragmentation is best effort, as in `compile_profile`: a server that
+/// cannot carry fragments connects without them; invalid fragment settings still fail.
+fn compile_server_config(
+    proxy_outbound: Value,
+    routes: &crate::model::RouteModel,
+    socks_port: u16,
+    packet_backend: PacketBackend,
+    tun_mtu: u16,
+    runtime: &RuntimeOptions,
+) -> Result<Vec<u8>, CompileError> {
+    let compile = |runtime: &RuntimeOptions| {
+        compile_owned_config(
+            proxy_outbound.clone(),
+            routes,
+            socks_port,
+            packet_backend,
+            tun_mtu,
+            runtime,
+        )
+    };
+    match compile(runtime) {
+        Err(CompileError::UnsupportedFragmentation) => {
+            let mut unfragmented = runtime.clone();
+            unfragmented.fragmentation_enabled = false;
+            compile(&unfragmented)
+        }
+        result => result,
+    }
 }
 
 pub fn compile_xray_outbound_config_with_options(
@@ -168,7 +198,7 @@ pub fn compile_xray_outbound_config_with_options(
     }
     let endpoint_host = normalize_client_outbound(&mut outbound)?;
     outbound["tag"] = json!("elarni-proxy");
-    let config = compile_owned_config(
+    let config = compile_server_config(
         outbound,
         routes,
         socks_port,
@@ -311,7 +341,17 @@ pub(crate) fn outbound_host(settings: &serde_json::Map<String, Value>) -> Option
         .filter(|host| {
             !host.is_empty() && host.len() <= 253 && !host.chars().any(char::is_whitespace)
         })
-        .map(str::to_owned)
+        .map(|host| server_host(host).to_owned())
+}
+
+/// Older imports stored an IPv6 server as "[2001:db8::1]"; Xray strips the brackets itself,
+/// but the platform resolves any host that is not an IP literal.
+pub(crate) fn server_host(address: &str) -> &str {
+    address
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .filter(|inner| inner.parse::<std::net::Ipv6Addr>().is_ok())
+        .unwrap_or(address)
 }
 
 /// Xray fields this crate finds, strips or validates by their exact spelling.

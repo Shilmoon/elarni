@@ -111,10 +111,31 @@ class AndroidE2E {
             feed.body = link("Provider one", 18081)
             call("refresh", obj("id" to id))
             assertEquals(18081, endpointPort(snapshot()))
+            // A server the importer reads but the compiler refuses (two outbounds under one tag) is left out and counted too.
+            fun member(name: String, twice: Boolean) = obj("remarks" to name, "outbounds" to JSONArray(listOfNotNull(
+                obj("tag" to "proxy", "protocol" to "vless", "settings" to obj("vnext" to JSONArray(listOf(obj("address" to "127.0.0.1", "port" to 18084,
+                    "users" to JSONArray(listOf(obj("id" to "00000000-0000-4000-8000-000000000001", "encryption" to "none")))))))),
+                if (twice) obj("tag" to "proxy", "protocol" to "freedom") else null)))
+            feed.body = JSONArray(listOf(member("Kept", false), member("Refused", true))).toString()
+            call("refresh", obj("id" to id))
+            assertEquals("Kept", snapshot().nodes.single().string("name"))
+            assertEquals(18084, endpointPort(snapshot()))
+            assertEquals("1", snapshot().source(id).mapObject("metadata").string("skippedServers"))
+            assertEquals("vless", snapshot().source(id).mapObject("metadata").string("skippedKinds"))
+            feed.body = JSONArray(listOf(member("Refused", true))).toString()
+            assertEquals("unsupported_profile", expectFailure { call("refresh", obj("id" to id)) })
+            assertEquals(18084, endpointPort(snapshot()))
+            // A line the importer cannot read is left out and counted; the server beside it still updates.
             feed.body = link("Valid") + "\nnot-a-supported-profile"
+            call("refresh", obj("id" to id))
+            assertEquals(1, snapshot().nodes.size)
+            assertEquals(18080, endpointPort(snapshot()))
+            assertEquals("1", snapshot().source(id).mapObject("metadata").string("skippedServers"))
+            // A body with nothing to add fails and keeps the servers.
+            feed.body = "not-a-supported-profile"
             expectFailure { call("refresh", obj("id" to id)) }
             assertEquals(1, snapshot().nodes.size)
-            assertEquals(18081, endpointPort(snapshot()))
+            assertEquals(18080, endpointPort(snapshot()))
             call("renameSource", obj("id" to id, "name" to "Custom name"))
             feed.body = link("Provider one", 18081)
             feed.headers = mapOf("profile-title" to "New provider title")
@@ -376,15 +397,22 @@ class AndroidE2E {
             assertEquals("missing_geodata:geosite:missing", expectFailure { call("refreshGeofiles", obj("id" to id)) })
         }
     }
-    @Test fun e_brokenProviderRoutingKeepsTheAppliedCatalog() {
+    @Test fun e_refusedProviderRoutingKeepsTheNewServers() {
         HTTPFixture().use { feed ->
             feed.body = link("Provider one")
             val id = subscribe(feed)
-            // The refresh fails after writing the new servers into its candidate; none of that may apply.
+            // A routing profile this app refuses is left out and noted; the servers it came with still update.
             feed.body = link("Provider one", 18081); feed.headers = mapOf("routing" to "happ://routing/add/not-a-routing-profile")
-            expectFailure { call("refresh", obj("id" to id)) }
-            assertEquals(18080, endpointPort(snapshot()))
-            assertEquals("failed", snapshot().source(id).string("status"))
+            call("refresh", obj("id" to id))
+            assertEquals(18081, endpointPort(snapshot()))
+            assertEquals("ready", snapshot().source(id).string("status"))
+            assertTrue(snapshot().source(id).mapObject("metadata").string("directiveNotice").isNotEmpty())
+            // The header may also carry the profile bare, without a link around it.
+            feed.headers = mapOf("routing" to Base64.encodeToString(obj("Name" to "Bare", "RemoteDNSType" to "DoU", "RemoteDNSIP" to "1.1.1.1",
+                "DomesticDNSType" to "DoU", "DomesticDNSIP" to "8.8.8.8").toString().toByteArray(), Base64.NO_WRAP))
+            call("refresh", obj("id" to id))
+            assertEquals("Bare", snapshot().routes.single().string("name"))
+            assertTrue(snapshot().source(id).mapObject("metadata").string("directiveNotice").isEmpty())
         }
     }
     @Test fun e_providerRoutingKeepsTheUsersAssignment() {

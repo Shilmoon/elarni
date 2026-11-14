@@ -171,7 +171,8 @@ void main() {
       (tester) async {
         const fragmentationHelp =
             'VLESS over TCP or XHTTP with TLS or Reality. '
-            'XHTTP over HTTP/3 and existing dialer chains are unsupported.';
+            'XHTTP over HTTP/3 and existing dialer chains are unsupported. '
+            'Servers that cannot use it connect without it.';
         const muxHelp =
             'Imported mux settings take precedence. This preference '
             'applies only to VLESS; it does not enable mux for Hysteria.';
@@ -1498,6 +1499,53 @@ void main() {
       findsOneWidget,
     );
   });
+
+  // A provider sending what Elarni cannot read is not a network problem.
+  testWidgets('a new subscription whose content is unreadable says why', (
+    tester,
+  ) async {
+    final control = FakeTunnelControl();
+    control.onImport = (_, _) async {
+      control.snapshot = SubscriptionSnapshot(
+        selectedNodeId: control.snapshot.selectedNodeId,
+        subscriptions: [
+          ...control.snapshot.subscriptions,
+          const SubscriptionGroup(
+            id: 'added',
+            name: 'provider.example',
+            status: 'refresh_failed',
+            nodes: [],
+          ),
+        ],
+      );
+      throw PlatformException(code: 'unsupported_profile');
+    };
+    await pumpApp(tester, control);
+    await importClipboard(tester, 'https://provider.example/sub');
+    expect(
+      find.text(
+        'Subscription added, but Elarni cannot read what the provider sent: '
+        'its format or one of its settings is not supported. '
+        'Try the provider’s Xray JSON link, or ask the provider.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  for (final (code, text) in [
+    ('import_too_large', 'The file is larger than Elarni can import.'),
+    ('input_too_large', 'The file is larger than Elarni can import.'),
+    ('invalid_qr_image', 'No QR code was found in this image.'),
+  ]) {
+    testWidgets('an import refused as $code says why', (tester) async {
+      final control = FakeTunnelControl()
+        ..importError = PlatformException(code: code, message: 'secret');
+      await pumpApp(tester, control);
+      await importClipboard(tester, 'fixture-client-profile');
+      expect(find.text(text), findsOneWidget);
+      expect(find.textContaining('secret'), findsNothing);
+    });
+  }
 
   testWidgets('routing imports without a selected server ask for one', (
     tester,

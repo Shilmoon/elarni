@@ -693,8 +693,210 @@ fn routing_accepts_doh_without_a_bootstrap_ip() {
             .bootstrap_ips
             .is_empty()
     );
+    // DoU needs an IP; with only a DoH URL the side is DoH, as Happ reads it.
     value["RemoteDNSType"] = json!("DoU");
+    let RoutingImport::Add {
+        profile,
+        route_model,
+        ..
+    } = decode_routing(&value.to_string()).unwrap()
+    else {
+        panic!("expected routing profile")
+    };
+    assert_eq!(profile.remote_dns_type, crate::routing::DnsType::DoH);
+    assert_eq!(route_model.dns_servers[0], "https://dns.example/dns-query");
+}
+
+// Happ fills missing or empty DNS settings from its default profile; its documented header
+// example and its routing builders leave them out, and a name may be empty.
+#[test]
+fn routing_profiles_fill_missing_dns_from_happ_defaults() {
+    use crate::routing::DnsType;
+    let happ_header = "happ://routing/onadd/ewogICAgIk5hbWUiOiAidGVzdCIsCiAgICAiR2xvYmFsUHJveHkiOiAidHJ1ZSIsCiAgICAiUmVtb3RlRG5zIjogIiIsCiAgICAiRG9tZXN0aWNEbnMiOiAiIiwKICAgICJHZW9pcHVybCI6ICIiLAogICAgIkdlb3NpdGV1cmwiOiAiIiwKICAgICJEbnNIb3N0cyI6IHt9LAogICAgIkRpcmVjdFNpdGVzIjogW10sCiAgICAiRGlyZWN0SXAiOiBbXSwKICAgICJQcm94eVNpdGVzIjogW10sCiAgICAiUHJveHlJcCI6IFtdLAogICAgIkJsb2NrU2l0ZXMiOiBbXSwKICAgICJCbG9ja0lwIjogW10sCiAgICAiRG9tYWluU3RyYXRlZ3kiOiAiQXNJcyIKfQ==";
+    let minimal = r#"{"Name":"Minimal","GlobalProxy":"true","DomainStrategy":"AsIs"}"#;
+    let both_dou_empty = json!({"RemoteDNSType": "DoU", "DomesticDNSType": "DoU"}).to_string();
+    for (input, name) in [
+        (happ_header, Some("test")),
+        (minimal, Some("Minimal")),
+        (both_dou_empty.as_str(), None),
+    ] {
+        let RoutingImport::Add {
+            profile,
+            route_model,
+            ..
+        } = decode_routing(input).unwrap()
+        else {
+            panic!("expected routing profile")
+        };
+        assert_eq!(profile.name.as_deref(), name, "{input}");
+        assert_eq!(
+            (
+                profile.remote_dns_type,
+                profile.remote_dns_domain.as_str(),
+                profile.remote_dns_ip.as_str()
+            ),
+            (
+                DnsType::DoH,
+                "https://cloudflare-dns.com/dns-query",
+                "1.1.1.1"
+            ),
+            "{input}"
+        );
+        assert_eq!(
+            (
+                profile.domestic_dns_type,
+                profile.domestic_dns_domain.as_str(),
+                profile.domestic_dns_ip.as_str()
+            ),
+            (DnsType::DoH, "https://dns.google/dns-query", "8.8.8.8"),
+            "{input}"
+        );
+        assert_eq!(
+            route_model.dns_servers,
+            [
+                "https://cloudflare-dns.com/dns-query",
+                "https://dns.google/dns-query"
+            ]
+        );
+        let policy = route_model.dns_policy.unwrap();
+        assert_eq!(policy.remote.bootstrap_ips, ["1.1.1.1"]);
+        assert_eq!(policy.domestic.bootstrap_ips, ["8.8.8.8"]);
+        assert_eq!(route_model.fallback_action, Some(RouteAction::Proxy));
+    }
+    // Old profiles carry only the legacy IP; a DoU side with only a URL is DoH. The stored
+    // profile says what the route model does.
+    let RoutingImport::Add {
+        profile,
+        route_model,
+        ..
+    } = decode_routing(
+        &json!({"Name": "", "RemoteDns": "9.9.9.9", "DomesticDNSType": "DoU",
+            "DomesticDNSDomain": "https://dns.example/dns-query"})
+        .to_string(),
+    )
+    .unwrap()
+    else {
+        panic!("expected routing profile")
+    };
+    assert_eq!(profile.name, None);
+    assert_eq!(profile.remote_dns_type, DnsType::DoU);
+    assert_eq!(profile.domestic_dns_type, DnsType::DoH);
+    assert_eq!(
+        route_model.dns_servers,
+        ["9.9.9.9", "https://dns.example/dns-query"]
+    );
+    let stored = serde_json::to_value(&profile).unwrap();
+    assert_eq!(stored["Name"], Value::Null);
+    assert_eq!(stored["RemoteDNSType"], "DoU");
+    assert_eq!(stored["DomesticDNSType"], "DoH");
+    // A value that is there but wrong is still refused, as is an empty profile.
+    for (key, invalid) in [
+        ("RemoteDNSIP", json!("invalid")),
+        ("RemoteDNSDomain", json!("http://dns.example/dns-query")),
+        ("DomesticDns", json!("dns.example")),
+        ("Name", json!("n".repeat(129))),
+    ] {
+        assert!(
+            decode_routing(&json!({key: invalid}).to_string()).is_err(),
+            "accepted {key} {invalid}"
+        );
+    }
+    for empty in [" { } ", "happ://routing/add/e30="] {
+        assert!(decode_routing(empty).is_err(), "accepted {empty}");
+    }
+}
+
+// Providers also write a bare `off`, Happ's query form of a link and a link without a scheme.
+#[test]
+fn routing_links_accept_bare_off_query_data_and_no_scheme() {
+    use crate::routing::RoutingError;
+    for off in ["off", " OFF\n", "Off", "://routing/off"] {
+        assert_eq!(decode_routing(off), Ok(RoutingImport::Off), "{off:?}");
+    }
+    let raw = r#"{"DomesticDNSIP":"8.8.8.8","DomesticDNSType":"DoU","Name":"Query ~????","RemoteDNSIP":"1.1.1.1","RemoteDNSType":"DoU"}"#;
+    let base64 = general_purpose::STANDARD.encode(raw);
+    // A query keeps '+' literal; percent-encoding hides '+', '/' and '='.
+    assert!(base64.contains('+') && base64.contains('/') && base64.ends_with('='));
+    let encoded =
+        percent_encoding::utf8_percent_encode(&base64, percent_encoding::NON_ALPHANUMERIC)
+            .to_string();
+    for (link, activate) in [
+        (format!("happ://routing/onadd?data={encoded}"), true),
+        (format!("happ://routing/add?data={base64}"), false),
+        (format!("incy://routing/add?data={encoded}"), false),
+        (format!("incy://routing/onadd?data={base64}"), true),
+        (format!("elarni://routing/onadd?data={encoded}"), true),
+        (format!("elarni://routing/add?data={base64}"), false),
+        (format!("://routing/onadd/{base64}"), true),
+        (format!("://routing/add?data={encoded}"), false),
+    ] {
+        let RoutingImport::Add {
+            activate: actual,
+            profile,
+            ..
+        } = decode_routing(&link).unwrap()
+        else {
+            panic!("expected routing profile")
+        };
+        assert_eq!(actual, activate, "{link}");
+        assert_eq!(profile.name.as_deref(), Some("Query ~????"), "{link}");
+    }
+    // A profile elsewhere is not fetched.
+    assert!(decode_routing("incy://routing/onadd/https://lists.example/routing.json").is_err());
+    assert_eq!(
+        decode_routing("://routing/unknown"),
+        Err(RoutingError::UnsupportedLink)
+    );
+}
+
+// Other clients add fields of their own. Every app tries pasted text as routing first, so
+// JSON with none of the routing profile's own fields (a server config) stays refused.
+#[test]
+fn routing_ignores_other_clients_fields_but_not_other_json() {
+    use crate::routing::RoutingError;
+    let mut value = routing_profile();
+    value["GeositeHash"] = json!("0123abcd");
+    value["UseTags"] = json!(true);
+    value["UpdateUrl"] = json!("https://lists.example/routing");
+    value["DirectSites"] = json!(["full:example.com"]);
+    let RoutingImport::Add {
+        profile,
+        route_model,
+        ..
+    } = decode_routing(&value.to_string()).unwrap()
+    else {
+        panic!("expected routing profile")
+    };
+    assert_eq!(route_model.rules[0].domains, ["full:example.com"]);
+    assert!(
+        serde_json::to_value(&profile)
+            .unwrap()
+            .get("GeositeHash")
+            .is_none()
+    );
+    // An alias is one of the profile's own fields.
+    for alias in [
+        json!({"RemoteDNSIp": "9.9.9.9", "UseTags": true}),
+        json!({"useChunkFiles": "false"}),
+    ] {
+        assert!(decode_routing(&alias.to_string()).is_ok(), "{alias}");
+    }
+    // Known fields keep their types.
+    value["GlobalProxy"] = json!("yes");
     assert!(decode_routing(&value.to_string()).is_err());
+    let server = json!({"remarks": "NL", "outbounds": [{"protocol": "vless"}]}).to_string();
+    for input in [
+        server.clone(),
+        general_purpose::STANDARD.encode(&server),
+        "{}".to_owned(),
+        json!({"remoteDNSIP": "9.9.9.9"}).to_string(),
+    ] {
+        assert_eq!(
+            decode_routing(&input),
+            Err(RoutingError::InvalidJson),
+            "{input}"
+        );
+    }
 }
 
 #[test]
@@ -1225,6 +1427,55 @@ fn ffi_compile_hy2_reports_parse_and_compile_errors_and_owned_config() {
     let (status, response) = handle.request(&serde_json::to_vec(&request).unwrap());
     assert_eq!(status, ELARNI_STATUS_PARSE_ERROR);
     assert!(!response.unwrap().to_string().contains("fixture-auth"));
+}
+
+// Fragmentation is best effort for a single server too (the Apple apps compile bare outbounds
+// and Hysteria2 links one by one): one that cannot carry fragments connects without them.
+#[test]
+fn single_server_compiles_skip_fragmentation_the_server_cannot_carry() {
+    let handle = FfiHandle::new();
+    let routes = json!({"rules": [], "dnsServers": ["192.0.2.53"]});
+    let trojan = json!({"protocol": "trojan",
+        "settings": {"address": "trojan.example.com", "port": 443, "password": "fixture-secret"},
+        "streamSettings": {"network": "tcp", "security": "tls", "tlsSettings": {"serverName": "trojan.example.com"}}});
+    let requests = |runtime: Value| {
+        [
+            json!({"schemaVersion": 1, "operation": "compileOutbound", "payload": {
+                "outbound": trojan, "routes": routes, "socksPort": 10890, "runtime": runtime}}),
+            json!({"schemaVersion": 1, "operation": "compileHy2Uri", "payload": {
+                "uri": "hy2://fixture-auth@proxy.example.com:443", "authenticationRef": {"id": "profile.auth"},
+                "routes": routes, "socksPort": 10890, "runtime": runtime}}),
+        ]
+    };
+    for request in requests(json!({"fragmentationEnabled": true, "muxEnabled": true})) {
+        let (status, response) = handle.request(&serde_json::to_vec(&request).unwrap());
+        assert_eq!(status, ELARNI_STATUS_OK, "{request}: {response:?}");
+        let config: Value =
+            serde_json::from_str(response.unwrap()["configUtf8"].as_str().unwrap()).unwrap();
+        let proxy = tagged(&config, "outbounds", "elarni-proxy");
+        assert!(
+            proxy
+                .pointer("/streamSettings/sockopt/dialerProxy")
+                .is_none(),
+            "{proxy}"
+        );
+        assert!(
+            !config["outbounds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|outbound| outbound["settings"]["fragment"].is_object())
+        );
+    }
+    // Invalid fragment settings are still refused.
+    for request in requests(json!({"fragmentationEnabled": true, "fragmentLength": "0"})) {
+        let (status, response) = handle.request(&serde_json::to_vec(&request).unwrap());
+        assert_eq!(status, ELARNI_STATUS_COMPILE_ERROR, "{request}");
+        assert_eq!(
+            response.unwrap()["error"],
+            CompileError::InvalidFragmentation.to_string()
+        );
+    }
 }
 
 // Xray retries rules with resolved IPs only when none matched, and the explicit

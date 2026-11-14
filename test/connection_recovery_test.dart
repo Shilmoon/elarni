@@ -82,6 +82,33 @@ void main() {
     expect(missing.description, contains('Per-app routing'));
   });
 
+  // These used to read as "The connection operation failed", which names
+  // neither the cause nor what to do.
+  test('routing data and route failures name their cause and remedy', () {
+    final generic = ConnectionIssue.forCode('operation_failed').description;
+    final descriptions = <String>{};
+    for (final (code, cause, remedy) in [
+      ('assets_missing', 'geofiles are missing', 'Refresh routing data'),
+      ('missing_geodata', 'lack codes', 'Refresh routing data'),
+      (
+        'invalid_route_enforcement',
+        'Enforce tunnel routes needs specific included routes',
+        'turn enforcement off',
+      ),
+      ('route_model_too_large', 'exceed 8 MB', 'Remove some rules'),
+    ]) {
+      final issue = ConnectionIssue.from(
+        PlatformException(code: code, message: 'secret'),
+      );
+      expect(issue.description, isNot(generic), reason: code);
+      expect(issue.message, contains(cause), reason: code);
+      expect(issue.remedy, contains(remedy), reason: code);
+      expect(issue.description, isNot(contains('secret')), reason: code);
+      descriptions.add(issue.description);
+    }
+    expect(descriptions, hasLength(4));
+  });
+
   for (final windows in [false, true]) {
     testWidgets(
       'initial status failure does not invent a last-known state ($windows)',

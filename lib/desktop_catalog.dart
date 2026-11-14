@@ -955,15 +955,31 @@ final class DesktopCatalog {
       'format': 'source',
       'nodes': [...kept, ...added],
     });
-    for (final directive in addressedRouting([
-      ...(imported['directives'] as List? ?? []).cast<String>().where(
-        isRoutingLink,
-      ),
-    ])) {
-      importRouting(directive, provider: id);
-    }
+    importProviderRouting(
+      addressedRouting([
+        ...(imported['directives'] as List? ?? []).cast<String>().where(
+          isRoutingLink,
+        ),
+      ]),
+      id,
+    );
     reconcileSelection();
     return nodes;
+  }
+
+  /// Imports [provider]'s routing links. One that Elarni refuses is left out
+  /// and costs none of the provider's servers; returns whether any was.
+  bool importProviderRouting(List<String> directives, String provider) {
+    var refused = false;
+    for (final directive in directives) {
+      try {
+        importRouting(directive, provider: provider);
+      } on PlatformException catch (error) {
+        if (error.code != 'invalid_routing') rethrow;
+        refused = true;
+      }
+    }
+    return refused;
   }
 
   static String? safeURL(Object? value) {
@@ -1116,6 +1132,15 @@ final class DesktopCatalog {
       (value) => !isRoutingLink(value as String),
     ))
       metadata['directiveNotice'] = 'Unsupported provider directives';
+    // Servers the import passed over, which the details name by kind.
+    if (imported['skippedCount'] case final int count when count > 0) {
+      metadata['skippedServers'] = count;
+      metadata['skippedKinds'] = [
+        for (final item in imported['skipped'] as List? ?? const [])
+          if (item is Map && item['kind'] is String && item['kind'] != '')
+            item['kind']! as String,
+      ].toSet().take(5).join(', ');
+    }
     if (imported['systemResolverDNS'] == true)
       metadata['dnsNotice'] =
           "The provider's DNS asks this device's resolver, outside the tunnel. "
@@ -1264,13 +1289,23 @@ final class DesktopCatalog {
           isRoutingLink,
         ),
       ]);
-      for (final directive in directives) {
-        importRouting(directive, provider: id);
-      }
+      if (importProviderRouting(directives, id))
+        putSource({
+          ...source(id),
+          'metadata': {
+            ...metadata,
+            'directiveNotice': 'Unsupported provider directives',
+          },
+        });
     }
+    _selectAfterRefresh(nodes);
+    return null;
+  }
+
+  // As on Android, a running tunnel moves to this provider's first server,
+  // or to the next one automation checks so that it stays valid.
+  void _selectAfterRefresh(List<CatalogMap> nodes) {
     reconcileSelection();
-    // As on Android, a running tunnel moves to this provider's first server,
-    // or to the next one automation checks so that it stays valid.
     data['selectedNodeId'] ??=
         switch (data['automation']) {
           {'enabled': true, 'nodeIDs': [final next, ...]} => next,
@@ -1279,7 +1314,43 @@ final class DesktopCatalog {
         nodes
             .where((node) => node['format'] == 'xrayProfile')
             .firstOrNull?['id'];
-    return null;
+  }
+
+  /// Takes the servers of [id] that the compiler refuses out of a refresh and
+  /// counts them with those the import passed over. False when none of its
+  /// servers is refused or none would be left: the refresh then fails.
+  bool dropRefused(String id, Set<String> refused) {
+    final current = source(id);
+    final nodes = catalogList(current['nodes']);
+    final kept = [
+      for (final node in nodes)
+        if (!refused.contains(node['id'])) node,
+    ];
+    if (kept.isEmpty || kept.length == nodes.length) return false;
+    final metadata = catalogMap(current['metadata'] ?? const {});
+    final kinds = {
+      if (metadata['skippedKinds'] case final String kinds)
+        ...kinds.split(', '),
+      for (final node in nodes)
+        if (refused.contains(node['id']))
+          catalogList(
+            catalogMap(node['config'])['outbounds'],
+          ).firstOrNull?['protocol'],
+    }.whereType<String>().where((kind) => kind.isNotEmpty);
+    putSource({
+      ...current,
+      'nodes': kept,
+      'metadata': {
+        ...metadata,
+        'skippedServers':
+            (metadata['skippedServers'] as int? ?? 0) +
+            nodes.length -
+            kept.length,
+        'skippedKinds': kinds.take(5).join(', '),
+      },
+    });
+    _selectAfterRefresh(kept);
+    return true;
   }
 
   // Whether a scheduled refresh is due. [longest] is the furthest ahead its
@@ -1447,11 +1518,17 @@ final class DesktopCatalog {
               .where((item) => item['providerSubscriptionId'] == provider)
               .firstOrNull;
     final id = previous?['id'] as String? ?? desktopID();
-    if (parsed['activate'] == true) {
-      if (target == null) throw desktopError('no_selected_subscription');
-      assignRouting(target, id, byUser: provider == null);
+    if (parsed['activate'] == true && target == null)
+      throw desktopError('no_selected_subscription');
+    // The assignment waits until the profile merged: a refused one must not
+    // leave a subscription assigned to a profile that was never stored.
+    void activate() {
+      if (parsed['activate'] == true)
+        assignRouting(target!, id, byUser: provider == null);
     }
+
     if (provider != null && previous?['edited'] == true) {
+      activate();
       putRoute({...previous!, 'original': profile});
       return id;
     }
@@ -1475,6 +1552,11 @@ final class DesktopCatalog {
     final hasGeo = ['Geoipurl', 'Geositeurl'].any(
       (key) => profile[key] is String && (profile[key] as String).isNotEmpty,
     );
+    final routeModel = domain('mergeManagedRouting', {
+      'profile': profile,
+      'lists': retained,
+    })['routeModel'];
+    activate();
     putRoute({
       if (previous != null) ...previous,
       'id': id,
@@ -1488,10 +1570,7 @@ final class DesktopCatalog {
       'profile': profile,
       'original': provider != null ? profile : previous?['original'] ?? profile,
       'lists': retained,
-      'routeModel': domain('mergeManagedRouting', {
-        'profile': profile,
-        'lists': retained,
-      })['routeModel'],
+      'routeModel': routeModel,
       'geofileStatus':
           previous?['geofileStatus'] ?? (hasGeo ? 'pending' : 'ready'),
       'geofiles': previous?['geofiles'] ?? [],
