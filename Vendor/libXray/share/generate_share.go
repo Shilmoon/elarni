@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/xtls/xray-core/infra/conf"
@@ -663,7 +664,7 @@ func setJSON(settings any) json.RawMessage {
 // hysteriaMaskQuery writes a Hysteria2 mask as the link's own parameters when they say all of it, the
 // form other clients read, and as "fm" alone otherwise: the importer refuses the two when they disagree.
 func hysteriaMaskQuery(mask *conf.FinalMask) [][2]string {
-	var up, down, ports, obfs, obfsPassword string
+	var up, down, ports, obfs, obfsPassword, minPacketSize, maxPacketSize string
 	var interval conf.Int32Range
 	if mask.QuicParams != nil {
 		up, down = string(mask.QuicParams.BrutalUp), string(mask.QuicParams.BrutalDown)
@@ -682,10 +683,15 @@ func hysteriaMaskQuery(mask *conf.FinalMask) [][2]string {
 			var salamander conf.Salamander
 			if json.Unmarshal(*layer.Settings, &salamander) == nil {
 				obfs, obfsPassword = "salamander", salamander.Password
+				// A packet size range makes it gecko, which links say as 3x-ui and v2rayN do.
+				if salamander.PacketSize.To > 0 {
+					obfs = "gecko"
+					minPacketSize, maxPacketSize = strconv.Itoa(int(salamander.PacketSize.From)), strconv.Itoa(int(salamander.PacketSize.To))
+				}
 			}
 		}
 	}
-	if own, err := buildHy2FinalMask(up, down, ports, interval, obfs, obfsPassword); err != nil || !sameMask(own, mask) {
+	if own, err := buildHy2FinalMask(up, down, ports, interval, obfs, obfsPassword, minPacketSize, maxPacketSize); err != nil || !sameMask(own, mask) {
 		if text := setJSON(mask); text != nil {
 			return [][2]string{{"fm", string(text)}}
 		}
@@ -707,6 +713,8 @@ func hysteriaMaskQuery(mask *conf.FinalMask) [][2]string {
 	if obfs != "" {
 		query = append(query, [2]string{"obfs-password", obfsPassword})
 	}
+	add("minPacketSize", minPacketSize)
+	add("maxPacketSize", maxPacketSize)
 	return query
 }
 

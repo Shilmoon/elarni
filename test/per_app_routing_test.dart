@@ -535,6 +535,68 @@ void main() {
     );
   }
 
+  // Explorer's "Copy as path" wraps the path in double quotes; a rule with
+  // them never matches the app.
+  testWidgets('a pasted quoted Windows path is saved without its quotes', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 1100));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      DesktopIntegration.channel,
+      (call) async => call.method == 'routingApplications' ? [] : null,
+    );
+    addTearDown(
+      () =>
+          messenger.setMockMethodCallHandler(DesktopIntegration.channel, null),
+    );
+    TunnelSettings? saved;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: PerAppRoutingEditor(
+              settings: const TunnelSettings(
+                perAppMode: 'bypass',
+                perAppProcesses: ['existing.exe'],
+                xrayTunEnabled: true,
+              ),
+              windows: true,
+              onSave: (value) async => saved = value,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add apps'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Profile & executable tools'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit executable rules'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Executable names or full paths'),
+      ' "C:\\Program Files\\Example App\\app.exe" \n'
+      '"existing.exe"\n'
+      '  "tool.exe"  ',
+    );
+    await tester.tap(find.text('Update draft'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('per-app-notice')), findsNothing);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+    expect(saved!.perAppProcesses, [
+      r'C:\Program Files\Example App\app.exe',
+      'existing.exe',
+      'tool.exe',
+    ]);
+  });
+
   testWidgets(
     'discovery and invalid icons preserve rules; cancel discards draft',
     (tester) async {

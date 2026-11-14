@@ -2628,10 +2628,16 @@ rules:
     () async {
       await prepare();
       final selected = (await backend.control.subscriptions()).selectedNodeId;
+      // A line the core cannot read is skipped and the rest import; the server
+      // already imported stays one server.
+      final mixed = await backend.control.importClientProfiles(
+        content: '$profile\nprivate-secret-invalid',
+      );
+      expect(mixed.snapshot.subscriptions.single.nodes.single.name, 'Fixture');
+      expect(mixed.snapshot.selectedNodeId, selected);
+      // With nothing it can read, the import is refused and changes nothing.
       await expectLater(
-        backend.control.importClientProfiles(
-          content: '$profile\nprivate-secret-invalid',
-        ),
+        backend.control.importClientProfiles(content: 'private-secret-invalid'),
         throwsA(isA<PlatformException>()),
       );
       expect((await backend.control.subscriptions()).selectedNodeId, selected);
@@ -5306,11 +5312,12 @@ for line in sys.stdin:
             'DirectSites': ['full:example.com'],
           })))}';
       var hideURL = false;
+      var served = content;
       final feed = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       feed.listen((request) async {
         request.response.headers.set('Routing', routingHeader);
         request.response.headers.set('Hide-Url', hideURL ? 'yes' : 'false');
-        request.response.write(content);
+        request.response.write(served);
         await request.response.close();
       });
       try {
@@ -5368,29 +5375,124 @@ for line in sys.stdin:
           (await backend.control.routingProfiles()).profiles.single.name,
           'Provider route',
         );
+        // A routing header Elarni refuses costs only that routing: the
+        // servers update and the subscription notes it. The feed drops its
+        // other directive, so the notice is the refused routing's.
         routingHeader = 'happ://routing/unsupported';
-        await expectLater(
-          backend.control.refreshSubscription(id),
-          throwsA(
-            isA<PlatformException>().having(
-              (e) => e.code,
-              'code',
-              'invalid_routing',
-            ),
-          ),
-        );
+        served = profile.replaceFirst('#Fixture', '#Updated');
+        final refused = (await backend.control.refreshSubscription(
+          id,
+        )).snapshot.subscriptions.singleWhere((s) => s.id == id);
+        expect(refused.status, 'ready');
+        expect(refused.nodes.single.name, 'Updated');
         expect(
-          (await backend.control.subscriptions()).subscriptions
-              .singleWhere((s) => s.id == id)
-              .nodes
-              .single
-              .name,
-          'Fixture',
+          refused.metadata['directiveNotice'],
+          'Unsupported provider directives',
         );
         expect(
           (await backend.control.routingProfiles()).profiles.single.name,
           'Provider route',
         );
+      } finally {
+        await feed.close(force: true);
+      }
+    },
+  );
+
+  // A download the importer reads but the compiler refuses is a failed
+  // refresh like any other: recorded on the subscription, servers kept. It
+  // used to fail only when the change was published, which recorded nothing.
+  test(
+    'a refresh the compiler refuses is recorded on the subscription',
+    () async {
+      // Two outbounds with one tag: the importer reads each, the compiler refuses the pair.
+      final refused = jsonEncode([
+        {
+          'remarks': 'Refused',
+          'outbounds': [
+            {
+              'tag': 'proxy',
+              'protocol': 'vless',
+              'settings': {
+                'vnext': [
+                  {
+                    'address': '127.0.0.1',
+                    'port': Uri.parse(profile).port,
+                    'users': [
+                      {'id': userID, 'encryption': 'none'},
+                    ],
+                  },
+                ],
+              },
+            },
+            {'tag': 'proxy', 'protocol': 'freedom'},
+          ],
+        },
+      ]);
+      var served = profile;
+      final feed = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      feed.listen((request) async {
+        request.response.write(
+          request.uri.path == '/refused' ? refused : served,
+        );
+        await request.response.close();
+      });
+      try {
+        Future<SubscriptionGroup> group(String id) async =>
+            (await backend.control.subscriptions()).subscriptions.singleWhere(
+              (s) => s.id == id,
+            );
+        Matcher refusedProfile() => throwsA(
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'unsupported_profile',
+          ),
+        );
+        final added = await backend.control.importClientProfiles(
+          content: 'http://127.0.0.1:${feed.port}/synthetic-token',
+        );
+        final id = added.snapshot.subscriptions
+            .singleWhere((s) => !s.isLocal)
+            .id;
+        await backend.control.refreshSubscription(
+          id,
+          challenge: added.warning!.challenge,
+        );
+        expect((await group(id)).nodes.single.name, 'Fixture');
+        served = refused;
+        await expectLater(
+          backend.control.refreshSubscription(id),
+          refusedProfile(),
+        );
+        final kept = await group(id);
+        expect(kept.status, 'refresh_failed');
+        expect(kept.nodes.single.name, 'Fixture');
+        expect(
+          catalogList(
+            catalogMap(storedCatalog!['committed'])['subscriptions'],
+          ).singleWhere((s) => s['id'] == id)['refreshError'],
+          'unsupported_profile',
+        );
+
+        // A new subscription whose first download the compiler refuses stays,
+        // with the reason.
+        final fresh = await backend.control.addSubscription(
+          'http://127.0.0.1:${feed.port}/refused',
+        );
+        final freshID = fresh.snapshot.subscriptions
+            .singleWhere((s) => s.id != id && !s.isLocal)
+            .id;
+        await expectLater(
+          backend.control.refreshSubscription(
+            freshID,
+            challenge: fresh.warning!.challenge,
+          ),
+          refusedProfile(),
+        );
+        final failed = await group(freshID);
+        expect(failed.status, 'refresh_failed');
+        expect(failed.nodes, isEmpty);
       } finally {
         await feed.close(force: true);
       }

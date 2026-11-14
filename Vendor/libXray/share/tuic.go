@@ -15,13 +15,19 @@ import (
 
 func (proxy xrayShareLink) tuicOutbound() (*conf.OutboundDetourConfig, error) {
 	u := proxy.link
-	if u.Opaque != "" || u.Path != "" || u.User == nil {
+	// NekoBox writes "host:port/?query"; any other path is not TUIC's.
+	if u.Opaque != "" || (u.Path != "" && u.Path != "/") || u.User == nil {
 		return nil, fmt.Errorf("invalid TUIC v5 URI")
 	}
 	if strings.Contains(u.Hostname(), ":") && !strings.HasPrefix(u.Host, "[") {
 		return nil, fmt.Errorf("TUIC IPv6 URI requires brackets")
 	}
+	uuid := u.User.Username()
 	password, present := u.User.Password()
+	if !present {
+		// v2rayN percent-encodes the colon, so the password arrives inside the user name.
+		uuid, password, present = strings.Cut(uuid, ":")
+	}
 	if !present {
 		return nil, fmt.Errorf("TUIC v5 requires UUID and password")
 	}
@@ -43,7 +49,7 @@ func (proxy xrayShareLink) tuicOutbound() (*conf.OutboundDetourConfig, error) {
 			return nil, fmt.Errorf("duplicate TUIC URI parameter")
 		}
 	}
-	settings := &conf.TUICClientConfig{Address: parseAddress(u.Hostname()), Port: port, UUID: u.User.Username(), Password: &password,
+	settings := &conf.TUICClientConfig{Address: parseAddress(u.Hostname()), Port: port, UUID: uuid, Password: &password,
 		CongestionControl: query.Get("congestion_control"), UDPRelayMode: query.Get("udp_relay_mode")}
 	tls := &conf.TLSConfig{ServerName: u.Hostname(), ALPN: new(conf.StringList([]string{"h3"}))}
 	if sni, ok := query["sni"]; ok {

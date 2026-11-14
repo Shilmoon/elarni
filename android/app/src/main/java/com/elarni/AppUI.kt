@@ -893,7 +893,7 @@ private fun quota(metadata: JSONObject): Triple<String, String, Float?> {
                     below = if (code in providerFaults && support.isNotEmpty()) {{ TextButton({ activity.openURL(support) }) { Text(tr(R.string.contact_provider)) } }} else null)
             }
         }
-        val notices = listOf("announcement" to tr(R.string.notice), "directiveNotice" to tr(R.string.configuration_notice), "dnsNotice" to "DNS", "bannerText" to tr(R.string.message)).filter { metadata.string(it.first).isNotEmpty() }
+        val notices = listOf("announcement" to tr(R.string.notice), "directiveNotice" to tr(R.string.configuration_notice), "skippedServers" to tr(R.string.servers_not_added), "dnsNotice" to "DNS", "bannerText" to tr(R.string.message)).filter { metadata.string(it.first).isNotEmpty() }
         val facts = listOf("enabled" to tr(R.string.account_enabled), "online" to tr(R.string.online)).filter { metadata.has(it.first) }
         val links = source.mapObject("links").let { links -> listOf("support" to tr(R.string.support), "account" to tr(R.string.account), "banner" to metadata.string("bannerButtonText", tr(R.string.open_provider_page))).filter { links.string(it.first).isNotEmpty() }.map { (key, title) -> title to links.getString(key) } }
         if (remote || notices.isNotEmpty() || facts.isNotEmpty()) SettingsGroup(tr(R.string.provider)) {
@@ -902,7 +902,7 @@ private fun quota(metadata: JSONObject): Triple<String, String, Float?> {
                 SettingsTile(tr(R.string.time), time)
                 SettingsTile(tr(R.string.data), data, below = if (fraction == null) null else {{ LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp).semantics { contentDescription = tr(R.string.data_remaining) }) }})
             }
-            notices.forEach { (key, title) -> SettingsTile(title, when (key) { "directiveNotice" -> tr(R.string.unsupported_provider_directives); "dnsNotice" -> tr(R.string.provider_dns_notice); else -> metadata.string(key) }) }
+            notices.forEach { (key, title) -> SettingsTile(title, when (key) { "directiveNotice" -> tr(R.string.unsupported_provider_directives); "skippedServers" -> tr(R.string.servers_not_added_text, metadata.string(key), metadata.string("skippedKinds")); "dnsNotice" -> tr(R.string.provider_dns_notice); else -> metadata.string(key) }) }
             facts.forEach { (key, title) -> SettingsTile(title, if (metadata.optBoolean(key)) tr(R.string.yes) else tr(R.string.no)) }
             if (metadata.has("routingEnabled") && !metadata.optBoolean("routingEnabled")) SettingsTile(tr(R.string.provider_routing_is_disabled))
         }

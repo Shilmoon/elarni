@@ -165,6 +165,10 @@ String supportIssueCode(String code) => switch (code.replaceFirst(
   'storage_conflict' ||
   'storage_unavailable' => 'storage_unavailable',
   'per_app_target_missing' => 'per_app_target_missing',
+  'assets_missing' => 'assets_missing',
+  'missing_geodata' => 'missing_geodata',
+  'invalid_route_enforcement' => 'invalid_route_enforcement',
+  'route_model_too_large' => 'route_model_too_large',
   'cancelled' || 'operation_cancelled' => 'cancelled',
   _ => 'operation_failed',
 };

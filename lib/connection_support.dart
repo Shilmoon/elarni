@@ -109,6 +109,22 @@ final class ConnectionIssue {
         l10n.issuePerAppTargetMissing,
         l10n.issuePerAppTargetMissingRemedy,
       ),
+      'assets_missing' => (
+        l10n.issueAssetsMissing,
+        l10n.issueAssetsMissingRemedy,
+      ),
+      'missing_geodata' => (
+        l10n.issueMissingGeodata,
+        l10n.issueMissingGeodataRemedy,
+      ),
+      'invalid_route_enforcement' => (
+        l10n.issueInvalidRouteEnforcement,
+        l10n.issueInvalidRouteEnforcementRemedy,
+      ),
+      'route_model_too_large' => (
+        l10n.issueRouteModelTooLarge,
+        l10n.issueRouteModelTooLargeRemedy,
+      ),
       'cancelled' => (l10n.issueCancelled, l10n.issueCancelledRemedy),
       _ => (l10n.issueOperationFailed, l10n.issueOperationFailedRemedy),
     };

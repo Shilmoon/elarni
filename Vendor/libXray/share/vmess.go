@@ -1,6 +1,7 @@
 package share
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -29,6 +30,8 @@ type vmessQrCode struct {
 	Insecure string `json:"insecure,omitempty"`
 	Vcn      string `json:"vcn,omitempty"`
 	Pcs      string `json:"pcs,omitempty"`
+	// Marzban writes "allowInsecure": 1; other panels a string or a boolean.
+	AllowInsecure json.RawMessage `json:"allowInsecure,omitempty"`
 }
 
 func parseVMessQrCode(text string) (*conf.OutboundDetourConfig, error) {
@@ -76,7 +79,13 @@ func (proxy vmessQrCode) parseSecurity(streamSettings *conf.StreamConfig) error 
 	tlsSettings := &conf.TLSConfig{}
 	tlsSettings.Fingerprint = proxy.Fp
 	tlsSettings.ServerName = proxy.Sni
-	tlsSettings.AllowInsecure = proxy.Insecure == "1"
+	// Either key turns verification off.
+	switch string(bytes.TrimSpace(proxy.AllowInsecure)) {
+	case `1`, `"1"`, `true`, `"true"`:
+		tlsSettings.AllowInsecure = true
+	default:
+		tlsSettings.AllowInsecure = proxy.Insecure == "1"
+	}
 	tlsSettings.VerifyPeerCertByName = proxy.Vcn
 	tlsSettings.PinnedPeerCertSha256 = proxy.Pcs
 	if proxy.Alpn != "" {

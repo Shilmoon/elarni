@@ -236,6 +236,54 @@ abstract class AppLocalizations {
   /// **'An app in Per-app routing uses a server that no longer exists.'**
   String get issuePerAppTargetMissing;
 
+  /// No description provided for @issueAssetsMissingRemedy.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Routing and use Refresh routing data, then connect again.'**
+  String get issueAssetsMissingRemedy;
+
+  /// No description provided for @issueAssetsMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'The routing profile’s geofiles are missing.'**
+  String get issueAssetsMissing;
+
+  /// No description provided for @issueMissingGeodataRemedy.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Routing and use Refresh routing data, then connect again. If that does not help, fix the profile or its geofile links.'**
+  String get issueMissingGeodataRemedy;
+
+  /// No description provided for @issueMissingGeodata.
+  ///
+  /// In en, this message translates to:
+  /// **'The routing profile’s geofiles lack codes that its proxy rules or servers need.'**
+  String get issueMissingGeodata;
+
+  /// No description provided for @issueInvalidRouteEnforcementRemedy.
+  ///
+  /// In en, this message translates to:
+  /// **'Replace 0.0.0.0/0 and ::/0 with specific routes, or turn enforcement off. For a full tunnel, turn enforcement off and use Block traffic without VPN.'**
+  String get issueInvalidRouteEnforcementRemedy;
+
+  /// No description provided for @issueInvalidRouteEnforcement.
+  ///
+  /// In en, this message translates to:
+  /// **'Enforce tunnel routes needs specific included routes and cannot be combined with Block traffic without VPN.'**
+  String get issueInvalidRouteEnforcement;
+
+  /// No description provided for @issueRouteModelTooLargeRemedy.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove some rules or managed lists, then connect again.'**
+  String get issueRouteModelTooLargeRemedy;
+
+  /// No description provided for @issueRouteModelTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'The routing profile is too large: its rules and lists exceed 8 MB.'**
+  String get issueRouteModelTooLarge;
+
   /// No description provided for @issueStorageUnavailableRemedy.
   ///
   /// In en, this message translates to:
@@ -1952,6 +2000,24 @@ abstract class AppLocalizations {
   /// **'Subscription added, but the first download failed. Refresh to retry.'**
   String get subscriptionAddedFirstDownloadFailed;
 
+  /// No description provided for @subscriptionAddedUnreadable.
+  ///
+  /// In en, this message translates to:
+  /// **'Subscription added, but Elarni cannot read what the provider sent: its format or one of its settings is not supported. Try the provider’s Xray JSON link, or ask the provider.'**
+  String get subscriptionAddedUnreadable;
+
+  /// No description provided for @importFileTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'The file is larger than Elarni can import.'**
+  String get importFileTooLarge;
+
+  /// No description provided for @noQrCodeInImage.
+  ///
+  /// In en, this message translates to:
+  /// **'No QR code was found in this image.'**
+  String get noQrCodeInImage;
+
   /// No description provided for @clipboardEmpty.
   ///
   /// In en, this message translates to:
@@ -2507,7 +2573,7 @@ abstract class AppLocalizations {
   /// No description provided for @fragmentationHelp.
   ///
   /// In en, this message translates to:
-  /// **'VLESS over TCP or XHTTP with TLS or Reality. XHTTP over HTTP/3 and existing dialer chains are unsupported.'**
+  /// **'VLESS over TCP or XHTTP with TLS or Reality. XHTTP over HTTP/3 and existing dialer chains are unsupported. Servers that cannot use it connect without it.'**
   String get fragmentationHelp;
 
   /// No description provided for @enableFragmentation.
@@ -3866,6 +3932,18 @@ abstract class AppLocalizations {
   /// **'Provider notice'**
   String get providerNotice;
 
+  /// No description provided for @serversNotAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'Servers not added'**
+  String get serversNotAdded;
+
+  /// kinds lists the servers' protocols, such as "ssh, naive".
+  ///
+  /// In en, this message translates to:
+  /// **'{count} ({kinds}). Elarni does not support these servers; the rest were added.'**
+  String serversNotAddedText(int count, String kinds);
+
   /// No description provided for @providerAsksKeepSettings.
   ///
   /// In en, this message translates to:
@@ -4345,6 +4423,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{provider} removed or changed this link. Ask the provider for a new one.'**
   String failureLinkRemovedText(String provider);
+
+  /// No description provided for @failureUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'Unsupported content'**
+  String get failureUnsupported;
+
+  /// No description provided for @failureUnsupportedText.
+  ///
+  /// In en, this message translates to:
+  /// **'{provider} sent nothing Elarni can read: the format or one of its settings is not supported.'**
+  String failureUnsupportedText(String provider);
+
+  /// No description provided for @failureDeviceLimitText.
+  ///
+  /// In en, this message translates to:
+  /// **'{provider} reached this subscription’s device limit. Remove a device in your account with the provider, or contact the provider.'**
+  String failureDeviceLimitText(String provider);
 
   /// No description provided for @reductionStatus.
   ///

@@ -1,12 +1,17 @@
 //! Server identity of the same configurations consumed by the compiler.
 use serde_json::{Value, json};
 
-/// Display metadata is not server identity. Everything below the profile root
+/// Display metadata is not server identity, nor are the top-level profile keys the compiler
+/// drops (a provider "meta" may change on every fetch). Everything below the profile root
 /// remains significant (including group names, credentials and bind addresses).
 pub fn identity(mut config: Value) -> Value {
     if let Some(root) = config.as_object_mut() {
         root.remove("name");
         root.remove("remarks");
+        // Only a profile: a bare outbound's own fields sit at its root.
+        if root.contains_key("outbounds") {
+            root.retain(|key, _| !crate::profile::ignored_top_level_key(key));
+        }
     }
     config
 }
@@ -181,6 +186,43 @@ mod tests {
             identity(json!({"sendThrough":"a"})),
             identity(json!({"sendThrough":"b"}))
         );
+    }
+
+    // compile_profile drops top-level keys Xray ignores, so a provider "meta" that changes on
+    // every fetch must not make the same server look new.
+    #[test]
+    fn identity_ignores_top_level_keys_the_compiler_drops() {
+        let server = |meta: &str, address: &str| {
+            json!({"remarks":"NL","meta":{"updated":meta},"version":{"min":meta},"outbounds":[
+                {"tag":"proxy","protocol":"vless","settings":{"address":address,"port":443,
+                    "id":"00000000-0000-4000-8000-000000000001","encryption":"none"}}]})
+        };
+        assert_eq!(
+            identity(server("1", "a.example.com")),
+            identity(server("2", "a.example.com"))
+        );
+        assert_eq!(
+            node_identity(server("1", "a.example.com")),
+            node_identity(server("2", "a.example.com"))
+        );
+        assert_ne!(
+            identity(server("1", "a.example.com")),
+            identity(server("1", "b.example.com"))
+        );
+        // Group choices and keys Xray reads still count.
+        for (key, value) in [
+            ("elarniGroups", json!([{"name":"PROXY"}])),
+            ("policy", json!({"levels":{}})),
+            ("Policy", json!({})),
+        ] {
+            let mut changed = server("1", "a.example.com");
+            changed[key] = value;
+            assert_ne!(
+                identity(changed),
+                identity(server("1", "a.example.com")),
+                "{key}"
+            );
+        }
     }
 
     #[test]

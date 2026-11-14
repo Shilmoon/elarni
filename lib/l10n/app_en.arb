@@ -23,6 +23,14 @@
   "issueCancelled": "The operation was cancelled.",
   "issuePerAppTargetMissingRemedy": "Choose another target for it in Per-app routing.",
   "issuePerAppTargetMissing": "An app in Per-app routing uses a server that no longer exists.",
+  "issueAssetsMissingRemedy": "Open Routing and use Refresh routing data, then connect again.",
+  "issueAssetsMissing": "The routing profile’s geofiles are missing.",
+  "issueMissingGeodataRemedy": "Open Routing and use Refresh routing data, then connect again. If that does not help, fix the profile or its geofile links.",
+  "issueMissingGeodata": "The routing profile’s geofiles lack codes that its proxy rules or servers need.",
+  "issueInvalidRouteEnforcementRemedy": "Replace 0.0.0.0/0 and ::/0 with specific routes, or turn enforcement off. For a full tunnel, turn enforcement off and use Block traffic without VPN.",
+  "issueInvalidRouteEnforcement": "Enforce tunnel routes needs specific included routes and cannot be combined with Block traffic without VPN.",
+  "issueRouteModelTooLargeRemedy": "Remove some rules or managed lists, then connect again.",
+  "issueRouteModelTooLarge": "The routing profile is too large: its rules and lists exceed 8 MB.",
   "issueStorageUnavailableRemedy": "Restart Elarni. If this continues, restore an encrypted backup.",
   "issueStorageUnavailable": "Elarni could not read or save its catalog.",
   "issueBusyRemedy": "Wait for it to finish, then retry.",
@@ -504,6 +512,9 @@
   "selectServerFirstRoutingLink": "Select a server first. This routing link turns its profile on for the selected server’s subscription.",
   "unsupportedProfileTryJson": "This profile uses unsupported settings. Try the provider’s Xray JSON format.",
   "subscriptionAddedFirstDownloadFailed": "Subscription added, but the first download failed. Refresh to retry.",
+  "subscriptionAddedUnreadable": "Subscription added, but Elarni cannot read what the provider sent: its format or one of its settings is not supported. Try the provider’s Xray JSON link, or ask the provider.",
+  "importFileTooLarge": "The file is larger than Elarni can import.",
+  "noQrCodeInImage": "No QR code was found in this image.",
   "clipboardEmpty": "The clipboard is empty. Copy a link or configuration first.",
   "downloadPageNotOpened": "The download page could not be opened.",
   "providerLinkNotOpened": "The provider link could not be opened.",
@@ -678,7 +689,7 @@
   },
   "fragmentationOptions": "Fragmentation options",
   "edit": "Edit",
-  "fragmentationHelp": "VLESS over TCP or XHTTP with TLS or Reality. XHTTP over HTTP/3 and existing dialer chains are unsupported.",
+  "fragmentationHelp": "VLESS over TCP or XHTTP with TLS or Reality. XHTTP over HTTP/3 and existing dialer chains are unsupported. Servers that cannot use it connect without it.",
   "enableFragmentation": "Enable fragmentation",
   "transport": "Transport",
   "resolveServerHelp": "Keeps server IP addresses fixed until reconnect while preserving TLS names and transport headers.",
@@ -1079,6 +1090,19 @@
   "yourOverride": "Your override",
   "updated": "Updated",
   "providerNotice": "Provider notice",
+  "serversNotAdded": "Servers not added",
+  "serversNotAddedText": "{count} ({kinds}). Elarni does not support these servers; the rest were added.",
+  "@serversNotAddedText": {
+    "description": "kinds lists the servers' protocols, such as \"ssh, naive\".",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "kinds": {
+        "type": "String"
+      }
+    }
+  },
   "providerAsksKeepSettings": "Your provider asks you to keep its settings. You can still change them.",
   "providerRouting": "Provider routing",
   "providerRoutingDisabled": "Disabled",
@@ -1296,6 +1320,23 @@
   "failureLinkRemoved": "Link removed",
   "failureLinkRemovedText": "{provider} removed or changed this link. Ask the provider for a new one.",
   "@failureLinkRemovedText": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "failureUnsupported": "Unsupported content",
+  "failureUnsupportedText": "{provider} sent nothing Elarni can read: the format or one of its settings is not supported.",
+  "@failureUnsupportedText": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "failureDeviceLimitText": "{provider} reached this subscription’s device limit. Remove a device in your account with the provider, or contact the provider.",
+  "@failureDeviceLimitText": {
     "placeholders": {
       "provider": {
         "type": "String"

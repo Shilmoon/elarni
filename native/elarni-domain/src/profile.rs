@@ -49,6 +49,37 @@ fn without_system_resolver(dns: &Value) -> Value {
     dns
 }
 
+/// Sections the app supplies itself, never activated from a subscription. Reverse would let
+/// the provider open connections into this device.
+const APP_SECTIONS: &[&str] = &["log", "api", "env", "transport", "metrics", "reverse"];
+
+/// Top-level sections a subscription's profile supplies.
+const SUPPORTED: &[&str] = &[
+    "remarks",
+    "name",
+    "inbounds",
+    "outbounds",
+    "dns",
+    "routing",
+    "observatory",
+    "burstObservatory",
+    "policy",
+    "stats",
+    "fakeDns",
+    "fakedns",
+];
+
+/// A top-level profile key `compile_profile` drops: Xray and the Go importer ignore keys they
+/// do not know (Happ's "meta", Xray's "version" and "geodata"). Known keys in another case
+/// are not among them: Xray reads those.
+pub(crate) fn ignored_top_level_key(key: &str) -> bool {
+    key != "elarniGroups"
+        && !SUPPORTED
+            .iter()
+            .chain(APP_SECTIONS)
+            .any(|known| known.eq_ignore_ascii_case(key))
+}
+
 pub fn compile_profile(
     mut profile: Value,
     routes: Option<&RouteModel>,
@@ -59,7 +90,7 @@ pub fn compile_profile(
     preferred_ip: Option<PreferredIp>,
 ) -> Result<CompiledProfile, CompileError> {
     crate::compiler::reject_ambiguous_keys(&profile)?;
-    let groups = apply_group_selections(&mut profile)?;
+    apply_group_selections(&mut profile)?;
     let root = profile
         .as_object_mut()
         .ok_or(CompileError::InvalidOutbound)?;
@@ -68,25 +99,11 @@ pub fn compile_profile(
     }) {
         return Err(CompileError::InvalidOutbound);
     }
-    // These sections are supplied by the app, never activated from a subscription.
-    // Reverse would let the provider open connections into this device.
-    for field in ["log", "api", "env", "transport", "metrics", "reverse"] {
-        root.remove(field);
+    for field in APP_SECTIONS {
+        root.remove(*field);
     }
-    const SUPPORTED: &[&str] = &[
-        "remarks",
-        "name",
-        "inbounds",
-        "outbounds",
-        "dns",
-        "routing",
-        "observatory",
-        "burstObservatory",
-        "policy",
-        "stats",
-        "fakeDns",
-        "fakedns",
-    ];
+    root.retain(|key, _| !ignored_top_level_key(key));
+    // Xray reads a known key in any case; a miscased one would slip past the checks here.
     if root.keys().any(|key| !SUPPORTED.contains(&key.as_str())) {
         return Err(CompileError::InvalidOutbound);
     }
@@ -152,7 +169,6 @@ pub fn compile_profile(
     if runtime.fragmentation_enabled || runtime.mux_enabled {
         let mut unfragmented = outbound_runtime.clone();
         unfragmented.fragmentation_enabled = false;
-        let mut first = true;
         for (index, outbound) in outbounds.iter_mut().enumerate() {
             if !outbound["protocol"]
                 .as_str()
@@ -160,15 +176,6 @@ pub fn compile_profile(
             {
                 continue;
             }
-            // With select groups the user's choices carry traffic; otherwise the first outbound does.
-            let primary = if groups.is_empty() {
-                first
-            } else {
-                outbound["tag"]
-                    .as_str()
-                    .is_some_and(|tag| groups.contains(tag))
-            };
-            first = false;
             let tag = format!("{prefix}fragment-{index}");
             // A failed attempt may have changed part of the outbound.
             let mut candidate = outbound.clone();
@@ -177,8 +184,9 @@ pub fn compile_profile(
                     *outbound = candidate;
                     fragments.extend(fragment);
                 }
-                // Backups that cannot carry fragments still connect without them.
-                Err(CompileError::UnsupportedFragmentation) if !primary => {
+                // Fragmentation is best effort: a server that cannot carry fragments, the
+                // primary or a backup, connects without them and keeps the other settings.
+                Err(CompileError::UnsupportedFragmentation) => {
                     apply_outbound_runtime(outbound, &unfragmented, &tag)?;
                 }
                 Err(error) => return Err(error),
@@ -553,14 +561,13 @@ pub(crate) fn fake_dns_sniffing() -> Value {
 
 // Clash select groups remain user choices. Resolve aliases against an immutable
 // copy so choosing a nested group cannot overwrite another group's source.
-// Returns the group tags, which now hold the selected members.
-fn apply_group_selections(profile: &mut Value) -> Result<BTreeSet<String>, CompileError> {
+fn apply_group_selections(profile: &mut Value) -> Result<(), CompileError> {
     let Some(groups) = profile
         .as_object_mut()
         .ok_or(CompileError::InvalidOutbound)?
         .remove("elarniGroups")
     else {
-        return Ok(BTreeSet::new());
+        return Ok(());
     };
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -641,7 +648,7 @@ fn apply_group_selections(profile: &mut Value) -> Result<BTreeSet<String>, Compi
             outbound["tag"] = json!(tag);
         }
     }
-    Ok(choices.into_keys().collect())
+    Ok(())
 }
 
 fn selector_matches(tag: &str, selector: &str) -> bool {
@@ -1502,6 +1509,7 @@ fn append_endpoint(
         .filter(|host| {
             !host.is_empty() && host.len() <= 253 && !host.chars().any(char::is_whitespace)
         })
+        .map(crate::compiler::server_host)
         .ok_or(CompileError::InvalidOutbound)?
         .to_owned();
     let port = server["port"]

@@ -306,13 +306,20 @@ func TestProviderDNSThatAsksTheSystemResolverIsReported(t *testing.T) {
 	}
 }
 
-func TestStrictImportRejectsPartialFeeds(t *testing.T) {
+// A member that cannot be imported is skipped and reported, the rest import; a feed with nothing
+// to import still fails.
+func TestPartialFeedsSkipWhatTheyCannotImport(t *testing.T) {
 	valid := "vless://00000000-0000-4000-8000-000000000001@127.0.0.1:443?encryption=none"
-	for _, input := range []string{valid + "\nvless://broken", valid + "\nunknown://broken",
-		"proxies:\n  - {name: valid, type: socks5, server: 127.0.0.1, port: 1080}\n  - {name: unknown, type: unsupported, server: 127.0.0.1, port: 1080}",
-		`[]`, `[null]`} {
+	for input, kind := range map[string]string{valid + "\nvless://broken": "vless", valid + "\nunknown://broken": "unknown",
+		"proxies:\n  - {name: valid, type: socks5, server: 127.0.0.1, port: 1080}\n  - {name: unknown, type: unsupported, server: 127.0.0.1, port: 1080}": "unsupported"} {
+		result, err := ImportClientProfiles(input)
+		if err != nil || len(result.Profiles) != 1 || result.SkippedCount != 1 || result.Skipped[0].Kind != kind {
+			t.Fatalf("%q: %+v, %v", input, result, err)
+		}
+	}
+	for _, input := range []string{`[]`, `[null]`} {
 		if _, err := ImportClientProfiles(input); err == nil {
-			t.Fatal("partial or empty profile accepted")
+			t.Fatal("empty profile accepted")
 		}
 	}
 }
@@ -686,6 +693,11 @@ func TestWebPagesAreNotHTTPProxies(t *testing.T) {
 		if result, err := ImportClientProfiles(page); err == nil {
 			t.Fatalf("%q imported as %d profiles", page, len(result.Profiles))
 		}
+	}
+	// In a feed the page is skipped, not imported as a proxy.
+	result, err := ImportClientProfiles("vless://00000000-0000-4000-8000-000000000001@127.0.0.1:443?security=none#VPN\nhttp://user:pass@127.0.0.1:8080/status")
+	if err != nil || len(result.Profiles) != 1 || result.Profiles[0].Name != "VPN" || result.SkippedCount != 1 || result.Skipped[0].Kind != "http" {
+		t.Fatalf("feed with a web page: %+v, %v", result, err)
 	}
 	for _, proxy := range []string{"https://user:pass@127.0.0.1:8443/", "http://127.0.0.1:8080?sni=proxy.example"} {
 		if _, err := ImportClientProfiles(proxy); err != nil {

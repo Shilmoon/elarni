@@ -473,6 +473,10 @@ extension _ProxyCommands on DesktopProxy {
             approval: approval,
             format: format,
           );
+          // Servers the compiler refuses fail this refresh, which records it,
+          // rather than the publication, which would record nothing. The
+          // publication reuses these compiles.
+          if (warning == null) await _semantics(candidate);
         } on PlatformException catch (error) {
           candidate.data
             ..clear()

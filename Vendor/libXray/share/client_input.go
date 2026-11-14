@@ -102,7 +102,7 @@ func SubscriptionFallbackURL(source string, body, headers map[string]string) str
 	return target
 }
 
-// NormalizeClientInput unwraps documented INCY links without fetching or connecting.
+// NormalizeClientInput unwraps documented INCY links and Happ's add link without fetching or connecting.
 // The normal subscription checks still own URL approval and network access.
 func NormalizeClientInput(input string) (ClientInput, error) {
 	var result ClientInput
@@ -143,6 +143,10 @@ func NormalizeClientInput(input string) (ClientInput, error) {
 		payload, wrapped := strings.CutPrefix(text, "incy://add/")
 		if !wrapped {
 			payload, wrapped = strings.CutPrefix(text, "incy://import/")
+		}
+		if !wrapped {
+			// Remnawave's subscription page writes happ://add/{{SUBSCRIPTION_LINK}}.
+			payload, wrapped = strings.CutPrefix(text, "happ://add/")
 		}
 		if !wrapped {
 			if u, err := url.Parse(text); err == nil && (u.Scheme == "https" || u.Scheme == "http") &&

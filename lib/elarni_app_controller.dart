@@ -985,9 +985,15 @@ extension _HomeController on _ElarniHomeState {
           final group = _subscriptions.subscriptions
               .where((group) => group.id == id)
               .firstOrNull;
-          final message =
-              '${group == null ? l10n.refreshFailedSentence : _refreshFailure(group, code)} '
-              '${l10n.lastWorkingServersKept}';
+          // A subscription without servers, one that never downloaded, has
+          // none to keep.
+          final message = [
+            group == null
+                ? l10n.refreshFailedSentence
+                : _refreshFailure(group, code),
+            if (group != null && group.nodes.isNotEmpty)
+              l10n.lastWorkingServersKept,
+          ].join(' ');
           _message = message;
           if (group != null &&
               _HomePages._providerFaults.contains(code) &&
@@ -1114,12 +1120,18 @@ extension _HomeController on _ElarniHomeState {
           (group) => !previousSubscriptions.contains(group.id),
         );
         final message = switch (error) {
+          // The provider sent what Elarni cannot read: no network problem.
+          PlatformException(code: 'unsupported_profile') when added =>
+            l10n.subscriptionAddedUnreadable,
           _ when added => l10n.subscriptionAddedFirstDownloadFailed,
           PlatformException(code: 'unsupported_profile') =>
             l10n.unsupportedProfileTryJson,
           PlatformException(code: 'catalog_limit') => l10n.catalogLimit,
           PlatformException(code: 'no_selected_subscription') =>
             l10n.selectServerFirstRoutingLink,
+          PlatformException(code: 'import_too_large' || 'input_too_large') =>
+            l10n.importFileTooLarge,
+          PlatformException(code: 'invalid_qr_image') => l10n.noQrCodeInImage,
           _ => l10n.couldNotImport,
         };
         _set(() => _message = message);

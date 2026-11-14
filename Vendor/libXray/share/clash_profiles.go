@@ -41,7 +41,9 @@ func importClashProfiles(text string) (*ClientImport, error) {
 	if err := yaml.Unmarshal([]byte(text), &source); err != nil || len(source.Proxies) == 0 || len(source.Proxies) > 1024 {
 		return nil, fmt.Errorf("invalid Clash profile")
 	}
-	if source.Mode != "" && source.Mode != "rule" {
+	// Global mode sends everything through the selected proxy: the file's rules do not apply.
+	global := source.Mode == "global"
+	if source.Mode != "" && source.Mode != "rule" && !global {
 		return nil, fmt.Errorf("unsupported Clash mode")
 	}
 	if groups, ok := top["proxy-groups"]; ok {
@@ -67,10 +69,27 @@ func importClashProfiles(text string) (*ClientImport, error) {
 	}
 	outbounds := []map[string]any{}
 	names := map[string]bool{"DIRECT": true, "REJECT": true, "REJECT-DROP": true}
+	var skipped skippedMembers
+	dropped := map[string]bool{}
 	for _, node := range source.Proxies {
 		outbound, err := clashClientOutbound(node)
+		if err == nil {
+			// Checked alone too, so a proxy the core refuses is skipped instead of failing the file.
+			raw, _ := json.Marshal(map[string]any{"outbounds": []any{outbound}})
+			if validateClientProfile(raw) != nil {
+				err = fmt.Errorf("invalid Clash client settings")
+			}
+		}
 		if err != nil {
-			return nil, err
+			var fields map[string]any
+			_ = node.Decode(&fields)
+			name, _ := fields["name"].(string)
+			kind, _ := fields["type"].(string)
+			skipped.add(name, kind, "clash", err)
+			if name != "" {
+				dropped[name] = true
+			}
+			continue
 		}
 		name, _ := outbound["tag"].(string)
 		if name == "" || names[name] {
@@ -79,17 +98,26 @@ func importClashProfiles(text string) (*ClientImport, error) {
 		names[name] = true
 		outbounds = append(outbounds, outbound)
 	}
+	if len(outbounds) == 0 {
+		return nil, skipped.first
+	}
+	for name := range names {
+		delete(dropped, name) // a kept proxy of the same name stays reachable
+	}
 	for _, group := range source.Groups {
-		if group.Name == "" || names[group.Name] || len(group.Options) == 0 {
+		if group.Name == "" || names[group.Name] || dropped[group.Name] || len(group.Options) == 0 {
 			return nil, fmt.Errorf("invalid Clash group")
 		}
 		names[group.Name] = true
 	}
-	for i := range source.Groups {
-		group := &source.Groups[i]
+	for _, group := range source.Groups {
 		if group.Type != "select" {
 			return nil, fmt.Errorf("unsupported Clash group type %s", group.Type)
 		}
+	}
+	groups := pruneClashGroups(source.Groups, dropped, names)
+	for i := range groups {
+		group := &groups[i]
 		for _, option := range group.Options {
 			if !names[option] {
 				return nil, fmt.Errorf("Clash group refers to a missing proxy")
@@ -105,13 +133,20 @@ func importClashProfiles(text string) (*ClientImport, error) {
 		map[string]any{"tag": "REJECT", "protocol": "blackhole", "settings": map[string]any{}},
 		map[string]any{"tag": "REJECT-DROP", "protocol": "blackhole", "settings": map[string]any{}})
 	root := map[string]any{"outbounds": outbounds, "remarks": "Clash profile"}
-	if len(source.Groups) > 0 {
-		root["elarniGroups"] = source.Groups
+	if len(groups) > 0 {
+		root["elarniGroups"] = groups
 	}
 	rules := []map[string]any{}
 	for _, rule := range source.Rules {
+		if global {
+			break
+		}
 		converted, err := clashRoutingRule(rule, names)
 		if err != nil {
+			// The route a rule to a skipped proxy meant is gone; the file fails as that proxy did.
+			if parts := strings.Split(rule, ","); dropped[strings.TrimSpace(parts[len(parts)-1])] {
+				return nil, skipped.first
+			}
 			return nil, err
 		}
 		rules = append(rules, converted)
@@ -130,7 +165,32 @@ func importClashProfiles(text string) (*ClientImport, error) {
 	if err != nil || validateClientProfile(raw) != nil {
 		return nil, fmt.Errorf("invalid Clash client settings")
 	}
-	return &ClientImport{Profiles: []ClientProfile{{Format: "xrayProfile", Name: "Clash profile", Config: raw}}}, nil
+	result := &ClientImport{Profiles: []ClientProfile{{Format: "xrayProfile", Name: "Clash profile", Config: raw}}}
+	skipped.report(result)
+	return result, nil
+}
+
+// pruneClashGroups takes skipped proxies out of the groups, and a group they leave empty out of the
+// groups that name it, until none empties. A selection of a dropped member falls back to the first.
+func pruneClashGroups(groups []clashGroup, dropped, names map[string]bool) []clashGroup {
+	for emptied := len(dropped) > 0; emptied; {
+		emptied = false
+		kept := groups[:0:0]
+		for _, group := range groups {
+			group.Options = slices.DeleteFunc(slices.Clone(group.Options), func(option string) bool { return dropped[option] })
+			if len(group.Options) == 0 {
+				dropped[group.Name], emptied = true, true
+				delete(names, group.Name)
+				continue
+			}
+			if dropped[group.Selected] {
+				group.Selected = ""
+			}
+			kept = append(kept, group)
+		}
+		groups = kept
+	}
+	return groups
 }
 
 // About 250 nodes for each of the 1024 proxies a profile may hold.
@@ -164,7 +224,7 @@ func clashClientOutbound(node yaml.Node) (map[string]any, error) {
 	if node.Decode(&proxy) != nil || node.Decode(&fields) != nil || proxy.Server == "" || proxy.Port == 0 {
 		return nil, fmt.Errorf("invalid Clash proxy")
 	}
-	known := map[string]bool{"ip-version": true, "pin-sha256": true, "http-upgrade-opts": true, "alterId": true,
+	known := map[string]bool{"ip-version": true, "pin-sha256": true, "http-upgrade-opts": true, "alterId": true, "packet-encoding": true,
 		"private-key": true, "public-key": true, "pre-shared-key": true, "ip": true, "ipv6": true, "mtu": true, "dns": true, "persistent-keepalive": true, "allowed-ips": true, "reserved": true}
 	typ := reflect.TypeOf(proxy)
 	for i := 0; i < typ.NumField(); i++ {
@@ -183,6 +243,10 @@ func clashClientOutbound(node yaml.Node) (map[string]any, error) {
 	}
 	if alterID, ok := fields["alterId"]; ok && fmt.Sprint(alterID) != "0" {
 		return nil, fmt.Errorf("unsupported Clash legacy VMess alterId")
+	}
+	// Xray carries VLESS and VMess UDP as XUDP; another encoding would not reach the server.
+	if encoding, ok := fields["packet-encoding"]; ok && encoding != nil && encoding != "" && encoding != "xudp" {
+		return nil, fmt.Errorf("unsupported Clash packet encoding")
 	}
 	var outbound map[string]any
 	if proxy.Type == "wireguard" {
@@ -524,7 +588,11 @@ func clashDNS(source map[string]any) (map[string]any, error) {
 		result["queryStrategy"] = "UseIPv4"
 	}
 	for key := range source {
-		if key != "nameserver" && key != "enable" && key != "ipv6" && key != "listen" {
+		switch key {
+		case "nameserver", "enable", "ipv6", "listen":
+		// Settings of Mihomo's own DNS listener, which this app does not run.
+		case "use-hosts", "enhanced-mode", "fake-ip-range", "fake-ip-filter", "default-nameserver":
+		default:
 			return nil, fmt.Errorf("unsupported Clash DNS field %s", key)
 		}
 	}

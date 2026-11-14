@@ -252,8 +252,8 @@ pub enum LastUpdated {
     Unix(u64),
 }
 
+// Other clients add fields of their own (GeositeHash, UseTags, UpdateUrl); they are ignored.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct HappRoutingProfile {
     #[serde(
         rename = "ManagedSources",
@@ -376,18 +376,35 @@ pub fn decode_routing(input: &str) -> Result<RoutingImport, RoutingError> {
     if input.is_empty() {
         return Err(RoutingError::Empty);
     }
-    let command = ["happ://routing/", "incy://routing/", "elarni://routing/"]
-        .iter()
-        .find_map(|prefix| input.strip_prefix(prefix));
-    if command == Some("off") {
+    // Providers also send the bare command and links without a scheme.
+    let command = [
+        "happ://routing/",
+        "incy://routing/",
+        "elarni://routing/",
+        "://routing/",
+    ]
+    .iter()
+    .find_map(|prefix| input.strip_prefix(prefix));
+    if command == Some("off") || input.eq_ignore_ascii_case("off") {
         return Ok(RoutingImport::Off);
     }
+    // Happ's query form: .../add?data=<base64>, the base64 possibly percent-encoded.
+    let query = |value: &str| -> Result<Vec<u8>, RoutingError> {
+        let data = percent_encoding::percent_decode_str(value)
+            .decode_utf8()
+            .map_err(|_| RoutingError::InvalidBase64)?;
+        decode_base64(&data)
+    };
 
     let (activate, payload) =
         if let Some(payload) = command.and_then(|value| value.strip_prefix("add/")) {
             (false, decode_base64(payload)?)
         } else if let Some(payload) = command.and_then(|value| value.strip_prefix("onadd/")) {
             (true, decode_base64(payload)?)
+        } else if let Some(payload) = command.and_then(|value| value.strip_prefix("add?data=")) {
+            (false, query(payload)?)
+        } else if let Some(payload) = command.and_then(|value| value.strip_prefix("onadd?data=")) {
+            (true, query(payload)?)
         } else if command.is_some()
             || input.starts_with("happ://")
             || input.starts_with("incy://")
@@ -403,8 +420,18 @@ pub fn decode_routing(input: &str) -> Result<RoutingImport, RoutingError> {
     if payload.len() > MAX_ROUTING_INPUT_BYTES {
         return Err(RoutingError::TooLarge);
     }
-    let profile: HappRoutingProfile =
+    // Defaults fill missing fields and other fields are ignored, so JSON without one of the
+    // profile's own fields (a server config, `{}`) would pass; every app tries pasted text as
+    // routing first.
+    let keys: BTreeMap<String, serde::de::IgnoredAny> =
         serde_json::from_slice(&payload).map_err(|_| RoutingError::InvalidJson)?;
+    let own = profile_field_names();
+    if !keys.keys().any(|key| own.contains(&key.as_str())) {
+        return Err(RoutingError::InvalidJson);
+    }
+    let mut profile: HappRoutingProfile =
+        serde_json::from_slice(&payload).map_err(|_| RoutingError::InvalidJson)?;
+    profile.fill_happ_defaults();
     let route_model = profile.to_route_model()?;
     crate::compiler::validate_routing_model(&route_model)
         .map_err(|_| RoutingError::InvalidField("compiler"))?;
@@ -416,6 +443,28 @@ pub fn decode_routing(input: &str) -> Result<RoutingImport, RoutingError> {
 }
 
 impl HappRoutingProfile {
+    /// Happ's default profile "fills in missing or incorrect parameters"; its header example
+    /// and routing builders leave the DNS fields out and the name empty.
+    fn fill_happ_defaults(&mut self) {
+        if self.name.as_deref() == Some("") {
+            self.name = None;
+        }
+        fill_dns(
+            &mut self.remote_dns_type,
+            &mut self.remote_dns_domain,
+            &mut self.remote_dns_ip,
+            &self.legacy_remote_dns,
+            ("https://cloudflare-dns.com/dns-query", "1.1.1.1"),
+        );
+        fill_dns(
+            &mut self.domestic_dns_type,
+            &mut self.domestic_dns_domain,
+            &mut self.domestic_dns_ip,
+            &self.legacy_domestic_dns,
+            ("https://dns.google/dns-query", "8.8.8.8"),
+        );
+    }
+
     pub fn to_route_model(&self) -> Result<RouteModel, RoutingError> {
         self.validate()?;
         let mut rules = Vec::with_capacity(3);
@@ -696,6 +745,72 @@ fn validate_dns(
         }
     }
     Ok(())
+}
+
+/// The names serde reads for the profile's fields, aliases included, exactly as spelled. The
+/// derived code passes them to `deserialize_struct`; this deserializer stops there.
+fn profile_field_names() -> &'static [&'static str] {
+    use serde::de::Visitor;
+    struct Names;
+    #[derive(Debug)]
+    struct Found(&'static [&'static str]);
+    impl std::fmt::Display for Found {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("routing profile field names")
+        }
+    }
+    impl std::error::Error for Found {}
+    impl serde::de::Error for Found {
+        fn custom<T: std::fmt::Display>(_: T) -> Self {
+            Found(&[])
+        }
+    }
+    impl<'de> Deserializer<'de> for Names {
+        type Error = Found;
+        fn deserialize_any<V: Visitor<'de>>(self, _: V) -> Result<V::Value, Found> {
+            Err(Found(&[]))
+        }
+        fn deserialize_struct<V: Visitor<'de>>(
+            self,
+            _: &'static str,
+            fields: &'static [&'static str],
+            _: V,
+        ) -> Result<V::Value, Found> {
+            Err(Found(fields))
+        }
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes
+            byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map enum
+            identifier ignored_any
+        }
+    }
+    match HappRoutingProfile::deserialize(Names) {
+        Err(Found(names)) => names,
+        Ok(_) => &[],
+    }
+}
+
+/// One DNS side: a type without its value takes the value that is there (old profiles carry
+/// only the legacy IP), and a side with neither takes Happ's default. Values that are there
+/// are validated as written.
+fn fill_dns(
+    kind: &mut DnsType,
+    domain: &mut String,
+    ip: &mut String,
+    legacy_ip: &str,
+    (default_domain, default_ip): (&str, &str),
+) {
+    let has_ip = !preferred_ip(ip, legacy_ip).is_empty();
+    match kind {
+        DnsType::DoH if domain.is_empty() && has_ip => *kind = DnsType::DoU,
+        DnsType::DoU if !has_ip && !domain.is_empty() => *kind = DnsType::DoH,
+        _ if domain.is_empty() && !has_ip => {
+            *kind = DnsType::DoH;
+            *domain = default_domain.to_owned();
+            *ip = default_ip.to_owned();
+        }
+        _ => {}
+    }
 }
 
 fn dns_server(kind: DnsType, domain: &str, ip: &str) -> String {

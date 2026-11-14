@@ -180,17 +180,30 @@ fn vless_runtime_options_add_mux_and_supported_tls_fragmentation() {
     let mut source = outbound();
     source["mux"] = json!({"enabled": false});
     source["streamSettings"]["network"] = json!("ws");
+    // WebSocket cannot carry fragments, so the server connects without them.
+    let (bytes, _) = compile_xray_outbound_config_with_options(
+        source.clone(),
+        &routes(),
+        1080,
+        PacketBackend::NativeTun2Proxy,
+        1500,
+        &options,
+    )
+    .unwrap();
+    let config: Value = serde_json::from_slice(&bytes).unwrap();
     assert!(
-        compile_xray_outbound_config_with_options(
-            source.clone(),
-            &routes(),
-            1080,
-            PacketBackend::NativeTun2Proxy,
-            1500,
-            &options,
-        )
-        .is_err()
+        config["outbounds"][0]
+            .pointer("/streamSettings/sockopt/dialerProxy")
+            .is_none()
     );
+    assert!(
+        !config["outbounds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|outbound| outbound["tag"] == "elarni-fragment")
+    );
+    assert_eq!(config["outbounds"][0]["mux"]["enabled"], false);
     let (bytes, _) = compile_xray_outbound_config_with_options(
         source,
         &routes(),

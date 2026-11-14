@@ -167,8 +167,15 @@ class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
         putSource((group ?: obj("id" to id, "name" to input.string("name", "Local profiles"), "format" to "source", "status" to "ready"))
             .put("nodes", JSONArray(kept + nodes)))
         if (selected.isEmpty()) nodes.firstOrNull { it.string("format") == "xrayProfile" }?.let { data.put("selectedNodeId", it.string("id")) }
-        addressedRouting(imported.strings("directives").filter(::isRoutingLink)).forEach { importRouting(it, provider = id) }
+        addressedRouting(imported.strings("directives").filter(::isRoutingLink)).forEach { importsRouting(it, id) }
         return null
+    }
+    /** Imports a provider's routing link. A link the decoder refuses is left out and reported as false:
+     *  it must not cost the user the servers it came with. */
+    private fun importsRouting(link: String, provider: String): Boolean {
+        if (runCatching { Native.domain("decodeRouting", obj("content" to link)) }.isFailure) return false
+        importRouting(link, provider = provider)
+        return true
     }
     fun addSource(url: String, input: JSONObject = JSONObject()): String {
         if (safeURL(url) == null) throw AppFailure("invalid_target")
@@ -225,6 +232,9 @@ class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
         if (migrated.isNotEmpty()) { source.put("url", migrated).put("shareLink", migrated); listOf("raw", "json", "clash").forEach(links::remove) }
         if (targetFormat == "source" && imported.string("fallbackURL").isNotEmpty()) source.put("fallbackURL", imported.getString("fallbackURL"))
         if (imported.strings("directives").any { !isRoutingLink(it) }) metadata.put("directiveNotice", "Unsupported provider directives")
+        // Lines the importer cannot read are left out; the subscription page says how many and of which kind.
+        if (imported.optInt("skippedCount") > 0) metadata.put("skippedServers", imported.optInt("skippedCount").toString())
+            .put("skippedKinds", imported.objects("skipped").map { it.string("kind") }.filter(String::isNotEmpty).distinct().take(5).joinToString(", "))
         if (imported.optBoolean("systemResolverDNS")) metadata.put("dnsNotice", "The provider's DNS asks this device's resolver, outside the tunnel. Elarni uses its own DNS for these servers.")
         val title = display(headers.string("profile-title")) ?: source.string("importedName", source.string("providerName", URI(url).host))
         val hours = refreshHours(source, metadata)
@@ -236,7 +246,8 @@ class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
             .put("lastSuccessfulFetch", now()).put("refreshInterval", hours * 3600)
             .put("nextRefreshAt", now() + hours * 3600 * (0.9 + java.security.SecureRandom().nextDouble() * 0.2))
         if (metadata.opt("routingEnabled") != false) {
-            addressedRouting((listOf(headers.string("routing")) + imported.strings("directives")).filter(::isRoutingLink)).forEach { importRouting(it, provider = id) }
+            addressedRouting((listOf(headers.string("routing")) + imported.strings("directives")).filter(::isRoutingLink))
+                .forEach { if (!importsRouting(it, id)) metadata.put("directiveNotice", "Unsupported provider directives") }
         }
         reconcileSelection()
         if (selected.isEmpty()) nodes.firstOrNull { it.string("format") == "xrayProfile" }?.let { data.put("selectedNodeId", it.string("id")) }
@@ -607,7 +618,7 @@ class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
             "sessionLimitsMigrated" to true, "subscriptions" to JSONArray(), "profiles" to JSONArray(), "assignments" to JSONObject()))
         fun safeURL(text: String): String? = try {
             val value = URI(text)
-            if (text.isEmpty() || text.length > 16384 || text.any { it.code < 32 } || value.scheme !in listOf("http", "https") || value.host.isNullOrEmpty() || value.userInfo != null || value.fragment != null) null else text
+            if (text.isEmpty() || text.length > 16384 || text.any { it.code < 32 } || value.scheme?.lowercase() !in listOf("http", "https") || value.host.isNullOrEmpty() || value.userInfo != null || value.fragment != null) null else text
         } catch (_: Exception) { null }
         fun isRoutingLink(text: String) = listOf("happ://routing/", "elarni://routing/", "incy://routing/").any { text.startsWith(it) }
         // Panels such as 3x-ui send their Happ routing to every client (3x-ui #5999), so links addressed to Elarni win when a feed has any.
