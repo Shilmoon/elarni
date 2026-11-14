@@ -154,6 +154,15 @@ final class DesktopProxy {
       >{};
   final _refreshBackoff = <String, ({DateTime until, int failures})>{};
   Future<void>? _initializing, _stopping;
+  // With Block traffic without VPN the core keeps its kill switch after a
+  // tunnel that ended by itself and, when asked, between a restart's two
+  // tunnels. _guardKept: one is in place, so no lookup is answered.
+  // _guardHeld: a restart's stop kept it, and a plain stop lifts it.
+  // _guardStale: this connect left a crashed helper's in place.
+  var _guardKept = false, _guardHeld = false, _guardStale = false;
+  // The addresses each server name last resolved to, for starts under a kept
+  // kill switch.
+  final _hostAddresses = <String, List<InternetAddress>>{};
   Future<CatalogMap>? _disconnecting;
   Future<Process>? _process, _lease;
   StreamIterator<List<int>>? _leaseOutput;
@@ -323,28 +332,57 @@ final class DesktopProxy {
   Future<void> _initialize() => _initializing ??=
       () async {
         // A run that ended without restoring the OS proxy left it pointing at
-        // a closed listener, which breaks every app that follows it.
-        if (await _systemProxy?.recover() case final message?)
-          _listener?.call(message);
-        // A retry after a failed load keeps the lease it already holds.
-        if (_catalogIO == null && _lease == null)
-          await _native('acquireCatalog', {});
-        final stored = await _storage('loadCatalog', {});
+        // a closed listener, which breaks every app that follows it. A second
+        // instance is refused first: the setting and its backup belong to the
+        // running one.
+        var recovered = false;
+        Future<void> recoverProxy() async {
+          if (recovered) return;
+          recovered = true;
+          if (await _systemProxy?.recover() case final message?)
+            _listener?.call(message);
+        }
+
+        final CatalogMap stored;
+        try {
+          if (_catalogIO == null) {
+            // A retry after a failed load keeps the lease it already holds.
+            if (_lease == null) await _native('acquireCatalog', {});
+            // The lease excludes a second instance, and the load below can
+            // wait on a keyring prompt.
+            await recoverProxy();
+          }
+          stored = await _storage('loadCatalog', {});
+        } on Object catch (error) {
+          if (error is! PlatformException || error.code != 'storage_busy')
+            await recoverProxy();
+          rethrow;
+        }
+        await recoverProxy();
         _revision = stored['revision'] as String? ?? '';
         final document = stored['catalog'];
         if (document != null) {
-          final envelope = catalogMap(document);
-          if (envelope['version'] != 1 || envelope['committed'] is! Map)
+          final Object? pending;
+          try {
+            final envelope = catalogMap(document);
+            if (envelope['version'] != 1 || envelope['committed'] is! Map)
+              throw const FormatException();
+            pending = envelope['pending'];
+            _catalog = DesktopCatalog(
+              catalogMap(envelope['committed']),
+              _native,
+              _domainRequest,
+              clock: _refreshClock,
+            )..validate();
+          } on PlatformException {
+            rethrow;
+          } on Object {
+            // Not a catalog, whatever it is: it stays on disk untouched.
             throw desktopError('storage_corrupt');
-          _catalog = DesktopCatalog(
-            catalogMap(envelope['committed']),
-            _native,
-            _domainRequest,
-            clock: _refreshClock,
-          )..validate();
+          }
           final migrated = _catalog!.migrateSessionLimits();
           // The lifetime lease excludes another instance still publishing a change.
-          if (migrated || envelope['pending'] != null)
+          if (migrated || pending != null)
             await _save({'version': 1, 'committed': _catalog!.data});
         } else {
           _catalog = DesktopCatalog(
@@ -361,7 +399,10 @@ final class DesktopProxy {
         if (Platform.isWindows || Platform.isLinux)
           await _clearStaleGuard().catchError((Object _) {});
         _automation = DesktopAutomation(
-          catalogMap(_catalog!.data['automationEpisode'] ?? {}),
+          switch (_catalog!.data['automationEpisode']) {
+            final Map episode => catalogMap(episode),
+            _ => {},
+          },
         );
         _automation.intent = _catalog!.data['connectionIntent'] == true;
         try {
@@ -530,6 +571,28 @@ final class DesktopProxy {
                 .toString(),
       },
     ),
+  );
+
+  // The servers among [nodeIds] that the compiler refuses.
+  static Future<Set<String>> _refusedOff(
+    String path,
+    CatalogMap data,
+    Set<String> nodeIds,
+  ) => Isolate.run(
+    () => _withDomain(path, (request) {
+      final refused = <String>{};
+      for (final input in _compileInputs(_workerCatalog(data, request))) {
+        if (input.context == null || !nodeIds.contains(input.node['id']))
+          continue;
+        try {
+          _compileIn(request, input.context!, input.node);
+        } on PlatformException catch (error) {
+          if (error.code != 'unsupported_profile') rethrow;
+          refused.add(input.node['id']! as String);
+        }
+      }
+      return refused;
+    }),
   );
 
   static Future<String> _compileOff(

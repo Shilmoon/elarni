@@ -200,3 +200,40 @@ func TestPhysicalDefaultRouteMoveReopensSockets(t *testing.T) {
 		t.Fatal("moving the default route did not reopen sockets")
 	}
 }
+
+// The tunnel's helper resets a connection that runs outside the tunnel only when Windows now
+// routes its destination into the tunnel. Asked of the loopback interface here: no route is added.
+func TestRoutedIntoFollowsTheSystemsBestRoute(t *testing.T) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loopback winipcfg.LUID
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagLoopback != 0 {
+			if loopback, err = winipcfg.LUIDFromIndex(uint32(iface.Index)); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+	}
+	if loopback == 0 {
+		t.Fatal("loopback interface missing")
+	}
+	routed := routedInto(loopback)
+	for address, want := range map[string]bool{
+		"127.0.0.1":        true,
+		"::1":              true,
+		"::ffff:127.0.0.1": true,
+		// Documentation addresses: the default route's interface, or none.
+		"192.0.2.1":   false,
+		"2001:db8::1": false,
+	} {
+		if got := routed(netip.MustParseAddr(address)); got != want {
+			t.Errorf("%s: routed into the loopback interface %t, want %t", address, got, want)
+		}
+	}
+	if routedInto(loopback + 1)(netip.MustParseAddr("127.0.0.1")) {
+		t.Error("127.0.0.1 is routed into another interface")
+	}
+}

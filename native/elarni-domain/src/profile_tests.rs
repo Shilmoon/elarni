@@ -844,7 +844,7 @@ fn servers_dialed_with_a_domain_strategy_use_the_platform_lookup() {
 }
 
 // Common provider profiles pair a fragmentable primary with WS, chained or
-// Trojan backups; those backups connect without fragments.
+// Trojan backups; those backups connect without fragments, and so does a primary.
 #[test]
 fn fragmentation_skips_backups_that_cannot_carry_it() {
     let options = RuntimeOptions {
@@ -891,24 +891,64 @@ fn fragmentation_skips_backups_that_cannot_carry_it() {
         assert_eq!(tagged(tag)["streamSettings"], stream, "{tag}");
     }
     assert_eq!(tagged("ws")["mux"]["enabled"], true);
-    // The primary still needs it.
+    // A primary that cannot carry fragments connects without them; mux still applies.
+    let reversed = json!({"outbounds": backups.iter().rev().cloned().collect::<Vec<_>>()});
+    let compiled = compile_profile(
+        reversed.clone(),
+        None,
+        1080,
+        PacketBackend::NativeTun2Proxy,
+        1500,
+        &options,
+        None,
+    )
+    .unwrap();
+    let unfragmented: Value = serde_json::from_slice(&compiled.config).unwrap();
+    let outbounds = unfragmented["outbounds"].as_array().unwrap();
+    assert_eq!(outbounds[0]["tag"], "trojan");
+    for backup in &backups {
+        let tag = backup["tag"].as_str().unwrap();
+        let mut stream = backup["streamSettings"].clone();
+        if tag == "chained" {
+            stream["sockopt"] = json!({"dialerProxy": "ws"});
+        }
+        let outbound = outbounds
+            .iter()
+            .find(|outbound| outbound["tag"] == tag)
+            .unwrap();
+        assert_eq!(outbound["streamSettings"], stream, "{tag}");
+    }
     assert!(
+        !outbounds
+            .iter()
+            .any(|outbound| outbound["settings"]["fragment"].is_object())
+    );
+    let ws = outbounds
+        .iter()
+        .find(|outbound| outbound["tag"] == "ws")
+        .unwrap();
+    assert_eq!(ws["mux"]["enabled"], true);
+    // Invalid fragment settings are still refused.
+    let invalid = RuntimeOptions {
+        fragment_length: "0".into(),
+        ..options
+    };
+    assert!(matches!(
         compile_profile(
-            json!({"outbounds": backups.iter().rev().cloned().collect::<Vec<_>>()}),
+            reversed,
             None,
             1080,
             PacketBackend::NativeTun2Proxy,
             1500,
-            &options,
+            &invalid,
             None,
-        )
-        .is_err()
-    );
+        ),
+        Err(crate::compiler::CompileError::InvalidFragmentation)
+    ));
 }
 
 #[test]
 fn fragmentation_follows_the_selected_group_member_not_the_first_outbound() {
-    use crate::compiler::CompileError;
     let options = RuntimeOptions {
         fragmentation_enabled: true,
         ..RuntimeOptions::default()
@@ -934,20 +974,28 @@ fn fragmentation_follows_the_selected_group_member_not_the_first_outbound() {
             None,
         )
     };
-    // The selected server carries all traffic, so it needs fragmentation.
-    assert!(matches!(
-        compile(profile([node("A", "a.example.com"), trojan.clone()], "B")),
-        Err(CompileError::UnsupportedFragmentation)
-    ));
+    let group = |members: [Value; 2], selected: &str| {
+        let compiled = compile(profile(members, selected)).unwrap();
+        let config: Value = serde_json::from_slice(&compiled.config).unwrap();
+        config["outbounds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|outbound| outbound["tag"] == "PROXY")
+            .unwrap()
+            .clone()
+    };
+    // A selected server that cannot carry fragments connects without them.
+    let proxy = group([node("A", "a.example.com"), trojan.clone()], "B");
+    assert_eq!(proxy["protocol"], "trojan");
+    assert!(
+        proxy
+            .pointer("/streamSettings/sockopt/dialerProxy")
+            .is_none(),
+        "{proxy}"
+    );
     // An unselected member is a backup, wherever it sits.
-    let compiled = compile(profile([trojan, node("A", "a.example.com")], "A")).unwrap();
-    let config: Value = serde_json::from_slice(&compiled.config).unwrap();
-    let proxy = config["outbounds"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|outbound| outbound["tag"] == "PROXY")
-        .unwrap();
+    let proxy = group([trojan, node("A", "a.example.com")], "A");
     assert!(proxy["streamSettings"]["sockopt"]["dialerProxy"].is_string());
 }
 
@@ -2353,7 +2401,6 @@ fn wireguard_hints_and_reality_names_follow_xray() {
 
 #[test]
 fn endpoints_and_xray_agree_on_miscased_dial_keys() {
-    use crate::compiler::CompileError;
     let compile = |outbounds: Value, runtime: &RuntimeOptions| {
         compile_profile(
             json!({"outbounds": outbounds}),
@@ -2431,10 +2478,21 @@ fn endpoints_and_xray_agree_on_miscased_dial_keys() {
         "ForceIPv6"
     );
     assert!(!endpoint(alpn("alpn"), "upload.example").supports_tcp_probe);
-    assert!(matches!(
-        compile(alpn("alpn"), &fragmented),
-        Err(CompileError::UnsupportedFragmentation)
-    ));
+    // HTTP/3 cannot carry fragments, so the server connects without them.
+    let config: Value =
+        serde_json::from_slice(&compile(alpn("alpn"), &fragmented).unwrap().config).unwrap();
+    let outbounds = config["outbounds"].as_array().unwrap();
+    assert_eq!(outbounds[0]["tag"], "proxy");
+    assert!(
+        outbounds[0]
+            .pointer("/streamSettings/sockopt/dialerProxy")
+            .is_none()
+    );
+    assert!(
+        !outbounds
+            .iter()
+            .any(|outbound| outbound["settings"]["fragment"].is_object())
+    );
     for outbounds in [flow("flow"), mux("mux")] {
         let config: Value =
             serde_json::from_slice(&compile(outbounds, &muxed).unwrap().config).unwrap();
@@ -2627,4 +2685,99 @@ fn per_app_children_rules_follow_the_direct_ones() {
         runtime.per_app_targets.clear();
         assert!(compile_per_app(&runtime).is_err(), "{invalid}");
     }
+}
+
+// Xray and the Go importer ignore top-level keys they do not know: Happ JSON subscriptions
+// carry "meta", Xray configs "version" and "geodata". Refusing them lost the subscription.
+// Xray reads a known key in any case, though, so a miscased one is still refused.
+#[test]
+fn unknown_top_level_keys_are_dropped() {
+    let config = compile(
+        json!({"outbounds": [node("proxy", "edge.example.com")],
+            "meta": {"title": "Provider"}, "version": {"min": "25.1.1"}, "geodata": {"loader": "memconservative"}}),
+        None,
+    );
+    for key in ["meta", "version", "geodata"] {
+        assert!(config.get(key).is_none(), "{key} kept");
+    }
+    assert_eq!(config["outbounds"][0]["tag"], "proxy");
+    assert_eq!(
+        config["outbounds"][0]["settings"]["address"],
+        "edge.example.com"
+    );
+    for key in [
+        "Policy",
+        "STATS",
+        "FakeDNS",
+        "Remarks",
+        "Log",
+        "Transport",
+        "Metrics",
+        "API",
+        "Env",
+    ] {
+        let mut profile = json!({"outbounds": [node("proxy", "edge.example.com")]});
+        profile[key] = json!({});
+        assert!(
+            compile_profile(
+                profile,
+                None,
+                1080,
+                PacketBackend::NativeTun2Proxy,
+                1500,
+                &RuntimeOptions::default(),
+                None,
+            )
+            .is_err(),
+            "{key} accepted"
+        );
+    }
+}
+
+// Older imports stored an IPv6 server in brackets. The platform resolves an endpoint host
+// that is not an IP literal, and the bracketed form never parsed as one.
+#[test]
+fn bracketed_ipv6_server_addresses_are_ip_literals() {
+    use crate::compiler::compile_xray_outbound_config_with_options;
+    let server = node("v6", "[2001:db8::10]");
+    let profile = json!({"outbounds": [server]});
+    let endpoints = crate::profile::profile_endpoints(&profile).unwrap();
+    assert_eq!(endpoints[0].host, "2001:db8::10");
+    assert_eq!(endpoints[0].addresses, ["2001:db8::10"]);
+    let compiled = compile_profile(
+        profile,
+        None,
+        1080,
+        PacketBackend::NativeTun2Proxy,
+        1500,
+        &RuntimeOptions::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(compiled.endpoints[0].host, "2001:db8::10");
+    // An IP literal pins without a lookup.
+    let pinned = crate::profile::prepare_config(
+        serde_json::from_slice(&compiled.config).unwrap(),
+        &Default::default(),
+        &Default::default(),
+        true,
+        &Default::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        pinned["outbounds"][0]["settings"]["address"],
+        "2001:db8::10"
+    );
+    let routes: RouteModel =
+        serde_json::from_value(json!({"rules": [], "dnsServers": ["1.1.1.1"]})).unwrap();
+    let (_, host) = compile_xray_outbound_config_with_options(
+        node("v6", "[2001:db8::10]"),
+        &routes,
+        1080,
+        PacketBackend::NativeTun2Proxy,
+        1500,
+        &RuntimeOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(host, "2001:db8::10");
 }

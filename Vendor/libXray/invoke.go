@@ -194,7 +194,7 @@ func InvokeRequest(request LibXrayInvokeRequest) string {
 			}
 			tunnel = append(tunnel, prefix.Masked())
 		}
-		reset, kept := xray.MoveOpenedConnections(tunnel)
+		reset, kept := xray.MoveOpenedConnections(tunnel, nil)
 		return encodeInvokeResponse(&MoveOpenedConnectionsResponse{Reset: reset, Kept: kept}, nil)
 	case LibXrayMethodSocketPathChanged:
 		// The Apple path monitor: sockets would now leave through another interface.

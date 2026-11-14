@@ -354,6 +354,121 @@ void main() {
     },
   );
 
+  // A provider's routing that Elarni refuses costs only that routing: the
+  // servers still update, the subscription says so, and nothing of the
+  // refused profile (such as an assignment to it) is left behind.
+  test('a refused provider routing directive keeps the refresh', () async {
+    var routing = '';
+    var name = 'a';
+    var directives = <String>[];
+    final catalog = DesktopCatalog(
+      DesktopCatalog.empty(),
+      (method, payload) async => switch (method) {
+        'fetchSubscription' => {
+          'body': 'feed',
+          'headers': {'routing': routing},
+          'url': payload['url'],
+        },
+        'importClientProfiles' => {
+          'profiles': [
+            {
+              'format': 'xrayProfile',
+              'name': name,
+              'config': {
+                'outbounds': [
+                  {
+                    'protocol': 'vless',
+                    'settings': {'address': '$name.example', 'port': 443},
+                  },
+                ],
+              },
+            },
+          ],
+          'directives': directives,
+        },
+        _ => throw StateError(method),
+      },
+      (operation, payload) => switch (operation) {
+        'catalogIdentity' => {'identity': jsonEncode(payload)},
+        // "Unreadable" does not decode; "Large" decodes but does not merge,
+        // as a profile over the routing limits.
+        'decodeRouting'
+            when !(payload['content']! as String).endsWith('/Unreadable') =>
+          {
+            'import': {
+              'action': 'add',
+              'activate': true,
+              'profile': {
+                'Name': (payload['content']! as String).split('/').last,
+              },
+            },
+          },
+        'mergeManagedRouting'
+            when catalogMap(payload['profile'])['Name'] != 'Large' =>
+          {'routeModel': <String, Object?>{}},
+        'decodeRouting' ||
+        'mergeManagedRouting' => throw desktopError('invalid_routing'),
+        _ => throw StateError(operation),
+      },
+    );
+    catalog.putSource({
+      'id': 'feed',
+      'name': 'Feed',
+      'url': 'https://feed.example/sub',
+      'format': 'source',
+      'status': 'ready',
+      'nodes': <CatalogMap>[],
+    });
+    CatalogMap metadata() => catalogMap(catalog.source('feed')['metadata']);
+    List<Object?> names() => [
+      for (final node in catalogList(catalog.source('feed')['nodes']))
+        node['name'],
+    ];
+
+    // A first download whose routing does not merge.
+    routing = 'happ://routing/onadd/Large';
+    await catalog.refresh('feed');
+    expect(names(), ['a']);
+    expect(metadata()['directiveNotice'], 'Unsupported provider directives');
+    expect(catalog.routes, isEmpty);
+    expect(catalog.assignments, isEmpty);
+    catalog.validate();
+
+    routing = 'happ://routing/onadd/Good';
+    await catalog.refresh('feed');
+    final good = catalog.routes.single['id'];
+    expect(catalog.assignments, {'feed': good});
+    expect(metadata()['directiveNotice'], isNull);
+
+    // Refused later, the profile the provider sent before stays as it was.
+    for (final (refused, server) in [
+      ('happ://routing/onadd/Large', 'b'),
+      ('happ://routing/Unreadable', 'c'),
+    ]) {
+      routing = refused;
+      name = server;
+      await catalog.refresh('feed');
+      expect(names(), [server], reason: refused);
+      expect(catalog.source('feed')['status'], 'ready');
+      expect(
+        metadata()['directiveNotice'],
+        'Unsupported provider directives',
+        reason: refused,
+      );
+      expect(catalog.routes.single['name'], 'Good');
+      expect(catalog.assignments, {'feed': good});
+      catalog.validate();
+    }
+
+    // A local import has no notice to show; its servers are added.
+    directives = ['happ://routing/onadd/Large'];
+    name = 'local';
+    final imported = await catalog.importLocal('local');
+    expect(imported.single['name'], 'local');
+    expect(catalog.routes.single['name'], 'Good');
+    catalog.validate();
+  });
+
   // Recovery must keep working when a provider rotates its servers out.
   test('a refresh that drops failover servers keeps recovery valid', () async {
     CatalogMap server(String name) => {
@@ -587,6 +702,69 @@ void main() {
       catalogMap(catalog.source('feed')['metadata'])['dnsNotice'],
       startsWith("The provider's DNS asks this device's resolver"),
     );
+  });
+
+  test('servers the import skipped are counted and named', () async {
+    var imported = <String, Object?>{};
+    final catalog = DesktopCatalog(
+      DesktopCatalog.empty(),
+      (method, payload) async => switch (method) {
+        'fetchSubscription' => {
+          'body': 'feed',
+          'headers': {},
+          'url': payload['url'],
+        },
+        'importClientProfiles' => {
+          'profiles': [
+            {
+              'format': 'xrayProfile',
+              'name': 'Server',
+              'config': {
+                'outbounds': [
+                  {
+                    'protocol': 'vless',
+                    'settings': {'id': 'server'},
+                  },
+                ],
+              },
+            },
+          ],
+          ...imported,
+        },
+        _ => throw StateError(method),
+      },
+      (operation, payload) => switch (operation) {
+        'catalogIdentity' => {'identity': jsonEncode(payload)},
+        _ => throw StateError(operation),
+      },
+    );
+    catalog.putSource({
+      'id': 'feed',
+      'name': 'Feed',
+      'url': 'https://feed.example/sub',
+      'format': 'source',
+      'status': 'ready',
+      'nodes': <CatalogMap>[],
+    });
+    CatalogMap metadata() => catalogMap(catalog.source('feed')['metadata']);
+    imported = {
+      // The core lists at most 32; the count is of all of them.
+      'skippedCount': 40,
+      'skipped': [
+        for (final kind in ['ssh', 'naive', 'ssh', '', 'mieru', 'juicity'])
+          {'name': 'Server $kind', 'kind': kind},
+        {'kind': 'anytls'},
+        {'kind': 'snell'},
+      ],
+    };
+    await catalog.refresh('feed');
+    expect(metadata()['skippedServers'], 40);
+    expect(metadata()['skippedKinds'], 'ssh, naive, mieru, juicity, anytls');
+    // Nothing skipped on the next refresh: nothing is reported.
+    imported = {};
+    await catalog.refresh('feed');
+    expect(metadata().containsKey('skippedServers'), isFalse);
+    expect(metadata().containsKey('skippedKinds'), isFalse);
   });
 
   test('a catalog over its limits says so instead of reading as corrupt', () {

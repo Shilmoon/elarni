@@ -19,6 +19,19 @@ final String? desktopAppVersion = () {
   return null;
 }();
 
+/// The operating system as System info and diagnostics show it. Windows 11
+/// still names itself "Windows 10"; its build number, 22000 or later, tells
+/// the two apart.
+String desktopOSVersion([String? reported]) {
+  final version = reported ?? Platform.operatingSystemVersion;
+  final build = int.tryParse(
+    RegExp(r'\(Build (\d+)\)').firstMatch(version)?.group(1) ?? '',
+  );
+  return build != null && build >= 22000
+      ? version.replaceFirst('Windows 10', 'Windows 11')
+      : version;
+}
+
 /// Flutter writes version.json beside a Linux bundle's assets.
 String? linuxBundleVersion(String bundle) {
   final file = File('$bundle/data/flutter_assets/version.json');

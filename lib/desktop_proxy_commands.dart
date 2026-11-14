@@ -141,7 +141,7 @@ extension _ProxyCommands on DesktopProxy {
         }
         return {
           ...await _platformRequest(method, args),
-          'os': Platform.operatingSystemVersion,
+          'os': desktopOSVersion(),
           'appVersion': ?desktopAppVersion,
           'coreVersion': ?_coreVersion,
           'vpnService': ?_vpnService?.enabled,
@@ -324,6 +324,7 @@ extension _ProxyCommands on DesktopProxy {
               {},
               timeout: const Duration(seconds: 90),
             );
+          _guardKept = _guardHeld = false;
           return {'state': _state};
         } finally {
           _operation = null;
@@ -472,6 +473,28 @@ extension _ProxyCommands on DesktopProxy {
             approval: approval,
             format: format,
           );
+          // Servers the compiler refuses fail this refresh, which records it,
+          // rather than the publication, which would record nothing. The
+          // publication reuses these compiles.
+          if (warning == null) {
+            try {
+              await _semantics(candidate);
+            } on PlatformException catch (error) {
+              // One refused server is left out, like a line the importer
+              // cannot read; with none left the refresh fails.
+              if (error.code != 'unsupported_profile') rethrow;
+              final refused = await DesktopProxy._refusedOff(
+                domainPath,
+                candidate.data,
+                {
+                  for (final node in catalogList(candidate.source(id)['nodes']))
+                    node['id']! as String,
+                },
+              );
+              if (!candidate.dropRefused(id, refused)) rethrow;
+              await _semantics(candidate);
+            }
+          }
         } on PlatformException catch (error) {
           candidate.data
             ..clear()

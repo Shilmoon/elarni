@@ -233,7 +233,8 @@ func TestLinuxSupervisorOutlivesFailedAndLostTunnels(t *testing.T) {
 				t.Fatalf("the next start answered %+v", got)
 			}
 			if block {
-				want("second start", "cleanup rv000000000001", "forget rv000000000001", "reserve rv000000000002")
+				// The kept kill switch goes only once the next tunnel has its own.
+				want("second start", "reserve rv000000000002", "cleanup rv000000000001", "forget rv000000000001")
 			} else {
 				want("second start", "reserve rv000000000002")
 			}
@@ -263,7 +264,7 @@ func TestLinuxSupervisorOutlivesFailedAndLostTunnels(t *testing.T) {
 				t.Fatalf("reconnect answered %+v", got)
 			}
 			if block {
-				want("reconnect", "cleanup rv000000000002", "forget rv000000000002", "reserve rv000000000003")
+				want("reconnect", "reserve rv000000000003", "cleanup rv000000000002", "forget rv000000000002")
 			} else {
 				want("reconnect", "reserve rv000000000003")
 			}
@@ -285,6 +286,122 @@ func TestLinuxSupervisorOutlivesFailedAndLostTunnels(t *testing.T) {
 				t.Fatal("the supervisor outlived its owner")
 			}
 		})
+	}
+}
+
+// Regression: with Block traffic without VPN, each restart the app made (another server,
+// a settings change, failover) removed the kill switch with the old tunnel, and a start
+// removed a kept one before the new tunnel was up: traffic left outside for 60-120 ms
+// on a change and about a second after a lost tunnel.
+func TestLinuxSupervisorKeepsTheKillSwitchAcrossARestart(t *testing.T) {
+	lock := filepath.Join(t.TempDir(), "vpn.lock")
+	var calls []string
+	var mu sync.Mutex
+	call := func(format string, values ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, fmt.Sprintf(format, values...))
+	}
+	modes := []string{"run", "run", "run", "fail", "run", "run"}
+	reserved := 0
+	host := linuxTunnelHost{
+		lock: func() (*os.File, error) { return acquireLinuxVPNLock(lock) },
+		reserve: func() (linuxNetwork, error) {
+			reserved++
+			network := linuxNetwork{Name: fmt.Sprintf("rv%012d", reserved), Table: 12000 + reserved, Priority: 12000 + reserved, Mark: 0x52560000 | 12001, DNSPort: 5353}
+			call("reserve %s", network.Name)
+			return network, nil
+		},
+		cleanup: func(network linuxNetwork) error { call("cleanup %s", network.Name); return nil },
+		forget:  func(network linuxNetwork) { call("forget %s", network.Name) },
+		worker: func(events func(linuxReply)) (*linuxChild, error) {
+			child, err := startLinuxChild(linuxWorkerFixture(modes[0]), events)
+			modes = modes[1:]
+			return child, err
+		},
+	}
+	commands, closed, replies := make(chan linuxCommand), make(chan struct{}), make(chan linuxReply, 4)
+	done := make(chan int, 1)
+	go func() {
+		done <- superviseLinuxTunnels(context.Background(), commands, closed, func(reply linuxReply) error { replies <- reply; return nil }, os.Getuid(), host)
+	}()
+	// Each step is a command, whether it is answered ready, and the host calls it makes.
+	step := func(stage string, command linuxCommand, ready bool, expected ...string) {
+		t.Helper()
+		select {
+		case commands <- command:
+		case code := <-done:
+			t.Fatalf("%s: the supervisor exited with %d", stage, code)
+		}
+		select {
+		case reply := <-replies:
+			if reply.Ready != ready {
+				t.Fatalf("%s answered %+v", stage, reply)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s: the supervisor did not answer", stage)
+		}
+		mu.Lock()
+		got := calls
+		calls = nil
+		mu.Unlock()
+		if fmt.Sprint(got) != fmt.Sprint(expected) {
+			t.Fatalf("%s: host calls %v, want %v", stage, got, expected)
+		}
+	}
+	locked := func() bool {
+		file, err := acquireLinuxVPNLock(lock)
+		if err == nil {
+			file.Close()
+		}
+		return err != nil
+	}
+	blocking := linuxCommand{Action: "start", Request: vpnRequest{Config: linuxConfigFixture,
+		RoutePolicy: &share.WindowsRoutePolicy{IncludedRoutes: []string{"0.0.0.0/0"}, BlockWithoutVPN: true}}}
+	open := linuxCommand{Action: "start", Request: vpnRequest{Config: linuxConfigFixture}}
+	stop, hold := linuxCommand{Action: "stop"}, linuxCommand{Action: "stop", Hold: true}
+
+	step("start", blocking, true, "reserve rv000000000001")
+	step("restart stop", hold, true)
+	if !locked() {
+		t.Fatal("the kept kill switch gave up the tunnel lock")
+	}
+	step("restart start", blocking, true, "reserve rv000000000002", "cleanup rv000000000001", "forget rv000000000001")
+
+	// The user disconnects during a restart: the kept kill switch goes.
+	step("second restart stop", hold, true)
+	step("repeated restart stop", hold, true)
+	step("disconnect", stop, true, "cleanup rv000000000002", "forget rv000000000002")
+	if locked() {
+		t.Fatal("a disconnect during a restart kept the tunnel lock")
+	}
+
+	// The replacement fails to start: what it installed goes, the whole kill switch stays.
+	step("third start", blocking, true, "reserve rv000000000003")
+	step("third restart stop", hold, true)
+	step("failed restart", blocking, false, "reserve rv000000000004", "cleanup rv000000000004", "cleanup rv000000000004", "forget rv000000000004")
+	if !locked() {
+		t.Fatal("a failed restart gave up the tunnel lock")
+	}
+	// A failed start is a lost tunnel: only the next tunnel or Repair lifts its kill switch.
+	step("stop after the failure", stop, true)
+	step("retry", blocking, true, "reserve rv000000000005", "cleanup rv000000000003", "forget rv000000000003")
+
+	// Without Block traffic without VPN the replacement's failure must not block anything.
+	step("turning the kill switch off", hold, true)
+	step("open start", open, true, "reserve rv000000000006", "cleanup rv000000000005", "forget rv000000000005")
+	step("open restart stop", hold, true, "cleanup rv000000000006", "cleanup rv000000000006", "forget rv000000000006")
+	if locked() {
+		t.Fatal("a tunnel without the kill switch kept the lock through a restart")
+	}
+	close(closed)
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the supervisor outlived its owner")
 	}
 }
 

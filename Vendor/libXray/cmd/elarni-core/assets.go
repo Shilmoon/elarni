@@ -114,6 +114,16 @@ func prepareAssets(root string, request assetRequest, fetch assetFetch) (any, er
 		target := filepath.Join(stage, name+".dat")
 		reduction, skips, err := geo.ReduceFile(name, original, target, request.Selectors, request.Optional, request.Reduce)
 		var lacks geo.MissingError
+		if err != nil && !downloaded && !errors.As(err, &lacks) && err.Error() != "input_too_large" && err.Error() != "assets_unavailable" {
+			// The stored copy is damaged. Its validators would only tell that the server's file has not
+			// changed, so it is downloaded in full.
+			os.Remove(original)
+			os.Remove(target)
+			if _, validators, err = fetch(url, assetValidators{}, original); err != nil {
+				return nil, err
+			}
+			reduction, skips, err = geo.ReduceFile(name, original, target, request.Selectors, request.Optional, request.Reduce)
+		}
 		if errors.As(err, &lacks) {
 			// Name the codes from both files at once.
 			missing = append(missing, lacks...)
@@ -320,6 +330,10 @@ func readAssets(root, revision string) (map[string][]byte, error) {
 	for _, name := range []string{"geoip", "geosite"} {
 		path := filepath.Join(root, revision, name+".dat")
 		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			// A route may use one geofile only; a download without its prepared file is a lost one.
+			if _, err := os.Stat(filepath.Join(root, revision, name+".original.dat")); err == nil {
+				return nil, errors.New("assets_missing")
+			}
 			continue
 		}
 		data, err := readAssetFile(path)

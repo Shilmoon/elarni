@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -156,7 +158,7 @@ func shadowsocksLink(proxy conf.OutboundDetourConfig, link *url.URL) error {
 		settings.Address, settings.Port, settings.Cipher, settings.Password = server.Address, server.Port, server.Cipher, server.Password
 	}
 
-	link.Fragment = getOutboundName(proxy)
+	link.Fragment = shareName(proxy)
 	link.Scheme = "ss"
 
 	if link.Host, err = shareHost(proxy.Protocol, settings.Address, settings.Port); err != nil {
@@ -205,7 +207,7 @@ func vmessLink(proxy conf.OutboundDetourConfig, link *url.URL) error {
 		settings.Address, settings.Port, settings.ID, settings.Security = server.Address, server.Port, user.ID, user.Security
 	}
 
-	link.Fragment = getOutboundName(proxy)
+	link.Fragment = shareName(proxy)
 	link.Scheme = "vmess"
 
 	if link.Host, err = shareHost(proxy.Protocol, settings.Address, settings.Port); err != nil {
@@ -234,7 +236,7 @@ func vlessLink(proxy conf.OutboundDetourConfig, link *url.URL) error {
 		settings.Id, settings.Flow, settings.Encryption = user.ID, user.Flow, user.Encryption
 	}
 
-	link.Fragment = getOutboundName(proxy)
+	link.Fragment = shareName(proxy)
 	link.Scheme = "vless"
 
 	if link.Host, err = shareHost(proxy.Protocol, settings.Address, settings.Port); err != nil {
@@ -269,15 +271,20 @@ func socksLink(proxy conf.OutboundDetourConfig, link *url.URL) error {
 		}
 	}
 
-	link.Fragment = getOutboundName(proxy)
+	link.Fragment = shareName(proxy)
 	link.Scheme = "socks"
 
 	if link.Host, err = shareHost(proxy.Protocol, settings.Address, settings.Port); err != nil {
 		return err
 	}
-	password := fmt.Sprintf("%s:%s", settings.Username, settings.Password)
-	username := base64.StdEncoding.EncodeToString([]byte(password))
-	link.User = url.User(username)
+	if strings.Contains(settings.Username, ":") {
+		// The base64 form is split at its first colon, which would cut this name.
+		link.User = url.UserPassword(settings.Username, settings.Password)
+	} else {
+		password := fmt.Sprintf("%s:%s", settings.Username, settings.Password)
+		username := base64.StdEncoding.EncodeToString([]byte(password))
+		link.User = url.User(username)
+	}
 
 	return nil
 }
@@ -292,7 +299,7 @@ func trojanLink(proxy conf.OutboundDetourConfig, link *url.URL) error {
 		settings.Address, settings.Port, settings.Password = server.Address, server.Port, server.Password
 	}
 
-	link.Fragment = getOutboundName(proxy)
+	link.Fragment = shareName(proxy)
 	link.Scheme = "trojan"
 
 	if link.Host, err = shareHost(proxy.Protocol, settings.Address, settings.Port); err != nil {
@@ -309,7 +316,7 @@ func hysteriaLink(proxy conf.OutboundDetourConfig, link *url.URL) error {
 		return err
 	}
 
-	link.Fragment = getOutboundName(proxy)
+	link.Fragment = shareName(proxy)
 	link.Scheme = "hysteria2"
 
 	if link.Host, err = shareHost(proxy.Protocol, settings.Address, settings.Port); err != nil {
@@ -326,7 +333,12 @@ func hysteriaLink(proxy conf.OutboundDetourConfig, link *url.URL) error {
 func streamSettingsQuery(proxy conf.OutboundDetourConfig, link *url.URL) {
 	streamSettings := proxy.StreamSetting
 	if streamSettings == nil {
-		return
+		if proxy.Protocol == "hysteria" {
+			return
+		}
+		// Plain TCP is said as it is for a profile that has stream settings: a Trojan link without
+		// "security" means TLS, and the link of a server must not change once it was imported.
+		streamSettings = &conf.StreamConfig{}
 	}
 	query := link.RawQuery
 
@@ -368,40 +380,9 @@ func streamSettingsQuery(proxy conf.OutboundDetourConfig, link *url.URL) {
 		}
 
 		// QuicParams (bandwidth)
-		if streamSettings.FinalMask != nil && streamSettings.FinalMask.QuicParams != nil {
-			qp := streamSettings.FinalMask.QuicParams
-			if len(qp.BrutalUp) > 0 {
-				query = addQuery(query, "up", string(qp.BrutalUp))
-			}
-			if len(qp.BrutalDown) > 0 {
-				query = addQuery(query, "down", string(qp.BrutalDown))
-			}
-		}
-
-		// Port hopping and salamander
 		if streamSettings.FinalMask != nil {
-			for _, mask := range streamSettings.FinalMask.Udp {
-				if mask.Settings == nil {
-					continue
-				}
-				switch strings.ToLower(mask.Type) {
-				case "udphop":
-					var hop conf.UDPHop
-					if json.Unmarshal(*mask.Settings, &hop) == nil {
-						if len(hop.RemotePorts.Range) > 0 {
-							query = addQuery(query, "ports", hop.RemotePorts.String())
-						}
-						if hop.Interval.From != 0 || hop.Interval.To != 0 {
-							query = addQuery(query, "hop-interval", strconv.FormatInt(int64(hop.Interval.From), 10))
-						}
-					}
-				case "salamander":
-					var obfs conf.Salamander
-					if json.Unmarshal(*mask.Settings, &obfs) == nil {
-						query = addQuery(query, "obfs", "salamander")
-						query = addQuery(query, "obfs-password", obfs.Password)
-					}
-				}
+			for _, parameter := range hysteriaMaskQuery(streamSettings.FinalMask) {
+				query = addQuery(query, parameter[0], parameter[1])
 			}
 		}
 		link.RawQuery = query
@@ -539,29 +520,26 @@ func streamSettingsQuery(proxy conf.OutboundDetourConfig, link *url.URL) {
 		if len(mode) > 0 {
 			query = addQuery(query, "mode", mode)
 		}
-		extra := xhttpSettings.Extra
-		if extra != nil {
-			var extraConfig conf.SplitHTTPConfig
-			err := json.Unmarshal(extra, &extraConfig)
-			if err == nil {
-				extraBytes, err := json.Marshal(extraConfig)
-				if err == nil {
-					query = addQuery(query, "extra", string(extraBytes))
-				}
-			}
+		if extra := xhttpExtra(xhttpSettings); extra != "" {
+			query = addQuery(query, "extra", extra)
 		}
 	}
 
 	switch streamSettings.Security {
 	case "tls":
 		if streamSettings.TLSSettings == nil {
-			break
+			// TLS with every setting at its default still has a name to say below.
+			streamSettings.TLSSettings = &conf.TLSConfig{}
 		}
 		fp := streamSettings.TLSSettings.Fingerprint
 		if len(fp) > 0 {
 			query = addQuery(query, "fp", fp)
 		}
 		sni := streamSettings.TLSSettings.ServerName
+		if sni == "" && network == "ws" && streamSettings.WSSettings != nil && streamSettings.WSSettings.Host != "" && !isIPHost(link.Hostname()) {
+			// Xray sends the server's own name; a link without "sni" is read as the WebSocket host.
+			sni = link.Hostname()
+		}
 		if len(sni) > 0 {
 			query = addQuery(query, "sni", sni)
 		}
@@ -619,10 +597,8 @@ func streamSettingsQuery(proxy conf.OutboundDetourConfig, link *url.URL) {
 	}
 
 	if streamSettings.FinalMask != nil {
-		finalMask := streamSettings.FinalMask
-		fmBytes, err := json.Marshal(finalMask)
-		if err == nil {
-			query = addQuery(query, "fm", string(fmBytes))
+		if mask := setJSON(streamSettings.FinalMask); mask != nil {
+			query = addQuery(query, "fm", string(mask))
 		}
 	}
 
@@ -641,6 +617,188 @@ func shareNetwork(name string) string {
 	default:
 		return name
 	}
+}
+
+// xhttpExtra is the link's "extra": the XHTTP settings a link has no parameter of its own for, read the
+// way Xray reads them (a profile's own "extra" replaces the settings beside the path). It names only
+// what the server sets, so the link stays short enough for a QR code.
+func xhttpExtra(settings *conf.SplitHTTPConfig) string {
+	effective := *settings
+	if raw := bytes.TrimSpace(settings.Extra); len(raw) > 0 && !bytes.Equal(raw, []byte("null")) {
+		effective = conf.SplitHTTPConfig{}
+		if json.Unmarshal(raw, &effective) != nil {
+			return ""
+		}
+	}
+	effective.Host, effective.Path, effective.Mode, effective.Extra = "", "", "", nil
+	return string(setJSON(&effective))
+}
+
+// setJSON is the settings behind a pointer as JSON that names only the fields that are set; nil when
+// none is. Xray reads a null "extra" or "h2Params" as a value, so settings kept inside a profile must not
+// carry the unset ones.
+func setJSON(settings any) json.RawMessage {
+	value := reflect.ValueOf(settings)
+	if value.Kind() != reflect.Pointer || value.IsNil() {
+		return nil
+	}
+	restoreNilRawMessages(value)
+	set := setFields(value.Elem())
+	if set == nil {
+		return nil
+	}
+	// Through a map, so that settings a profile keeps as raw JSON come out in one key order.
+	text, err := json.Marshal(set)
+	var ordered any
+	decoder := json.NewDecoder(bytes.NewReader(text))
+	decoder.UseNumber()
+	if err != nil || decoder.Decode(&ordered) != nil {
+		return nil
+	}
+	if text, err = json.Marshal(ordered); err != nil {
+		return nil
+	}
+	return text
+}
+
+// hysteriaMaskQuery writes a Hysteria2 mask as the link's own parameters when they say all of it, the
+// form other clients read, and as "fm" alone otherwise: the importer refuses the two when they disagree.
+func hysteriaMaskQuery(mask *conf.FinalMask) [][2]string {
+	var up, down, ports, obfs, obfsPassword, minPacketSize, maxPacketSize string
+	var interval conf.Int32Range
+	if mask.QuicParams != nil {
+		up, down = string(mask.QuicParams.BrutalUp), string(mask.QuicParams.BrutalDown)
+	}
+	for _, layer := range mask.Udp {
+		if layer.Settings == nil {
+			continue
+		}
+		switch strings.ToLower(layer.Type) {
+		case "udphop":
+			var hop conf.UDPHop
+			if json.Unmarshal(*layer.Settings, &hop) == nil && len(hop.RemotePorts.Range) > 0 {
+				ports, interval = hop.RemotePorts.String(), hop.Interval
+			}
+		case "salamander":
+			var salamander conf.Salamander
+			if json.Unmarshal(*layer.Settings, &salamander) == nil {
+				obfs, obfsPassword = "salamander", salamander.Password
+				// A packet size range makes it gecko, which links say as 3x-ui and v2rayN do.
+				if salamander.PacketSize.To > 0 {
+					obfs = "gecko"
+					minPacketSize, maxPacketSize = strconv.Itoa(int(salamander.PacketSize.From)), strconv.Itoa(int(salamander.PacketSize.To))
+				}
+			}
+		}
+	}
+	if own, err := buildHy2FinalMask(up, down, ports, interval, obfs, obfsPassword, minPacketSize, maxPacketSize); err != nil || !sameMask(own, mask) {
+		if text := setJSON(mask); text != nil {
+			return [][2]string{{"fm", string(text)}}
+		}
+		return nil
+	}
+	var query [][2]string
+	add := func(key, value string) {
+		if value != "" {
+			query = append(query, [2]string{key, value})
+		}
+	}
+	add("up", up)
+	add("down", down)
+	add("ports", ports)
+	if interval.Left != 0 || interval.Right != 0 {
+		add("hop-interval", interval.String())
+	}
+	add("obfs", obfs)
+	if obfs != "" {
+		query = append(query, [2]string{"obfs-password", obfsPassword})
+	}
+	add("minPacketSize", minPacketSize)
+	add("maxPacketSize", maxPacketSize)
+	return query
+}
+
+// sameMask compares two masks by the settings they set, however each spells them.
+func sameMask(a, b *conf.FinalMask) bool {
+	text := func(mask *conf.FinalMask) string {
+		if mask == nil {
+			return ""
+		}
+		spelled := *mask
+		spelled.Udp = append([]conf.Mask(nil), mask.Udp...)
+		for index, layer := range spelled.Udp {
+			var settings any
+			switch strings.ToLower(layer.Type) {
+			case "udphop":
+				settings = &conf.UDPHop{}
+			case "salamander":
+				settings = &conf.Salamander{}
+			}
+			if settings == nil || layer.Settings == nil || json.Unmarshal(*layer.Settings, settings) != nil {
+				continue
+			}
+			raw := setJSON(settings)
+			spelled.Udp[index].Type, spelled.Udp[index].Settings = strings.ToLower(layer.Type), &raw
+		}
+		return string(setJSON(&spelled))
+	}
+	return text(a) == text(b)
+}
+
+func isIPHost(host string) bool {
+	_, err := netip.ParseAddr(host)
+	return err == nil
+}
+
+var jsonMarshalerType = reflect.TypeFor[json.Marshaler]()
+
+// setFields is an addressable value as JSON without the fields left at their zero value, which read
+// back the same; nil when nothing is set. Ranges and addresses marshal through their pointer methods.
+func setFields(value reflect.Value) any {
+	if value.IsZero() {
+		return nil
+	}
+	if value.Kind() == reflect.Pointer && !value.Type().Implements(jsonMarshalerType) {
+		// An empty object or a false behind a pointer is still a setting.
+		if value = value.Elem(); value.Kind() != reflect.Struct || reflect.PointerTo(value.Type()).Implements(jsonMarshalerType) {
+			return value.Addr().Interface()
+		}
+		return structFields(value)
+	}
+	if value.Kind() == reflect.Struct && !value.Type().Implements(jsonMarshalerType) &&
+		!reflect.PointerTo(value.Type()).Implements(jsonMarshalerType) {
+		return structFields(value)
+	}
+	if value.Kind() != reflect.Pointer && value.CanAddr() {
+		return value.Addr().Interface()
+	}
+	return value.Interface()
+}
+
+func structFields(value reflect.Value) map[string]any {
+	fields := map[string]any{}
+	for index := range value.NumField() {
+		field := value.Type().Field(index)
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if !field.IsExported() || name == "-" {
+			continue
+		}
+		set := setFields(value.Field(index))
+		if set == nil {
+			continue
+		}
+		if embedded, ok := set.(map[string]any); ok && field.Anonymous && name == "" {
+			for key, member := range embedded {
+				fields[key] = member
+			}
+			continue
+		}
+		if name == "" {
+			name = field.Name
+		}
+		fields[name] = set
+	}
+	return fields
 }
 
 func addQuery(rawQuery string, key, value string) string {

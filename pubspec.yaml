@@ -1,7 +1,7 @@
 name: elarni
 description: "Elarni secure routing client."
 publish_to: 'none'
-version: 0.6.0+15
+version: 0.6.1+16
 
 environment:
   sdk: '>=3.12.2 <3.13.0'

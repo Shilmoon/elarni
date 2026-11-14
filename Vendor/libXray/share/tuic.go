@@ -15,13 +15,19 @@ import (
 
 func (proxy xrayShareLink) tuicOutbound() (*conf.OutboundDetourConfig, error) {
 	u := proxy.link
-	if u.Opaque != "" || u.Path != "" || u.User == nil {
+	// NekoBox writes "host:port/?query"; any other path is not TUIC's.
+	if u.Opaque != "" || (u.Path != "" && u.Path != "/") || u.User == nil {
 		return nil, fmt.Errorf("invalid TUIC v5 URI")
 	}
 	if strings.Contains(u.Hostname(), ":") && !strings.HasPrefix(u.Host, "[") {
 		return nil, fmt.Errorf("TUIC IPv6 URI requires brackets")
 	}
+	uuid := u.User.Username()
 	password, present := u.User.Password()
+	if !present {
+		// v2rayN percent-encodes the colon, so the password arrives inside the user name.
+		uuid, password, present = strings.Cut(uuid, ":")
+	}
 	if !present {
 		return nil, fmt.Errorf("TUIC v5 requires UUID and password")
 	}
@@ -35,7 +41,7 @@ func (proxy xrayShareLink) tuicOutbound() (*conf.OutboundDetourConfig, error) {
 	}
 	for key, values := range query {
 		switch key {
-		case "sni", "alpn", "congestion_control", "udp_relay_mode", "allow_insecure":
+		case "sni", "alpn", "congestion_control", "udp_relay_mode", "allow_insecure", "allowInsecure", "insecure":
 		default:
 			return nil, fmt.Errorf("unsupported TUIC URI parameter")
 		}
@@ -43,7 +49,7 @@ func (proxy xrayShareLink) tuicOutbound() (*conf.OutboundDetourConfig, error) {
 			return nil, fmt.Errorf("duplicate TUIC URI parameter")
 		}
 	}
-	settings := &conf.TUICClientConfig{Address: parseAddress(u.Hostname()), Port: port, UUID: u.User.Username(), Password: &password,
+	settings := &conf.TUICClientConfig{Address: parseAddress(u.Hostname()), Port: port, UUID: uuid, Password: &password,
 		CongestionControl: query.Get("congestion_control"), UDPRelayMode: query.Get("udp_relay_mode")}
 	tls := &conf.TLSConfig{ServerName: u.Hostname(), ALPN: new(conf.StringList([]string{"h3"}))}
 	if sni, ok := query["sni"]; ok {
@@ -55,14 +61,25 @@ func (proxy xrayShareLink) tuicOutbound() (*conf.OutboundDetourConfig, error) {
 	if alpn, ok := query["alpn"]; ok {
 		tls.ALPN = new(conf.StringList(strings.Split(alpn[0], ",")))
 	}
-	if insecure, ok := query["allow_insecure"]; ok {
-		switch insecure[0] {
+	// Panels write the flag under any of the aliases other link types accept; they must agree.
+	var insecureSeen bool
+	for _, key := range []string{"allow_insecure", "allowInsecure", "insecure"} {
+		values, ok := query[key]
+		if !ok {
+			continue
+		}
+		var insecure bool
+		switch values[0] {
 		case "0", "false":
 		case "1", "true":
-			tls.AllowInsecure = true
+			insecure = true
 		default:
 			return nil, fmt.Errorf("invalid TUIC verification flag")
 		}
+		if insecureSeen && insecure != tls.AllowInsecure {
+			return nil, fmt.Errorf("conflicting TUIC verification flags")
+		}
+		insecureSeen, tls.AllowInsecure = true, insecure
 	}
 	return tuicOutbound(settings, tls, u.Fragment)
 }
@@ -204,7 +221,7 @@ func tuicLink(proxy conf.OutboundDetourConfig, link *url.URL) error {
 	} else {
 		host = settings.Address.Domain()
 	}
-	link.Scheme, link.Host, link.User, link.Fragment = "tuic", net.JoinHostPort(host, strconv.Itoa(int(settings.Port))), url.UserPassword(settings.UUID, *settings.Password), getOutboundName(proxy)
+	link.Scheme, link.Host, link.User, link.Fragment = "tuic", net.JoinHostPort(host, strconv.Itoa(int(settings.Port))), url.UserPassword(settings.UUID, *settings.Password), shareName(proxy)
 	query := url.Values{}
 	if tls.ServerName != "" {
 		query.Set("sni", tls.ServerName)

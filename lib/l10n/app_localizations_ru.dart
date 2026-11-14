@@ -84,6 +84,37 @@ class AppLocalizationsRu extends AppLocalizations {
       'Приложение в «Маршрутизации приложений» использует сервер, которого больше нет.';
 
   @override
+  String get issueAssetsMissingRemedy =>
+      'Откройте «Маршрутизацию», нажмите «Обновить данные маршрутизации» и подключитесь снова.';
+
+  @override
+  String get issueAssetsMissing => 'Нет геофайлов профиля маршрутизации.';
+
+  @override
+  String get issueMissingGeodataRemedy =>
+      'Откройте «Маршрутизацию», нажмите «Обновить данные маршрутизации» и подключитесь снова. Если не поможет, исправьте профиль или ссылки на его геофайлы.';
+
+  @override
+  String get issueMissingGeodata =>
+      'В геофайлах профиля маршрутизации нет кодов, нужных его правилам прокси или серверам.';
+
+  @override
+  String get issueInvalidRouteEnforcementRemedy =>
+      'Замените 0.0.0.0/0 и ::/0 конкретными маршрутами или выключите принудительность. Для полного туннеля выключите принудительность и включите «Блокировать трафик без VPN».';
+
+  @override
+  String get issueInvalidRouteEnforcement =>
+      '«Принудительным маршрутам туннеля» нужны конкретные включённые маршруты, и их нельзя совмещать с «Блокировать трафик без VPN».';
+
+  @override
+  String get issueRouteModelTooLargeRemedy =>
+      'Удалите часть правил или управляемых списков и подключитесь снова.';
+
+  @override
+  String get issueRouteModelTooLarge =>
+      'Профиль маршрутизации слишком большой: его правила и списки больше 8 МБ.';
+
+  @override
   String get issueStorageUnavailableRemedy =>
       'Перезапустите Elarni. Если ошибка повторится, восстановите зашифрованную резервную копию.';
 
@@ -1123,6 +1154,17 @@ class AppLocalizationsRu extends AppLocalizations {
       'Подписка добавлена, но первая загрузка не удалась. Обновите, чтобы повторить.';
 
   @override
+  String get subscriptionAddedUnreadable =>
+      'Подписка добавлена, но Elarni не может прочитать ответ провайдера: его формат или одна из настроек не поддерживается. Попробуйте ссылку Xray JSON от провайдера или спросите провайдера.';
+
+  @override
+  String get importFileTooLarge =>
+      'Файл больше, чем Elarni может импортировать.';
+
+  @override
+  String get noQrCodeInImage => 'На этом изображении не найден QR-код.';
+
+  @override
   String get clipboardEmpty =>
       'Буфер обмена пуст. Сначала скопируйте ссылку или конфигурацию.';
 
@@ -1442,7 +1484,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get fragmentationHelp =>
-      'VLESS поверх TCP или XHTTP с TLS или Reality. XHTTP поверх HTTP/3 и существующие цепочки dialer не поддерживаются.';
+      'VLESS поверх TCP или XHTTP с TLS или Reality. XHTTP поверх HTTP/3 и существующие цепочки dialer не поддерживаются. Серверы, которые не могут её использовать, подключаются без неё.';
 
   @override
   String get enableFragmentation => 'Включить фрагментацию';
@@ -2217,6 +2259,14 @@ class AppLocalizationsRu extends AppLocalizations {
   String get providerNotice => 'Сообщение провайдера';
 
   @override
+  String get serversNotAdded => 'Серверы не добавлены';
+
+  @override
+  String serversNotAddedText(int count, String kinds) {
+    return '$count ($kinds). Elarni не поддерживает эти серверы; остальные добавлены.';
+  }
+
+  @override
   String get providerAsksKeepSettings =>
       'Провайдер просит не менять его настройки. Изменить их всё равно можно.';
 
@@ -2525,6 +2575,19 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String failureLinkRemovedText(String provider) {
     return 'Провайдер «$provider» удалил или изменил эту ссылку. Попросите у провайдера новую.';
+  }
+
+  @override
+  String get failureUnsupported => 'Неподдерживаемое содержимое';
+
+  @override
+  String failureUnsupportedText(String provider) {
+    return 'Провайдер «$provider» не прислал ничего, что Elarni может прочитать: формат или одна из настроек не поддерживается.';
+  }
+
+  @override
+  String failureDeviceLimitText(String provider) {
+    return 'У подписки провайдера «$provider» достигнут лимит устройств. Удалите устройство в личном кабинете провайдера или свяжитесь с провайдером.';
   }
 
   @override

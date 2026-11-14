@@ -25,6 +25,9 @@ func TestRedactLogKeepsTheMessageAndHidesKeysHostsAndAddresses(t *testing.T) {
 		{"app/dispatcher: taking detour [direct] for [udp:127.0.0.1:53] from ::1 and 0.0.0.0",
 			"app/dispatcher: taking detour [direct] for [udp:127.0.0.1:53] from ::1 and 0.0.0.0"},
 		{"transport/internet/splithttp: elarni.exe read config.json at 12:34:56", "transport/internet/splithttp: elarni.exe read config.json at 12:34:56"},
+		{"proxy/vless/outbound: tunneling request to tcp:пример.рф:443, then 例え.example.com", "proxy/vless/outbound: tunneling request to tcp:[host]:443, then [host]"},
+		{"dial tcp: Попытка установить соединение была безуспешной, т.к. от другого компьютера не получен отклик.",
+			"dial tcp: Попытка установить соединение была безуспешной, т.к. от другого компьютера не получен отклик."},
 	} {
 		if got := redactLog(item.input); got != item.want {
 			t.Errorf("redactLog(%q)\n got %q\nwant %q", item.input, got, item.want)

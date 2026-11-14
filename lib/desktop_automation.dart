@@ -9,7 +9,11 @@ final class DesktopAutomation {
       !(linux && RegExp(r'^rv[0-9a-f]{12}$').hasMatch(name));
 
   DesktopAutomation(CatalogMap saved) {
-    attempts = saved['attempts'] as int? ?? 0;
+    // A saved episode that cannot be read is no episode.
+    attempts = switch (saved['attempts']) {
+      final int count => count,
+      _ => 0,
+    };
     exhausted =
         saved['exhausted'] == true ||
         saved['interrupted'] == true ||

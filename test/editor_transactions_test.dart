@@ -250,6 +250,43 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
 
+    // Addresses are pasted from lists separated every which way, and a bare
+    // address means that one host; the platforms take CIDR only.
+    testWidgets(
+      'route lists take commas, spaces and bare addresses ($windows)',
+      (tester) async {
+        final control = RejectableEditors()..reject = false;
+        await mount(tester, control);
+        await openPerAppRouting(tester);
+        await tester.tap(find.text('Advanced network routes'));
+        await tester.pumpAndSettle();
+        await reveal(tester, find.text('Excluded routes'));
+        await tester.tap(find.text('Excluded routes'));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.descendant(
+            of: find.byType(AlertDialog),
+            matching: find.byType(TextField),
+          ),
+          '203.0.113.7, 10.0.0.0/8  2001:db8::1,\n192.168.0.0/16,,'
+          ' 203.0.113.7/32',
+        );
+        await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+        await tester.pumpAndSettle();
+        await reveal(tester, find.text('Save changes'));
+        await tester.tap(find.text('Save changes'));
+        await tester.pumpAndSettle();
+        expect(control.writes, 1);
+        expect(control.settings.excludedRoutes, [
+          '203.0.113.7/32',
+          '10.0.0.0/8',
+          '2001:db8::1/128',
+          '192.168.0.0/16',
+        ]);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+
     for (final kind in ['credentials', 'rename', 'download']) {
       testWidgets('editor retains native-rejected $kind input ($windows)', (
         tester,

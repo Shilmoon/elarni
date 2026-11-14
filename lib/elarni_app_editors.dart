@@ -525,9 +525,29 @@ extension _HomeEditors on _ElarniHomeState {
     );
     controller.dispose();
     if (value == null) return;
+    // Pasted lists also use commas and spaces. Every platform takes CIDR
+    // only, so a bare address is that one host.
+    String cidr(String route) {
+      if (route.contains('/')) return route;
+      try {
+        Uri.parseIPv4Address(route);
+        return '$route/32';
+      } on FormatException {
+        // Not IPv4; perhaps IPv6.
+      }
+      try {
+        Uri.parseIPv6Address(route);
+        return '$route/128';
+      } on FormatException {
+        // Saving reports the invalid entry.
+        return route;
+      }
+    }
+
     final routes = value
-        .split(RegExp(r'\s+'))
+        .split(RegExp(r'[\s,]+'))
         .where((route) => route.isNotEmpty)
+        .map(cidr)
         .toSet()
         .toList(growable: false);
     _set(

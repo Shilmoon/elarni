@@ -42,9 +42,8 @@ enum RoutingImportReader {
     let panel = NSOpenPanel()
     panel.allowsMultipleSelection = false
     panel.canChooseDirectories = false
-    guard panel.runModal() == .OK, let url = panel.url else {
-      throw RoutingStoreError.invalidImport
-    }
+    // Closing the panel is a choice, not a failed import: the app stays silent, as for the panels above.
+    guard panel.runModal() == .OK, let url = panel.url else { throw CancellationError() }
     let data = try Data(contentsOf: url, options: [.mappedIfSafe])
     guard data.count <= 4 * 1024 * 1024,
           let content = String(data: data, encoding: .utf8) else {
@@ -57,9 +56,8 @@ enum RoutingImportReader {
     let panel = NSOpenPanel()
     panel.allowsMultipleSelection = false
     panel.canChooseDirectories = false
-    guard panel.runModal() == .OK, let url = panel.url else {
-      throw RoutingStoreError.invalidImport
-    }
+    // Closing the panel is a choice, not a failed import: the app stays silent, as for the panels above.
+    guard panel.runModal() == .OK, let url = panel.url else { throw CancellationError() }
     let request = VNDetectBarcodesRequest()
     request.symbologies = [.qr]
     try VNImageRequestHandler(url: url).perform([request])

@@ -38,7 +38,7 @@
     <string name="some_settings_are_invalid_check_port">Некоторые настройки недопустимы. Проверьте номера портов, диапазоны, адреса DNS и обязательные данные для входа.</string>
     <string name="the_connection_could_not_start_check">Не удалось начать подключение. Проверьте сервер, сеть, порты прокси и файлы маршрутизации и повторите.</string>
     <string name="this_profile_could_not_be_imported">Не удалось импортировать профиль. Проверьте ссылку или конфигурацию целиком и попробуйте снова.</string>
-    <string name="your_encrypted_catalog_could_not_be">Не удалось открыть или сохранить зашифрованный каталог. Имеющиеся данные сохранены. Разблокируйте устройство и перезапустите приложение.</string>
+    <string name="your_encrypted_catalog_could_not_be">Не удалось открыть или сохранить зашифрованный каталог. Имеющиеся данные сохранены. Разблокируйте устройство и перезапустите приложение. Если это не помогает, начать заново можно только очистив хранилище Elarni в настройках Android › Приложения: серверы и настройки будут удалены.</string>
     <string name="android_could_not_start_the_service">Android не смог запустить службу из фона. Откройте Elarni и нажмите «Подключить».</string>
     <string name="android_has_not_made_the_vpn">Android не подготовил сеть VPN. Переподключитесь или проверьте настройки VPN Android.</string>
     <string name="android_revoked_vpn_access_open_elarni">Android отозвал доступ к VPN. Откройте Elarni и подключитесь, чтобы снова разрешить доступ.</string>
@@ -614,6 +614,8 @@
     <string name="named_provider_link_removed">Провайдер «%1$s» удалил или изменил эту ссылку. Попросите у провайдера новую.</string>
     <string name="named_provider_sharing_disabled">Провайдер «%1$s» запретил делиться этим профилем.</string>
     <string name="unsupported_provider_directives">Неподдерживаемые директивы провайдера</string>
+    <string name="servers_not_added">Серверы не добавлены</string>
+    <string name="servers_not_added_text">%1$s (%2$s). Elarni не поддерживает эти серверы; остальные добавлены.</string>
     <string name="provider_dns_notice">DNS провайдера обращается к резолверу этого устройства вне туннеля. Для этих серверов Elarni использует собственный DNS.</string>
     <string name="your_override_label">Ваше значение</string>
     <string name="set_by_provider_label">Задано провайдером</string>

@@ -8,8 +8,9 @@ typedef _CountryGroup = ({
   bool open,
 });
 
-/// [subscriptionFailures] in the interface language: the short label, and the
-/// text with [provider] in place of "The provider".
+/// [subscriptionFailures] in the interface language, and other refresh
+/// failures: the short label, and the text with [provider] in place of "The
+/// provider".
 (String, String)? subscriptionFailureText(String code, String provider) =>
     switch (code) {
       'fetch_failed' => (l10n.failureFetch, l10n.failureFetchText),
@@ -33,6 +34,14 @@ typedef _CountryGroup = ({
       'subscription_unavailable' => (
         l10n.failureLinkRemoved,
         l10n.failureLinkRemovedText(provider),
+      ),
+      'unsupported_profile' => (
+        l10n.failureUnsupported,
+        l10n.failureUnsupportedText(provider),
+      ),
+      'hwid_limit' => (
+        l10n.statusDeviceLimit,
+        l10n.failureDeviceLimitText(provider),
       ),
       _ => null,
     };
@@ -311,6 +320,20 @@ extension _HomePages on _ElarniHomeState {
       details.add((l10n.settings, l10n.providerAsksKeepSettings));
     if (info['directiveNotice'] case final String notice)
       details.add((l10n.providerNotice, notice));
+    // Android stores the count as text.
+    final skipped = switch (info['skippedServers']) {
+      final num count => count.toInt(),
+      final String count => int.tryParse(count),
+      _ => null,
+    };
+    if (skipped != null && skipped > 0)
+      details.add((
+        l10n.serversNotAdded,
+        l10n.serversNotAddedText(skipped, switch (info['skippedKinds']) {
+          final String kinds => kinds,
+          _ => '',
+        }),
+      ));
     if (info['dnsNotice'] case final String notice)
       details.add(('DNS', notice));
     final fetched = group.lastSuccessfulFetch;

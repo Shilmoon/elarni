@@ -278,22 +278,23 @@ struct SubscriptionChecks {
       try expect(stream["security"] as? String == "tls", "VLESS security")
       try expect(tls["serverName"] as? String == "example.com", "VLESS SNI")
     }
-    try check("metadata cannot hide a malformed supported proxy link") {
+    try check("a malformed proxy link is left out and counted beside the servers that parse") {
+      let whole = try store.parseImport(Data(feed.utf8).base64EncodedData()).nodes.count
       for broken in ["vless://", "hysteria2://"] {
-        let input = Data("\(feed)\(broken)\n".utf8).base64EncodedData()
-        do {
-          _ = try store.parseImport(input).nodes
-          throw Failure(message: "malformed supported node was accepted")
-        } catch SubscriptionError.incompatibleProfile(let message) {
-          try expect(!message.contains("malformed") && message.contains("entire import"), "unsafe or unclear profile diagnostic")
-        }
+        let imported = try store.parseImport(Data("\(feed)\(broken)\n".utf8).base64EncodedData())
+        try expect(imported.nodes.count == whole && imported.skippedCount == 1, "a malformed member was not left out and counted")
+      }
+      // Alone it has nothing to add, and fails with the fixed diagnostic.
+      do {
+        _ = try store.parseImport(Data("vless://\n".utf8)).nodes
+        throw Failure(message: "malformed supported node was accepted")
+      } catch SubscriptionError.incompatibleProfile(let message) {
+        try expect(!message.contains("malformed") && message.contains("entire import"), "unsafe or unclear profile diagnostic")
       }
     }
-    try check("unexpected non-metadata lines still reject partial conversion") {
-      do {
-        _ = try store.parseImport(Data("\(vless)\nunrecognized broken node\n".utf8)).nodes
-        throw Failure(message: "partial conversion was accepted")
-      } catch SubscriptionError.incompatibleProfile { }
+    try check("an unrecognized line is left out and counted beside the servers that parse") {
+      let imported = try store.parseImport(Data("\(vless)\nunrecognized broken node\n".utf8))
+      try expect(imported.nodes.count == 1 && imported.skippedCount == 1, "an unrecognized line was not left out and counted")
     }
     try check("refresh parses updated nodes without retaining stale outbounds") {
       let original = try store.parseImport(Data(feed.utf8).base64EncodedData()).nodes
@@ -1987,16 +1988,14 @@ struct SubscriptionChecks {
     try expect(addressedProfile["RemoteDNSIP"] as? String == "1.1.1.1", "another client's routing won over routing addressed to Elarni")
     print("PASS routing addressed to Elarni wins over other clients' routing")
 
-    let acceptedRef = repaired.selectedOutboundRef()
-    let acceptedRouting = repaired.routing.snapshot() as NSDictionary
     for value in ["bad_header_routing", "bad_body_routing"] {
       try await mode(value)
-      do { _ = try await repaired.refresh(id: id); throw Failure(message: "malformed routing directive published") }
-      catch RoutingStoreError.invalidImport { }
-      try expect(repaired.selectedOutboundRef() == acceptedRef &&
-        (repaired.routing.snapshot() as NSDictionary).isEqual(acceptedRouting), "invalid routing replaced working state")
+      _ = try await repaired.refresh(id: id)
+      let group = (repaired.snapshot()["subscriptions"] as! [[String: Any]]).first { $0["id"] as? String == id }!
+      try expect((group["metadata"] as? [String: Any])?["directiveNotice"] is String, "refused routing was not noted")
+      try expect(!(group["nodes"] as! [[String: Any]]).isEmpty, "refused routing cost the subscription its servers")
     }
-    print("PASS malformed header or body routing preserves the published catalog")
+    print("PASS malformed header or body routing is left out and noted, and the servers still refresh")
 
     try await mode("body_routing_off")
     _ = try await repaired.refresh(id: id)

@@ -249,6 +249,39 @@ func (t *WindowsTun) recordPackets() {
 	flightrecorder.Record(flightrecorder.Event{Name: "tun_packets", Connection: t.diagnosticID, Values: map[string]int64{"packets_in": t.packetsRead.Load(), "packets_out": t.packetsWritten.Load(), "bytes_in": t.bytesRead.Load(), "bytes_out": t.bytesWritten.Load()}})
 }
 
+var locateDevNode = windows.NewLazySystemDLL("cfgmgr32.dll").NewProc("CM_Locate_DevNodeW")
+
+// adapterInstance is the device instance of the named adapter: Wintun derives it from the GUID.
+func adapterInstance(name string) string {
+	return `SWD\WINTUN\` + AdapterGUID(name).String()
+}
+
+// orphaned tells whether Windows knows the device only as one that is gone, which is what an
+// adapter becomes when its process is ended.
+func orphaned(instance string) bool {
+	id, err := windows.UTF16PtrFromString(instance)
+	if err != nil {
+		return false
+	}
+	located := func(flags uintptr) bool {
+		var node uint32
+		failed, _, _ := locateDevNode.Call(uintptr(unsafe.Pointer(&node)), uintptr(unsafe.Pointer(id)), flags)
+		return failed == 0
+	}
+	const present, gone = 0, 1 // CM_LOCATE_DEVNODE_NORMAL, CM_LOCATE_DEVNODE_PHANTOM
+	return !located(present) && located(gone)
+}
+
+// awaitRemoval waits until leftover reports false, for limit at most; it reports whether it did.
+func awaitRemoval(leftover func() bool, limit time.Duration) bool {
+	for deadline := time.Now().Add(limit); leftover(); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			return false
+		}
+	}
+	return true
+}
+
 func open(name, desc string) (*wintun.Adapter, error) {
 	guid := AdapterGUID(name)
 	// try to open existing adapter by name
@@ -256,6 +289,13 @@ func open(name, desc string) (*wintun.Adapter, error) {
 	if err == nil {
 		return adapter, nil
 	}
+	// Elarni: an adapter whose process was ended (a crash, an uninstall, the app's exit) stays as
+	// a device that is gone. The failed OpenAdapter has just queued Wintun's removal of such
+	// devices on another thread, and CreateAdapter takes the same lock: when it gets there first
+	// on Windows 10, it creates the adapter over the leftover, waits 15 s for an interface that
+	// never comes and fails with ERROR_ALREADY_EXISTS. So the first Connect of a new helper failed
+	// after about 20 s. The removal takes a fraction of a second; let it finish.
+	awaitRemoval(func() bool { return orphaned(adapterInstance(name)) }, 3*time.Second)
 	// try to create adapter anew
 	adapter, err = wintun.CreateAdapter(name, desc, guid)
 	if err == nil {

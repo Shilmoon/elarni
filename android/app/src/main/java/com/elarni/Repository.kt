@@ -312,8 +312,12 @@ class Repository(private val app: ElarniApplication) {
         // OutOfMemoryError is no Exception; the process must outlive a catalog too large for the heap.
         try { candidate.validateNodes { check(generation) } } catch (_: OutOfMemoryError) { throw AppFailure("input_too_large") }
         val wasRunning = engine.running
+        // A server an app is pinned to can leave with a refresh. That fails the next Connect, which names the app's
+        // rule; it must not fail the refresh, so the running tunnel then stays as it is.
+        fun runtime(catalog: Catalog) = try { Catalog.canonical(catalog.compile(catalog.selected, app)) }
+            catch (error: AppFailure) { if (error.code != "per_app_target_missing") throw error; null }
         val runtimeChanged = wasRunning && (before.selected != candidate.selected || candidate.selected.isEmpty() ||
-            Catalog.canonical(before.compile(before.selected, app)) != Catalog.canonical(candidate.compile(candidate.selected, app)) ||
+            runtime(candidate).let { next -> next != null && runtime(before) != next } ||
             Catalog.canonical(Settings.runtime(before.settings)) != Catalog.canonical(Settings.runtime(candidate.settings)) ||
             before.routeFor(before.selected)?.string("assetRevision") != candidate.routeFor(candidate.selected)?.string("assetRevision"))
         // A failed start keeps its interface only for recovery to retry; without a server or recovery it just drops traffic.

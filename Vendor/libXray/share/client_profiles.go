@@ -9,8 +9,11 @@ import (
 	"net"
 	"net/url"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/xtls/xray-core/infra/conf"
 )
@@ -31,6 +34,66 @@ type ClientImport struct {
 	FallbackURL  string            `json:"fallbackURL,omitempty"`
 	// SystemResolverDNS: a profile's DNS would ask the system resolver, outside the tunnel.
 	SystemResolverDNS bool `json:"systemResolverDNS,omitempty"`
+	// Skipped lists the first maxSkippedListed members that could not be imported; SkippedCount counts them all.
+	Skipped      []SkippedProfile `json:"skipped,omitempty"`
+	SkippedCount int              `json:"skippedCount,omitempty"`
+}
+
+// SkippedProfile names a feed member that was not imported: its display name when it has a safe one,
+// and its kind (a link scheme, "xray", or a Clash proxy type).
+type SkippedProfile struct {
+	Name string `json:"name,omitempty"`
+	Kind string `json:"kind"`
+}
+
+// maxSkippedListed bounds the report a provider's feed can make the app show.
+const maxSkippedListed = 32
+
+var skippedKindPattern = regexp.MustCompile(`^[a-z][a-z0-9+.-]{0,15}$`)
+
+// skippedMembers collects the members an import passes over, and the first one's error: with
+// nothing left to import, that error is the import's, as it was for a single bad member.
+type skippedMembers struct {
+	list  []SkippedProfile
+	count int
+	first error
+}
+
+func (s *skippedMembers) add(name, kind, fallback string, err error) {
+	if s.first == nil {
+		s.first = err
+	}
+	s.count++
+	if len(s.list) >= maxSkippedListed {
+		return
+	}
+	// Provider text: shown only when it is short, valid text without control characters.
+	if !utf8.ValidString(name) || utf8.RuneCountInString(name) > 128 || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		name = ""
+	}
+	if !skippedKindPattern.MatchString(kind) {
+		kind = fallback
+	}
+	s.list = append(s.list, SkippedProfile{Name: name, Kind: kind})
+}
+
+// addLink names a skipped link by its fragment and scheme, which it may not parse far enough to have.
+func (s *skippedMembers) addLink(line string, err error) {
+	// Only "scheme://" names a kind: a feed's text line ("status: ...") is no kind of server.
+	scheme, _, found := strings.Cut(line, "://")
+	if !found {
+		scheme = ""
+	}
+	_, fragment, _ := strings.Cut(line, "#")
+	name, unescapeErr := url.PathUnescape(fragment)
+	if unescapeErr != nil {
+		name = ""
+	}
+	s.add(name, strings.ToLower(scheme), "link", err)
+}
+
+func (s *skippedMembers) report(result *ClientImport) {
+	result.Skipped, result.SkippedCount = s.list, s.count
 }
 
 // systemResolverDNS reports a DNS block Xray answers from the system resolver over a
@@ -63,8 +126,10 @@ func systemResolverDNS(config json.RawMessage) bool {
 	return false
 }
 
-// ImportClientProfiles is strict: an invalid member invalidates the whole feed,
-// so refreshing cannot silently delete previously working profiles.
+// ImportClientProfiles imports every member of a feed it can and reports the rest in Skipped:
+// one unsupported line used to cost the user every server of the subscription. A feed with
+// nothing left to import fails with its first member's error; one Xray object, one WireGuard
+// configuration and a Clash file's structure still stand or fall as a whole.
 func ImportClientProfiles(text string) (*ClientImport, error) {
 	input, err := NormalizeClientInput(text)
 	if err != nil {
@@ -118,9 +183,11 @@ func importClientProfiles(text string) (*ClientImport, error) {
 		}
 		return &ClientImport{Profiles: []ClientProfile{profile}}, nil
 	}
+	var skipped skippedMembers
 	if strings.HasPrefix(text, "[") || strings.HasPrefix(text, "{") {
 		var profiles []json.RawMessage
-		if strings.HasPrefix(text, "[") {
+		array := strings.HasPrefix(text, "[")
+		if array {
 			if err := json.Unmarshal([]byte(text), &profiles); err != nil {
 				return nil, fmt.Errorf("invalid Xray profile array")
 			}
@@ -130,18 +197,28 @@ func importClientProfiles(text string) (*ClientImport, error) {
 		for index, raw := range profiles {
 			var root map[string]json.RawMessage
 			if err := json.Unmarshal(raw, &root); err != nil || root == nil {
-				return nil, fmt.Errorf("profile %d is not an object", index+1)
-			}
-			if _, ok := root["protocol"]; ok {
-				raw, _ = json.Marshal(map[string]any{"outbounds": []json.RawMessage{raw}})
-			}
-			if err := validateClientProfile(raw); err != nil {
-				return nil, fmt.Errorf("profile %d has invalid or unsupported outbound settings", index+1)
+				err := fmt.Errorf("profile %d is not an object", index+1)
+				if !array {
+					return nil, err
+				}
+				skipped.add("", "xray", "xray", err)
+				continue
 			}
 			var name string
 			_ = json.Unmarshal(root["remarks"], &name)
 			if name == "" {
 				_ = json.Unmarshal(root["name"], &name)
+			}
+			if _, ok := root["protocol"]; ok {
+				raw, _ = json.Marshal(map[string]any{"outbounds": []json.RawMessage{raw}})
+			}
+			if err := validateClientProfile(raw); err != nil {
+				err := fmt.Errorf("profile %d has invalid or unsupported outbound settings", index+1)
+				if !array {
+					return nil, err
+				}
+				skipped.add(name, "xray", "xray", err)
+				continue
 			}
 			if name == "" {
 				name = fmt.Sprintf("Profile %d", index+1)
@@ -167,32 +244,40 @@ func importClientProfiles(text string) (*ClientImport, error) {
 			if strings.HasPrefix(line, "vpn://") || strings.HasPrefix(line, "wireguard://") {
 				profile, err := importWireGuardLink(line)
 				if err != nil {
-					return nil, fmt.Errorf("invalid WireGuard or AmneziaWG link on line %d: %w", index+1, err)
+					skipped.addLink(line, fmt.Errorf("invalid WireGuard or AmneziaWG link on line %d: %w", index+1, err))
+					continue
 				}
 				result.Profiles = append(result.Profiles, profile)
 				continue
 			}
 			u, err := parseClientLink(line)
 			if err != nil {
-				return nil, fmt.Errorf("invalid client link on line %d", index+1)
+				skipped.addLink(line, fmt.Errorf("invalid client link on line %d", index+1))
+				continue
 			}
 			outbound, err := (xrayShareLink{link: u, rawText: line}).outbound()
 			if err != nil {
-				return nil, fmt.Errorf("invalid or unsupported client link on line %d", index+1)
+				skipped.addLink(line, fmt.Errorf("invalid or unsupported client link on line %d", index+1))
+				continue
 			}
 			name := getOutboundName(*outbound)
 			outbound.SendThrough = nil // URI remarks are metadata, never a bind address.
 			outbound.Tag = "proxy"
 			raw, err := json.Marshal(map[string]any{"outbounds": []conf.OutboundDetourConfig{*outbound}})
 			if err != nil || validateClientProfile(raw) != nil {
-				return nil, fmt.Errorf("unsupported client settings on line %d", index+1)
+				skipped.addLink(line, fmt.Errorf("unsupported client settings on line %d", index+1))
+				continue
 			}
 			result.Profiles = append(result.Profiles, ClientProfile{Format: "xrayProfile", Name: name, Config: raw})
 		}
 	}
+	if len(result.Profiles) == 0 && skipped.first != nil {
+		return nil, skipped.first
+	}
 	if len(result.Profiles) == 0 || len(result.Profiles) > 1024 {
 		return nil, fmt.Errorf("expected 1 to 1024 client profiles")
 	}
+	skipped.report(result)
 	return result, nil
 }
 

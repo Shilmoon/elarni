@@ -4,9 +4,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/xtls/xray-core/infra/conf"
 )
@@ -480,16 +483,20 @@ func (proxy xrayShareLink) hysteriaOutbound() (*conf.OutboundDetourConfig, error
 	}
 	var hopInterval conf.Int32Range
 	if hopStr := query.Get("hop-interval"); hopStr != "" {
-		interval, pErr := strconv.ParseInt(hopStr, 10, 32)
+		// One number of seconds, or a range of them as Clash writes it.
+		left, right, pErr := conf.ParseRangeString(hopStr)
 		if pErr != nil {
 			return nil, pErr
 		}
-		i := int32(interval)
-		hopInterval = conf.Int32Range{Left: i, Right: i, From: i, To: i}
+		if int(int32(left)) != left || int(int32(right)) != right {
+			return nil, fmt.Errorf("hop-interval out of range")
+		}
+		hopInterval = conf.Int32Range{Left: int32(left), Right: int32(right), From: int32(min(left, right)), To: int32(max(left, right))}
 	}
 	finalMask, mErr := buildHy2FinalMask(
 		query.Get("up"), query.Get("down"), query.Get("ports"),
 		hopInterval, query.Get("obfs"), query.Get("obfs-password"),
+		query.Get("minPacketSize"), query.Get("maxPacketSize"),
 	)
 	if mErr != nil {
 		return nil, mErr
@@ -564,6 +571,9 @@ func (proxy xrayShareLink) httpOutbound() (*conf.OutboundDetourConfig, error) {
 // The Hysteria 2 URI may list hopping ports in the authority (host:443,5000-6000),
 // which net/url refuses as a port; dial the first one and hop over the list.
 func parseClientLink(line string) (*url.URL, error) {
+	if link, ok := legacyShadowsocksLink(line); ok {
+		return link, nil
+	}
 	link, err := url.Parse(line)
 	scheme, rest, _ := strings.Cut(line, "://")
 	if err == nil || !(strings.EqualFold(scheme, "hy2") || strings.EqualFold(scheme, "hysteria2")) {
@@ -587,6 +597,37 @@ func parseClientLink(line string) (*url.URL, error) {
 		link.RawQuery = query.Encode()
 	}
 	return link, nil
+}
+
+// legacyShadowsocksLink reads the legacy Shadowsocks URI, which encodes the whole authority:
+// ss://base64(method:password@host:port)#name. A SIP002 link has its "@" outside the base64.
+func legacyShadowsocksLink(line string) (*url.URL, bool) {
+	if len(line) < 5 || !strings.EqualFold(line[:5], "ss://") {
+		return nil, false
+	}
+	payload, fragment, _ := strings.Cut(line[5:], "#")
+	if strings.ContainsAny(payload, "@?") {
+		return nil, false
+	}
+	decoded, err := decodeBase64Text(payload)
+	if err != nil || !utf8.ValidString(decoded) || strings.IndexFunc(decoded, unicode.IsControl) >= 0 {
+		return nil, false
+	}
+	// The password may hold "@" and ":"; the server follows the last "@", the method has none.
+	at := strings.LastIndexByte(decoded, '@')
+	if at < 0 {
+		return nil, false
+	}
+	method, password, ok := strings.Cut(decoded[:at], ":")
+	host, port, err := net.SplitHostPort(decoded[at+1:])
+	if !ok || method == "" || err != nil || host == "" || port == "" {
+		return nil, false
+	}
+	name, err := url.PathUnescape(fragment)
+	if err != nil {
+		return nil, false
+	}
+	return &url.URL{Scheme: "ss", User: url.UserPassword(method, password), Host: net.JoinHostPort(host, port), Fragment: name}, true
 }
 
 // Many clients leave ';' bare in SIP002 plugin options and paths, and net/url drops

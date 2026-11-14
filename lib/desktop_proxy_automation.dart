@@ -11,11 +11,10 @@ extension _ProxyAutomation on DesktopProxy {
     final catalog = _catalog!, now = _refreshClock();
     bool ready(String key) =>
         !(_refreshBackoff[key]?.until.isAfter(now) ?? false);
-    bool dueAt(Object? at) => at is num && at <= catalog.now;
     final due = catalog.sources
         .where(
           (source) =>
-              dueAt(catalog.nextSubscriptionRefresh(source)) &&
+              catalog.subscriptionRefreshDue(source) &&
               ready('source:${source['id']}'),
         )
         .firstOrNull;
@@ -24,7 +23,7 @@ extension _ProxyAutomation on DesktopProxy {
         : catalog.routes
               .where(
                 (route) =>
-                    dueAt(route['nextManagedRefreshAt']) &&
+                    catalog.refreshDue(route['nextManagedRefreshAt'], 86400) &&
                     ready('managed:${route['id']}'),
               )
               .firstOrNull;
@@ -33,7 +32,7 @@ extension _ProxyAutomation on DesktopProxy {
         : catalog.routes
               .where(
                 (route) =>
-                    dueAt(route['nextGeoRefreshAt']) &&
+                    catalog.refreshDue(route['nextGeoRefreshAt'], 604800) &&
                     ready('geo:${route['id']}'),
               )
               .firstOrNull;
@@ -276,6 +275,12 @@ extension _ProxyAutomation on DesktopProxy {
     var invalidTarget = false;
     final targets = catalogList(_automationConfig['targets']);
     final runtime = _connectedAt;
+    // A server whose check passed before: when its requests are now refused,
+    // reset or closed, its service or route has gone. One that never passed
+    // may be rejecting the credentials, which no other moment changes.
+    final passedBefore =
+        _verifiedHealth?.node == catalog.selected &&
+        _verifiedHealth?.epoch == _automation.epoch;
     for (final target in targets) {
       try {
         await _ping(
@@ -316,7 +321,7 @@ extension _ProxyAutomation on DesktopProxy {
             : <String, Object?>{};
         final diagnostic = catalogMap(details['diagnostics'] ?? {});
         if (diagnostic['code'] == 'timeout' ||
-            (unattended &&
+            ((unattended || passedBefore) &&
                 diagnostic['stage'] == 'target_request' &&
                 {
                   'failed',

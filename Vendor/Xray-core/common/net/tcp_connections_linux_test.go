@@ -17,7 +17,10 @@ func TestProcNetTCPReadsEstablishedEntries(t *testing.T) {
    0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 1111 1 0000000000000000 100 0 0 10 0
    1: 0100007F:C350 0100007F:1F90 01 00000000:00000000 00:00000000 00000000  1000        0 2222 1 0000000000000000 20 4 30 10 -1
    2: 0100007F:C351 0100007F:1F90 06 00000000:00000000 03:00000000 00000000     0        0 0 3 0000000000000000
+   3: 0100007F:C350 0100007F:1F90 01 00000000:00000000 00:00000000 00000000  1000        0 2222 1 0000000000000000 20 4 30 10 -1
 `)
+	// The last line repeats a connection: the kernel does that when sockets open or close while
+	// the table is read in parts, and one reset and one listed entry per connection is enough.
 	entries := procNetTCP(table)
 	if len(entries) != 1 || entries[0].inode != "2222" ||
 		entries[0].Local != netip.MustParseAddrPort("127.0.0.1:50000") || entries[0].Remote != netip.MustParseAddrPort("127.0.0.1:8080") {
@@ -29,6 +32,20 @@ func TestProcNetTCPReadsEstablishedEntries(t *testing.T) {
 	entries = procNetTCP(ipv6)
 	if len(entries) != 1 || entries[0].Local != netip.MustParseAddrPort("[::1]:50000") ||
 		entries[0].Remote != netip.MustParseAddrPort("[::ffff:127.0.0.1]:443") {
+		t.Fatalf("entries %+v", entries)
+	}
+}
+
+// The kernel writes the table in pieces, and one that changes between two of them can repeat a
+// socket. A connection listed twice would be reset and shown twice.
+func TestProcNetTCPListsARepeatedSocketOnce(t *testing.T) {
+	table := []byte(`  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:C350 0100007F:1F90 01 00000000:00000000 00:00000000 00000000  1000        0 2222 1 0000000000000000 20 4 30 10 -1
+   1: 0100007F:C352 0100007F:1F90 01 00000000:00000000 00:00000000 00000000  1000        0 4444 1 0000000000000000 20 4 30 10 -1
+   1: 0100007F:C350 0100007F:1F90 01 00000000:00000000 00:00000000 00000000  1000        0 2222 1 0000000000000000 20 4 30 10 -1
+`)
+	entries := procNetTCP(table)
+	if len(entries) != 2 || entries[0].inode != "2222" || entries[1].inode != "4444" {
 		t.Fatalf("entries %+v", entries)
 	}
 }

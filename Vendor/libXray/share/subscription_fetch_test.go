@@ -458,10 +458,76 @@ func TestFetchAddressPolicy(t *testing.T) {
 			t.Errorf("%s classified %q, want %q", address, got, want)
 		}
 	}
-	for _, target := range []string{"http://localhost/feed", "https://user:secret@example.com/", "file:///private", "https://example.com/#fragment"} {
+	for _, target := range []string{"https://user:secret@example.com/", "file:///private", "https://example.com/#fragment"} {
 		if _, err := feedTarget(target); err == nil {
 			t.Error("unsafe source target accepted")
 		}
+	}
+}
+
+// A subscription served over http from a domain name goes through the approval an http address
+// needs: every cleartext hop, a redirect too, carries the cleartext_http risk.
+func TestHTTPSubscriptionOnADomainIsApprovedHopByHop(t *testing.T) {
+	var port string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/old" {
+			http.Redirect(w, r, "http://next.example:"+port+"/new", http.StatusFound)
+			return
+		}
+		_, _ = w.Write([]byte("cleartext feed"))
+	}))
+	defer server.Close()
+	_, port, _ = net.SplitHostPort(server.Listener.Addr().String())
+	resolve := func(context.Context, string, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+	}
+	transport := func() *http.Transport { return &http.Transport{} }
+	request := SubscriptionFetchRequest{URL: "http://feed.example:" + port + "/old", InstallationID: "installation"}
+	if _, err := SubscriptionDeviceID(request); err != nil {
+		t.Fatal(err)
+	}
+	for hops := 1; hops <= 2; hops++ {
+		value, err := fetchFeedUsing(request, resolve, transport)
+		if err != nil {
+			t.Fatalf("hop %d: %v", hops, err)
+		}
+		warning, ok := value.(map[string]any)["warning"].(map[string]any)
+		if !ok || !slices.Equal(warning["riskCodes"].([]string), []string{"cleartext_http", "loopback_target"}) || len(warning["chain"].([]string)) != hops {
+			t.Fatalf("hop %d: %v", hops, value)
+		}
+		request.ApprovedChain = warning["chain"].([]string)
+	}
+	value, err := fetchFeedUsing(request, resolve, transport)
+	if err != nil || value.(map[string]any)["body"] != "cleartext feed" {
+		t.Fatalf("approved http feed: %v %v", value, err)
+	}
+}
+
+// Remnawave answers a device over its limit with HTTP 200, an empty body and a header saying why.
+func TestDeviceLimitOnAnEmptySuccessfulResponse(t *testing.T) {
+	for _, test := range []struct {
+		header, value, body, want string
+	}{
+		{"X-Hwid-Limit", "true", "", "hwid_limit"},
+		{"X-Hwid-Max-Devices-Reached", "TRUE", " \r\n\t", "hwid_limit"},
+		{"X-Hwid-Not-Supported", "true", "\n", "hwid_required"},
+		{"X-Hwid-Limit", "true", "trojan://pw@127.0.0.1:443#kept", ""},
+		{"X-Hwid-Limit", "false", "", ""},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set(test.header, test.value)
+			_, _ = w.Write([]byte(test.body))
+		}))
+		request := SubscriptionFetchRequest{URL: server.URL, ApprovedChain: loopbackApprovals(server.URL)}
+		value, err := fetchFeedUsing(request, net.DefaultResolver.LookupNetIP, func() *http.Transport { return &http.Transport{} })
+		if test.want != "" {
+			if err == nil || err.Error() != test.want {
+				t.Errorf("%s: %v, %v; want %s", test.header, value, err, test.want)
+			}
+		} else if err != nil || value.(map[string]any)["body"] != test.body {
+			t.Errorf("%s with body %q: %v, %v", test.header, test.body, value, err)
+		}
+		server.Close()
 	}
 }
 

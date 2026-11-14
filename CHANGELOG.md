@@ -4,6 +4,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+## 0.6.1 - 2026-11-14
+
 ### Changed
 
 - Settings no longer wait for **Save changes** to take effect. A switch saves itself about a
@@ -16,9 +18,130 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   saved at once. Routing-profile editors on iPhone and desktop keep their Cancel and Save.
 - Removed the core's batch latency test and its start from a config file: no platform calls
   them.
+- A subscription no longer fails as a whole because of one server Elarni cannot read. A link,
+  Clash proxy or Xray JSON entry that is unsupported or malformed, or that Elarni reads but
+  cannot run, is left out, the others are added, and the subscription's page shows how many
+  were left out and of which kind (**Servers not added**). Before, one such line cost every
+  server: a 12-server subscription with one unusual TUIC link added nothing. A reply with
+  nothing Elarni can use still fails and keeps the servers from the last refresh. All
+  platforms.
+- A routing profile from a provider that Elarni cannot apply no longer fails the subscription
+  it came with: the servers are added or refreshed without it, and the subscription's page
+  says so. All platforms.
+- **TLS fragmentation** applies to the servers that can carry it (VLESS over TCP or XHTTP with
+  TLS or Reality); every other server now connects without it. Before, the setting could not
+  be turned on while the list held a Trojan, Hysteria2, TUIC or similar server, a refresh that
+  brought one failed while it was on, and such a server could not be connected. All platforms.
+- A subscription address that starts with `http://` and names a domain is accepted after the
+  same "not encrypted" approval as one with an IP address; it was refused as invalid. Panels
+  such as 3x-ui serve subscriptions over plain HTTP unless a certificate is set.
 
 ### Fixed
 
+- Links and files written by other clients and panels now import: TUIC links from v2rayN
+  (`uuid%3Apassword`) and NekoBox (`/` before `?`), and TUIC links that write the
+  skip-verification flag as `insecure` or `allowInsecure`; AmneziaVPN `vpn://` keys;
+  `happ://add/<address>` subscription links, which Remnawave's **Add subscription** button
+  writes; VMess links with `allowInsecure`; WireGuard files with repeated `Address`, `DNS` or
+  `AllowedIPs` lines or a `ListenPort`; Hysteria2 links with `obfs=gecko` and packet sizes;
+  the old all-base64 `ss://` form; and Remnawave's default Clash (Mihomo) file. All platforms.
+- Happ routing profiles that leave the DNS fields or the name empty (Happ's own documented
+  example and the default output of its routing builders do) were refused; missing DNS now
+  takes Happ's defaults. Fields that other clients add are ignored, and the header forms
+  `off`, `...?data=` and, again, a link without a scheme (`://routing/...`, which INCY
+  documents for providers) are accepted. On Android a `routing` header that is not a link
+  (bare base64 or JSON, `off`) was ignored. All platforms.
+- An Xray JSON subscription with extra top-level sections (`meta` in Happ JSON, Xray's
+  `version` and `geodata`) passed the importer and was then refused: a new subscription
+  vanished and a refresh failed without a recorded reason. Such sections are ignored. On
+  Windows and Linux a refresh whose servers cannot be used is now recorded on the subscription.
+- A server whose address is an IPv6 literal imported but could not connect on Windows and
+  Linux.
+- A subscription Elarni could not read was reported as a failed download ("Refresh to retry",
+  "The last working servers were kept" beside 0 servers). The message now says the content is
+  not supported; Remnawave's device limit, which arrives as an empty successful reply, shows
+  the device-limit message. A failed Connect names missing or incomplete routing data, an
+  oversized routing profile and conflicting route settings instead of "retry the server", and
+  an import says when the file is too large or the image has no QR code.
+- **Excluded routes** and **Included routes** take entries separated by commas or spaces and a
+  bare address (`192.168.1.10`); these were saved and then refused. A per-app rule pasted with
+  Explorer's quotes (`"C:\…\app.exe"`) is saved without them. Windows, Linux and macOS.
+- macOS and iPhone: after a move to a new device, where the server list arrives without the
+  Keychain items, every add, refresh and routing change failed until the old subscriptions
+  were deleted. Such servers are passed over until their subscription refreshes. Closing the
+  file or QR image panel on macOS no longer shows "Could not import".
+- Android: with per-app routing on and the VPN connected, a refresh that dropped a server an
+  app was pinned to failed for as long as the VPN stayed up. A subscription address written
+  as `Https://` is accepted. The message for a catalog that cannot be opened names the way out.
+- System info and diagnostics on Windows 11 named the system "Windows 10".
+- Windows: an MSI upgrade to a build whose bundled Visual C++ runtime is older than the
+  installed build's removed the runtime files, and Elarni no longer started. The installer now
+  copies every file whatever version is installed.
+- Windows: uninstalling while Elarni was running left the app and its core running, with the
+  network still captured for half a minute or more and their files locked. Uninstall now closes
+  the app first.
+- Windows 10: the first Connect after an install, an update, an app restart or a crash of the
+  VPN helper often failed after about 20 seconds, and only the automatic retry connected. The
+  network adapter of the previous helper stays behind as a device that is gone; the new adapter
+  was created while Wintun was still removing it, which Windows 10 answers after 15 seconds
+  with an error. The helper now waits for the removal, which takes a fraction of a second.
+- Automatic failover never left a server whose service had stopped: only check timeouts counted
+  against the selected server, so one that refused or reset connections stayed selected, shown
+  as connected, with nothing passing. A server whose check passed before and whose requests are
+  now refused, reset or closed counts as failed. Windows, Linux, macOS and iPhone.
+- With **Block traffic without VPN** on (Windows, Linux), traffic no longer leaves outside the
+  VPN while the app restarts the tunnel: on a server switch, a per-app or route change,
+  failover, or the reconnect after the tunnel ended by itself. It left for 60-240 ms on each
+  change and about a second after a lost tunnel. The block now stays in place between the two
+  tunnels, and a reconnect under it uses the server address it last resolved, so a server
+  named by a domain reconnects without a lookup the block would refuse. Disconnect lifts it.
+  On Windows the reconnect after a crashed VPN helper also keeps the block the helper left,
+  instead of clearing it first (up to 19 s outside the VPN on a slow PC).
+- Windows, with **Block traffic without VPN** off: a connection an app opened before Elarni
+  connected, or in the fraction of a second between two tunnels (a server switch, a changed
+  setting), stayed outside the VPN for as long as it lived, as Windows keeps a connection on
+  the network it was opened on. When the tunnel is up, Elarni now closes such IPv4 connections
+  whose destination the tunnel takes, so the apps reconnect through it. Connections to excluded
+  routes and local networks, and those of apps that skip the tunnel, are left alone.
+- **Share** of an XHTTP server imported from a link or subscription wrote a link no client could
+  import (its `extra` listed every unset option, with ranges in a form the importer rejects), and
+  for a server from Xray JSON or Clash it left out the options a link has no parameter for
+  (connection reuse, padding, a separate download server). The link now carries the options the
+  server sets in `extra`, and nothing else. Android, iOS and macOS.
+- A link whose `extra` names a separate XHTTP download server lost that server's own options
+  (padding, connection reuse, headers) on import. All platforms.
+- **Share** changed the server in a few more cases, and now keeps it: a Hysteria2 server lost its
+  congestion settings, the upper bound of a port-hopping interval and the hop mode (what the
+  link's own parameters cannot say now travels in `fm`); a Trojan server without TLS came back
+  with TLS; a SOCKS user name with a colon was cut at it; a WebSocket server behind a front name
+  without an SNI got its Host header as the SNI; and a server from Xray JSON with `sendThrough`
+  was named after that address. Android, iOS and macOS.
+- A Hysteria2 link's `hop-interval` may be a range of seconds (`30-60`), as Clash writes it; it
+  was refused. All platforms.
+- `elarni-cli call inboundCredentials`, which the headless guide names as the way to read the
+  listener login in proxy-only mode, was refused as `unsupported_method`.
+- System proxy mode: when setting the proxy failed and undoing it failed as well, disconnecting
+  or quitting left the system proxy pointing at the closed listener until the next start. The
+  disconnect now restores the saved setting. Windows and Linux.
+- System proxy mode: starting a second copy of Elarni while the first was connected put the
+  system proxy back to the user's setting, so the first copy showed "connected" with the proxy
+  off. A copy that is refused now leaves the setting alone. A saved setting that cannot be read
+  (a damaged file) no longer refuses every later connection: it is reported once and dropped.
+  Windows and Linux.
+- Subscriptions, managed lists and routing data stopped refreshing by themselves, for as long as
+  years, after one refresh under a system clock that was set far ahead and then corrected.
+  Windows and Linux.
+- A damaged copy of a route's geofile in the routing data cache failed every connection and every
+  **Refresh routing data** with "invalid geodata" until the provider published a new file: the
+  server only answered that the file had not changed. The file is now downloaded again. A cache
+  that lost a prepared file is prepared again at Connect. Windows and Linux.
+- A catalog that could be decrypted but was not a catalog failed with an internal error
+  instead of the "catalog is damaged" message. Windows and Linux.
+- Per-app routing on Linux: a connection that a listed app had opened before Connect could be
+  reset and shown twice in **Recent connections** when the system's connection table changed
+  while it was being read.
+- Logs and diagnostic reports kept host names written in a non-Latin script (`пример.рф`); they
+  are now redacted like other host names. All platforms.
 - After a network change (Wi-Fi to mobile data, a new default route), an XHTTP or TUIC connection
   on the dead path could stay open with its apps stalled until the idle timeout, 30 s or more:
   data the old network had still delivered counted as the server's answer to the check. The

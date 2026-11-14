@@ -84,6 +84,38 @@ class AppLocalizationsEn extends AppLocalizations {
       'An app in Per-app routing uses a server that no longer exists.';
 
   @override
+  String get issueAssetsMissingRemedy =>
+      'Open Routing and use Refresh routing data, then connect again.';
+
+  @override
+  String get issueAssetsMissing =>
+      'The routing profile’s geofiles are missing.';
+
+  @override
+  String get issueMissingGeodataRemedy =>
+      'Open Routing and use Refresh routing data, then connect again. If that does not help, fix the profile or its geofile links.';
+
+  @override
+  String get issueMissingGeodata =>
+      'The routing profile’s geofiles lack codes that its proxy rules or servers need.';
+
+  @override
+  String get issueInvalidRouteEnforcementRemedy =>
+      'Replace 0.0.0.0/0 and ::/0 with specific routes, or turn enforcement off. For a full tunnel, turn enforcement off and use Block traffic without VPN.';
+
+  @override
+  String get issueInvalidRouteEnforcement =>
+      'Enforce tunnel routes needs specific included routes and cannot be combined with Block traffic without VPN.';
+
+  @override
+  String get issueRouteModelTooLargeRemedy =>
+      'Remove some rules or managed lists, then connect again.';
+
+  @override
+  String get issueRouteModelTooLarge =>
+      'The routing profile is too large: its rules and lists exceed 8 MB.';
+
+  @override
   String get issueStorageUnavailableRemedy =>
       'Restart Elarni. If this continues, restore an encrypted backup.';
 
@@ -1110,6 +1142,16 @@ class AppLocalizationsEn extends AppLocalizations {
       'Subscription added, but the first download failed. Refresh to retry.';
 
   @override
+  String get subscriptionAddedUnreadable =>
+      'Subscription added, but Elarni cannot read what the provider sent: its format or one of its settings is not supported. Try the provider’s Xray JSON link, or ask the provider.';
+
+  @override
+  String get importFileTooLarge => 'The file is larger than Elarni can import.';
+
+  @override
+  String get noQrCodeInImage => 'No QR code was found in this image.';
+
+  @override
   String get clipboardEmpty =>
       'The clipboard is empty. Copy a link or configuration first.';
 
@@ -1424,7 +1466,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get fragmentationHelp =>
-      'VLESS over TCP or XHTTP with TLS or Reality. XHTTP over HTTP/3 and existing dialer chains are unsupported.';
+      'VLESS over TCP or XHTTP with TLS or Reality. XHTTP over HTTP/3 and existing dialer chains are unsupported. Servers that cannot use it connect without it.';
 
   @override
   String get enableFragmentation => 'Enable fragmentation';
@@ -2191,6 +2233,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get providerNotice => 'Provider notice';
 
   @override
+  String get serversNotAdded => 'Servers not added';
+
+  @override
+  String serversNotAddedText(int count, String kinds) {
+    return '$count ($kinds). Elarni does not support these servers; the rest were added.';
+  }
+
+  @override
   String get providerAsksKeepSettings =>
       'Your provider asks you to keep its settings. You can still change them.';
 
@@ -2490,6 +2540,19 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String failureLinkRemovedText(String provider) {
     return '$provider removed or changed this link. Ask the provider for a new one.';
+  }
+
+  @override
+  String get failureUnsupported => 'Unsupported content';
+
+  @override
+  String failureUnsupportedText(String provider) {
+    return '$provider sent nothing Elarni can read: the format or one of its settings is not supported.';
+  }
+
+  @override
+  String failureDeviceLimitText(String provider) {
+    return '$provider reached this subscription’s device limit. Remove a device in your account with the provider, or contact the provider.';
   }
 
   @override

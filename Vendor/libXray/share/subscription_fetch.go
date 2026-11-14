@@ -1,6 +1,7 @@
 package share
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -90,11 +91,8 @@ func feedTarget(text string) (*url.URL, error) {
 			return nil, errors.New("invalid_target")
 		}
 	}
-	if u.Scheme == "http" {
-		if _, err := netip.ParseAddr(u.Hostname()); err != nil {
-			return nil, errors.New("invalid_target")
-		}
-	}
+	// An http URL may name a domain: every http hop, a redirect too, carries the cleartext_http
+	// risk, which the user approves for that URL.
 	return u, nil
 }
 
@@ -143,7 +141,7 @@ func SubscriptionDeviceID(request SubscriptionFetchRequest) (string, error) {
 }
 
 // appVersion mirrors pubspec.yaml; cmd/elarni-core's fetch test fails when they differ.
-const appVersion = "0.6.0"
+const appVersion = "0.6.1"
 
 func FetchSubscription(ctx context.Context, request SubscriptionFetchRequest) (any, error) {
 	return FetchResource(ctx, request, 4*1024*1024, 30*time.Second, false)
@@ -536,6 +534,15 @@ func fetchResourceAttempt(ctx context.Context, request SubscriptionFetchRequest,
 				os.Remove(destination)
 			}
 			return nil, errors.New("input_too_large")
+		}
+		// Remnawave answers a device over its limit with HTTP 200, no feed and the reason in a header.
+		if destination == "" && len(bytes.TrimSpace(body)) == 0 {
+			if strings.EqualFold(response.Header.Get("X-Hwid-Limit"), "true") || strings.EqualFold(response.Header.Get("X-Hwid-Max-Devices-Reached"), "true") {
+				return nil, errors.New("hwid_limit")
+			}
+			if strings.EqualFold(response.Header.Get("X-Hwid-Not-Supported"), "true") {
+				return nil, errors.New("hwid_required")
+			}
 		}
 		if !binaryBody && !utf8.Valid(body) {
 			return nil, errors.New("invalid_feed")

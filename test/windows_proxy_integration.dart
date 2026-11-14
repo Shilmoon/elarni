@@ -1639,6 +1639,226 @@ for line in sys.stdin:
     },
   );
 
+  // Regression: with Block traffic without VPN, each restart the app made
+  // (another server, a settings change, failover) lifted the kill switch with
+  // the old tunnel, and traffic left outside until the next tunnel was up.
+  test('a restart keeps Block traffic without VPN between its tunnels', () async {
+    await prepare();
+    final settings = (await backend.control.tunnelSettings()).copyWith(
+      xrayTunEnabled: true,
+      blockWithoutVPN: true,
+      enforceRoutes: false,
+    );
+    await backend.control.updateTunnelSettings(settings);
+    final events = File.fromUri(temporary.uri.resolve('vpn-hold-events'));
+    final stopGate = File.fromUri(temporary.uri.resolve('vpn-hold-gate'));
+    final noAnswer = File.fromUri(temporary.uri.resolve('vpn-hold-no-dns'));
+    await useStub('''
+import json, os, socket, subprocess, sys, time
+listeners = []
+def note(entry):
+    with open(${jsonEncode(events.path)}, 'a') as events: print(entry, file=events)
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request['method']
+    if method == 'runVPN':
+        note(method)
+        config = json.loads(request['payload']['configJSON'])
+        for inbound in config['inbounds']:
+            if inbound['protocol'] in ('socks', 'http'):
+                listener = socket.socket()
+                listener.bind(('127.0.0.1', inbound['port']))
+                listener.listen(32)
+                listeners.append(listener)
+        print(json.dumps({'success': True, 'data': {}}), flush=True)
+    elif method == 'stopVPN':
+        note('stopVPN hold' if request['payload'].get('hold') else method)
+        for listener in listeners: listener.close()
+        listeners.clear()
+        while os.path.exists(${jsonEncode(stopGate.path)}): time.sleep(0.01)
+        print(json.dumps({'success': True, 'data': {}}), flush=True)
+    elif method == 'lookupHost':
+        note(method + ' ' + request['payload']['host'])
+        if os.path.exists(${jsonEncode(noAnswer.path)}):
+            print(json.dumps({'success': False, 'error': 'dns_failed'}), flush=True)
+        else:
+            print(json.dumps({'success': True, 'data': {'addresses': ['127.0.0.1']}}), flush=True)
+        break
+    else:
+        child = subprocess.Popen([${jsonEncode(corePath)}], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        child.stdin.write(line)
+        child.stdin.flush()
+        print(child.stdout.readline(), end='', flush=True)
+        child.stdin.close()
+        child.wait(timeout=10)
+        break
+''');
+    Future<String> named(String host, String name) async =>
+        (await backend.control.importClientProfiles(
+              content: profile
+                  .replaceFirst('127.0.0.1', host)
+                  .replaceFirst('#Fixture', '#$name'),
+            )).snapshot.subscriptions
+            .expand((source) => source.nodes)
+            .singleWhere((node) => node.name == name)
+            .id;
+    final fixture = (await backend.control.subscriptions()).selectedNodeId!;
+    await backend.control.connect();
+    // Nothing resolves under the kept kill switch, so the next server's name
+    // is looked up through the running tunnel before it stops.
+    await backend.control.selectNode(await named('server.invalid', 'Named'));
+    expect(await backend.control.state(), 'connected');
+    expect(await events.readAsLines(), [
+      'runVPN',
+      'lookupHost server.invalid',
+      'stopVPN hold',
+      'runVPN',
+    ]);
+    // A settings change restarts on the same server.
+    await backend.control.updateTunnelSettings(
+      settings.copyWith(excludedRoutes: ['203.0.113.0/24']),
+    );
+    expect(await backend.control.state(), 'connected');
+    expect((await events.readAsLines()).skip(4), [
+      'lookupHost server.invalid',
+      'stopVPN hold',
+      'runVPN',
+    ]);
+    // A user's stop lifts the kill switch.
+    await backend.control.disconnect();
+    expect((await events.readAsLines()).skip(7), ['stopVPN']);
+
+    // A disconnect during a restart: the stop that kept the kill switch is
+    // followed by one that lifts it, or traffic stays blocked while disconnected.
+    await events.delete();
+    await backend.control.selectNode(fixture);
+    await backend.control.connect();
+    await stopGate.writeAsString('hold the restart stop');
+    Future<void>? change;
+    Future<String>? stopping;
+    try {
+      change = backend.control
+          .updateTunnelSettings(settings)
+          .then<void>((_) {}, onError: (Object _) {});
+      for (var i = 0; i < 250; i++) {
+        if ((await events.readAsLines()).contains('stopVPN hold')) break;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      expect((await events.readAsLines()).last, 'stopVPN hold');
+      stopping = backend.control.disconnect();
+    } finally {
+      await stopGate.delete();
+    }
+    await stopping;
+    await change;
+    expect(await backend.control.state(), 'disconnected');
+    expect(await events.readAsLines(), ['runVPN', 'stopVPN hold', 'stopVPN']);
+
+    // The running tunnel is dead and the next server's name was never
+    // resolved: nothing can answer under the kill switch, so this one start
+    // goes without it, as every restart did, instead of failing the switch.
+    await events.delete();
+    await backend.control.connect();
+    await noAnswer.writeAsString('the tunnel answers no lookups');
+    // A label over 63 characters is no DNS name, so this lookup fails by
+    // itself, also on a network whose resolver answers every name.
+    final unresolvable = '${'u' * 64}.invalid';
+    final unknown = await named(unresolvable, 'Unknown');
+    await expectLater(
+      backend.control.selectNode(unknown),
+      throwsA(isA<PlatformException>()),
+    );
+    expect(await backend.control.state(), 'connected');
+    expect((await backend.control.subscriptions()).selectedNodeId, fixture);
+    expect(await events.readAsLines(), [
+      'runVPN',
+      'lookupHost $unresolvable',
+      'stopVPN hold',
+      'stopVPN',
+      'runVPN',
+    ]);
+    await backend.control.disconnect();
+  });
+
+  // A crashed Windows helper leaves its kill switch, which lets the next
+  // helper through: clearing it before the reconnect let traffic out until the
+  // new tunnel was up.
+  test(
+    'a reconnect keeps a crashed helper\'s block until its tunnel is up',
+    () async {
+      await prepare();
+      await backend.control.updateTunnelSettings(
+        (await backend.control.tunnelSettings()).copyWith(
+          xrayTunEnabled: true,
+          blockWithoutVPN: true,
+          enforceRoutes: false,
+        ),
+      );
+      final events = File.fromUri(temporary.uri.resolve('vpn-stale-events'));
+      await useStub('''
+import json, socket, subprocess, sys
+listeners = []
+def note(entry):
+    with open(${jsonEncode(events.path)}, 'a') as events: print(entry, file=events)
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request['method']
+    if method == 'runVPN':
+        note(method)
+        config = json.loads(request['payload']['configJSON'])
+        for inbound in config['inbounds']:
+            if inbound['protocol'] in ('socks', 'http'):
+                listener = socket.socket()
+                listener.bind(('127.0.0.1', inbound['port']))
+                listener.listen(32)
+                listeners.append(listener)
+        print(json.dumps({'success': True, 'data': {}}), flush=True)
+    elif method == 'stopVPN':
+        note(method)
+        for listener in listeners: listener.close()
+        listeners.clear()
+        print(json.dumps({'success': True, 'data': {}}), flush=True)
+    elif method == 'clearVPNGuard':
+        note(method)
+        print(json.dumps({'success': True, 'data': {}}), flush=True)
+        break
+    else:
+        child = subprocess.Popen([${jsonEncode(corePath)}], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        child.stdin.write(line)
+        child.stdin.flush()
+        print(child.stdout.readline(), end='', flush=True)
+        child.stdin.close()
+        child.wait(timeout=10)
+        break
+''');
+      staleGuard = true;
+      await backend.control.connect();
+      await backend.control.disconnect();
+      expect(await events.readAsLines(), ['runVPN', 'stopVPN']);
+      // No lookup is answered under it: a server name this app never resolved
+      // has it cleared first, as every connect did.
+      await events.delete();
+      await backend.control.selectNode(
+        (await backend.control.importClientProfiles(
+              content: profile
+                  .replaceFirst('127.0.0.1', 'localhost')
+                  .replaceFirst('#Fixture', '#Named'),
+            )).snapshot.subscriptions
+            .expand((source) => source.nodes)
+            .singleWhere((node) => node.name == 'Named')
+            .id,
+      );
+      await backend.control.connect();
+      await backend.control.disconnect();
+      expect(await events.readAsLines(), [
+        'clearVPNGuard',
+        'runVPN',
+        'stopVPN',
+      ]);
+    },
+    skip: !Platform.isWindows,
+  );
+
   // Sleep cancels an ICMP probe's stop or restore without disconnecting; the
   // stopped VPN must not stay in a transitional state that refuses Connect.
   for (final gated in ['stopVPN', 'runVPN']) {
@@ -2411,10 +2631,16 @@ rules:
     () async {
       await prepare();
       final selected = (await backend.control.subscriptions()).selectedNodeId;
+      // A line the core cannot read is skipped and the rest import; the server
+      // already imported stays one server.
+      final mixed = await backend.control.importClientProfiles(
+        content: '$profile\nprivate-secret-invalid',
+      );
+      expect(mixed.snapshot.subscriptions.single.nodes.single.name, 'Fixture');
+      expect(mixed.snapshot.selectedNodeId, selected);
+      // With nothing it can read, the import is refused and changes nothing.
       await expectLater(
-        backend.control.importClientProfiles(
-          content: '$profile\nprivate-secret-invalid',
-        ),
+        backend.control.importClientProfiles(content: 'private-secret-invalid'),
         throwsA(isA<PlatformException>()),
       );
       expect((await backend.control.subscriptions()).selectedNodeId, selected);
@@ -4732,6 +4958,107 @@ for line in sys.stdin:
     timeout: const Timeout(Duration(seconds: 90)),
   );
 
+  // Only timeouts counted against the selected server, so one whose service
+  // stopped (connection refused or reset) was never left.
+  test(
+    'failover leaves a server that passed its check and then refuses connections',
+    () async {
+      await backend.dispose();
+      backend = createBackend(
+        automationProbeSeconds: 2,
+        automationRetrySeconds: 1,
+        livenessInterval: const Duration(minutes: 5),
+      );
+      final relay = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final peers = <Socket>{};
+      relay.listen((client) async {
+        peers.add(client);
+        final server = await Socket.connect(
+          '127.0.0.1',
+          Uri.parse(profile).port,
+        );
+        peers.add(server);
+        unawaited(
+          client
+              .cast<List<int>>()
+              .pipe(server)
+              .catchError((Object _) => server),
+        );
+        unawaited(
+          server
+              .cast<List<int>>()
+              .pipe(client)
+              .catchError((Object _) => client),
+        );
+      });
+      var open = true;
+      try {
+        final imported = await backend.control.importClientProfiles(
+          content: [
+            Uri.parse(
+              profile,
+            ).replace(port: relay.port, fragment: 'Primary').toString(),
+            profile,
+          ].join('\n'),
+        );
+        final group = imported.snapshot.subscriptions.single;
+        String id(String name) =>
+            group.nodes.singleWhere((node) => node.name == name).id;
+        await backend.control.selectNode(id('Primary'));
+        await backend.control.configureAutomation(
+          AutomationConfiguration(
+            enabled: true,
+            policy: AutomationSelectionPolicy.orderedFallback,
+            subscriptionId: group.id,
+            nodeIds: [id('Primary'), id('Fixture')],
+            targets: [
+              AutomationTarget(
+                id: 'fixture',
+                url: 'http://127.0.0.1:${target.port}/fixture',
+                expectedStatus: 200,
+                expectedBody: body,
+              ),
+            ],
+          ),
+        );
+        expect(await backend.control.connect(), 'connected');
+        for (var i = 0; i < 300; i++) {
+          if ((await backend.control.automationStatus())['healthNodeID'] ==
+              id('Primary'))
+            break;
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        expect(
+          (await backend.control.automationStatus())['healthNodeID'],
+          id('Primary'),
+        );
+        // The server's service stops: nothing listens on its port any more.
+        open = false;
+        await relay.close();
+        for (final peer in peers) peer.destroy();
+        for (var i = 0; i < 900; i++) {
+          if ((await backend.control.subscriptions()).selectedNodeId ==
+                  id('Fixture') &&
+              await backend.control.state() == 'connected')
+            break;
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        expect(
+          (await backend.control.subscriptions()).selectedNodeId,
+          id('Fixture'),
+        );
+        expect(await backend.control.state(), 'connected');
+        final settings = await backend.control.tunnelSettings();
+        await checkSocks(settings.socksPort, target.port);
+      } finally {
+        if (open) await relay.close();
+        for (final peer in peers) peer.destroy();
+        await backend.control.disconnect();
+      }
+    },
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
+
   // An unresolvable server name is a failed connection, so failover moves on.
   test(
     'ordered fallback moves on from a primary whose server name does not resolve',
@@ -4988,11 +5315,12 @@ for line in sys.stdin:
             'DirectSites': ['full:example.com'],
           })))}';
       var hideURL = false;
+      var served = content;
       final feed = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       feed.listen((request) async {
         request.response.headers.set('Routing', routingHeader);
         request.response.headers.set('Hide-Url', hideURL ? 'yes' : 'false');
-        request.response.write(content);
+        request.response.write(served);
         await request.response.close();
       });
       try {
@@ -5050,29 +5378,155 @@ for line in sys.stdin:
           (await backend.control.routingProfiles()).profiles.single.name,
           'Provider route',
         );
+        // A routing header Elarni refuses costs only that routing: the
+        // servers update and the subscription notes it. The feed drops its
+        // other directive, so the notice is the refused routing's.
         routingHeader = 'happ://routing/unsupported';
-        await expectLater(
-          backend.control.refreshSubscription(id),
-          throwsA(
-            isA<PlatformException>().having(
-              (e) => e.code,
-              'code',
-              'invalid_routing',
-            ),
-          ),
-        );
+        served = profile.replaceFirst('#Fixture', '#Updated');
+        final refused = (await backend.control.refreshSubscription(
+          id,
+        )).snapshot.subscriptions.singleWhere((s) => s.id == id);
+        expect(refused.status, 'ready');
+        expect(refused.nodes.single.name, 'Updated');
         expect(
-          (await backend.control.subscriptions()).subscriptions
-              .singleWhere((s) => s.id == id)
-              .nodes
-              .single
-              .name,
-          'Fixture',
+          refused.metadata['directiveNotice'],
+          'Unsupported provider directives',
         );
         expect(
           (await backend.control.routingProfiles()).profiles.single.name,
           'Provider route',
         );
+      } finally {
+        await feed.close(force: true);
+      }
+    },
+  );
+
+  // A download the importer reads but the compiler refuses is a failed
+  // refresh like any other: recorded on the subscription, servers kept. It
+  // used to fail only when the change was published, which recorded nothing.
+  test(
+    'a refresh the compiler refuses is recorded on the subscription',
+    () async {
+      // Two outbounds with one tag: the importer reads each, the compiler refuses the pair.
+      final refused = jsonEncode([
+        {
+          'remarks': 'Refused',
+          'outbounds': [
+            {
+              'tag': 'proxy',
+              'protocol': 'vless',
+              'settings': {
+                'vnext': [
+                  {
+                    'address': '127.0.0.1',
+                    'port': Uri.parse(profile).port,
+                    'users': [
+                      {'id': userID, 'encryption': 'none'},
+                    ],
+                  },
+                ],
+              },
+            },
+            {'tag': 'proxy', 'protocol': 'freedom'},
+          ],
+        },
+      ]);
+      final refusedMember =
+          (jsonDecode(refused) as List).single as Map<String, Object?>;
+      final mixed = jsonEncode([
+        {
+          'remarks': 'Kept',
+          'outbounds': [(refusedMember['outbounds']! as List).first],
+        },
+        refusedMember,
+      ]);
+      var served = profile;
+      final feed = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      feed.listen((request) async {
+        request.response.write(switch (request.uri.path) {
+          '/refused' => refused,
+          '/mixed' => mixed,
+          _ => served,
+        });
+        await request.response.close();
+      });
+      try {
+        Future<SubscriptionGroup> group(String id) async =>
+            (await backend.control.subscriptions()).subscriptions.singleWhere(
+              (s) => s.id == id,
+            );
+        Matcher refusedProfile() => throwsA(
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'unsupported_profile',
+          ),
+        );
+        final added = await backend.control.importClientProfiles(
+          content: 'http://127.0.0.1:${feed.port}/synthetic-token',
+        );
+        final id = added.snapshot.subscriptions
+            .singleWhere((s) => !s.isLocal)
+            .id;
+        await backend.control.refreshSubscription(
+          id,
+          challenge: added.warning!.challenge,
+        );
+        expect((await group(id)).nodes.single.name, 'Fixture');
+        served = refused;
+        await expectLater(
+          backend.control.refreshSubscription(id),
+          refusedProfile(),
+        );
+        final kept = await group(id);
+        expect(kept.status, 'refresh_failed');
+        expect(kept.nodes.single.name, 'Fixture');
+        expect(
+          catalogList(
+            catalogMap(storedCatalog!['committed'])['subscriptions'],
+          ).singleWhere((s) => s['id'] == id)['refreshError'],
+          'unsupported_profile',
+        );
+
+        // A new subscription whose first download the compiler refuses stays,
+        // with the reason.
+        final fresh = await backend.control.addSubscription(
+          'http://127.0.0.1:${feed.port}/refused',
+        );
+        final freshID = fresh.snapshot.subscriptions
+            .singleWhere((s) => s.id != id && !s.isLocal)
+            .id;
+        await expectLater(
+          backend.control.refreshSubscription(
+            freshID,
+            challenge: fresh.warning!.challenge,
+          ),
+          refusedProfile(),
+        );
+        final failed = await group(freshID);
+        expect(failed.status, 'refresh_failed');
+        expect(failed.nodes, isEmpty);
+
+        // One server the compiler refuses is left out and counted, like a
+        // line the importer cannot read; the rest of the download is added.
+        final partial = await backend.control.addSubscription(
+          'http://127.0.0.1:${feed.port}/mixed',
+        );
+        final partialID = partial.snapshot.subscriptions
+            .singleWhere((s) => s.id != id && s.id != freshID && !s.isLocal)
+            .id;
+        await backend.control.refreshSubscription(
+          partialID,
+          challenge: partial.warning!.challenge,
+        );
+        expect((await group(partialID)).nodes.single.name, 'Kept');
+        final stored = catalogList(
+          catalogMap(storedCatalog!['committed'])['subscriptions'],
+        ).singleWhere((s) => s['id'] == partialID);
+        expect(stored['refreshError'], isNull);
+        expect(catalogMap(stored['metadata'])['skippedServers'], 1);
+        expect(catalogMap(stored['metadata'])['skippedKinds'], 'vless');
       } finally {
         await feed.close(force: true);
       }

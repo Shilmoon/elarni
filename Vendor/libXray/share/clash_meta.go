@@ -467,7 +467,8 @@ func (proxy ClashProxy) streamSettings(outbound conf.OutboundDetourConfig) (*con
 		if err != nil {
 			return nil, err
 		}
-		fm, err := buildHy2FinalMask(clashBandwidth(proxy.Up), clashBandwidth(proxy.Down), proxy.Ports, hopInterval, proxy.Obfs, proxy.ObfsPassword)
+		// No packet sizes: Clash's gecko stays refused.
+		fm, err := buildHy2FinalMask(clashBandwidth(proxy.Up), clashBandwidth(proxy.Down), proxy.Ports, hopInterval, proxy.Obfs, proxy.ObfsPassword, "", "")
 		if err != nil {
 			return nil, err
 		}
@@ -635,11 +636,7 @@ func parseXHTTPOpts(xhttpOpts ClashProxyXhttpOpts) (*conf.SplitHTTPConfig, error
 		extra.DownloadSettings = downloadSettings
 	}
 
-	extraRawMessage, err := convertJsonToRawMessage(extra)
-	if err != nil {
-		return nil, err
-	}
-	xhttpSettings.Extra = extraRawMessage
+	xhttpSettings.Extra = setJSON(extra)
 	return xhttpSettings, nil
 }
 
