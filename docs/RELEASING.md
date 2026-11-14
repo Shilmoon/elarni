@@ -95,8 +95,9 @@ An install run as SYSTEM (Intune, SCCM) sets up no account. Uninstalling removes
 service.
 
 The portable ZIP asks for administrator approval to install the helper on the
-first connection. To remove it: quit Elarni, run `elarni.exe --unregister`, then
-`elarni-core.exe --uninstall-helper` from an elevated prompt, and delete the folder.
+first connection. To remove it: run `elarni.exe --unregister`, then
+`elarni-core.exe --uninstall-helper` from an elevated prompt (it also closes a running
+Elarni), and delete the folder.
 
 ## Linux
 

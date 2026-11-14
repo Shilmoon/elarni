@@ -89,3 +89,64 @@ func TestHelperUninstallStopsRunningCopiesThenRemovesTheRoot(t *testing.T) {
 		t.Fatal("a program outside the helper root was stopped")
 	}
 }
+
+// Uninstall must end the app and the cores it started, which run from the install
+// folder: a running app keeps its tunnel and locks the files the uninstall removes.
+// Other programs in that folder, and anything below it, are not the app's.
+func TestUninstallStopsTheAppInTheInstallFolder(t *testing.T) {
+	if os.Getenv("ELARNI_HELPER_TEST") == "running" {
+		_, _ = io.Copy(io.Discard, os.Stdin) // Runs until killed or its owner closes stdin.
+		os.Exit(0)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// CI temp paths may use 8.3 names; Windows reports a process image by its long one.
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	install := filepath.Join(base, "Elarni")
+	start := func(directory, name string) windows.Handle {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(directory, name)
+		if _, err := copyHelperFile(self, path); err != nil {
+			t.Fatal(err)
+		}
+		command := exec.Command(path, "-test.run=^TestUninstallStopsTheAppInTheInstallFolder$")
+		command.Env = append(os.Environ(), "ELARNI_HELPER_TEST=running")
+		input, err := command.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		process, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(command.Process.Pid))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			input.Close()
+			_ = command.Wait()
+			windows.CloseHandle(process)
+		})
+		return process
+	}
+	running := func(process windows.Handle) bool {
+		state, err := windows.WaitForSingleObject(process, 0)
+		return err == nil && state == uint32(windows.WAIT_TIMEOUT)
+	}
+	app, core, cli := start(install, "elarni.exe"), start(install, "Elarni-Core.exe"), start(install, "elarni-cli.exe")
+	other, nested := start(install, "other.exe"), start(filepath.Join(install, "tools"), "elarni.exe")
+	stopApp(install)
+	if running(app) || running(core) || running(cli) {
+		t.Fatalf("still running: app %v, core %v, command line tool %v", running(app), running(core), running(cli))
+	}
+	if !running(other) || !running(nested) {
+		t.Fatalf("stopped a program that is not the app: other %v, nested %v", !running(other), !running(nested))
+	}
+}

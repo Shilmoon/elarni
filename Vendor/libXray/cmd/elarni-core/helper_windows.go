@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -106,11 +107,16 @@ func installWindowsHelper() error {
 }
 
 // uninstallWindowsHelper runs elevated from the MSI uninstall, or by hand for a
-// portable bundle, and removes what the helper left on this machine.
+// portable bundle. It ends the app that runs from this build's folder and removes
+// what the helper left on this machine.
 func uninstallWindowsHelper() error {
 	root, err := windowsHelperRoot()
 	if err != nil {
 		return err
+	}
+	// The app goes first: it would answer its helper's end with a reconnect.
+	if executable, err := os.Executable(); err == nil {
+		stopApp(filepath.Dir(executable))
 	}
 	// The service runs from root; deleted first, it no longer holds the folder.
 	return errors.Join(removeVPNService(), uninstallHelper(root, func() error { return clearStaleGuard(releaseGuard) }))
@@ -126,6 +132,28 @@ func uninstallHelper(root string, clearGuard func() error) error {
 // stopHelpers ends every process started from a file under root. A killed
 // helper leaves its DNS guard behind, as a crashed one does.
 func stopHelpers(root string) {
+	stopProcesses(func(image string) bool {
+		relative, err := filepath.Rel(root, image)
+		return err == nil && filepath.IsLocal(relative)
+	})
+}
+
+// stopApp ends the app, the cores it started and the command line tool running from
+// the install folder, for every signed-in user. A running app keeps its tunnel up
+// and its files locked, so an uninstall left both behind. Only these three names
+// count: a portable bundle may share its folder with other programs.
+func stopApp(directory string) {
+	stopProcesses(func(image string) bool {
+		if !strings.EqualFold(filepath.Dir(image), directory) {
+			return false
+		}
+		name := strings.ToLower(filepath.Base(image))
+		return name == "elarni.exe" || name == "elarni-core.exe" || name == "elarni-cli.exe"
+	})
+}
+
+// stopProcesses ends every other process whose image path matches.
+func stopProcesses(match func(image string) bool) {
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
 		return
@@ -143,7 +171,7 @@ func stopHelpers(root string) {
 		}
 		length := uint32(len(image))
 		if windows.QueryFullProcessImageName(process, 0, &image[0], &length) == nil {
-			if relative, err := filepath.Rel(root, windows.UTF16ToString(image[:length])); err == nil && filepath.IsLocal(relative) {
+			if match(windows.UTF16ToString(image[:length])) {
 				windows.TerminateProcess(process, 1)
 				windows.WaitForSingleObject(process, 5000)
 			}

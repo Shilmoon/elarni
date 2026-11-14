@@ -23,6 +23,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - Windows: an MSI upgrade to a build whose bundled Visual C++ runtime is older than the
   installed build's removed the runtime files, and Elarni no longer started. The installer now
   copies every file whatever version is installed.
+- Windows: uninstalling while Elarni was running left the app and its core running, with the
+  network still captured for half a minute or more and their files locked. Uninstall now closes
+  the app first.
 - After a network change (Wi-Fi to mobile data, a new default route), an XHTTP or TUIC connection
   on the dead path could stay open with its apps stalled until the idle timeout, 30 s or more:
   data the old network had still delivered counted as the server's answer to the check. The
