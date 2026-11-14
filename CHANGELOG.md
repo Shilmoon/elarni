@@ -4,6 +4,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ## Unreleased
 
+## 0.6.1 - 2026-11-14
+
 ### Changed
 
 - Settings no longer wait for **Save changes** to take effect. A switch saves itself about a
