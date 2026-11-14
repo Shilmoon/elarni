@@ -7,6 +7,11 @@
     <MajorUpgrade AllowSameVersionUpgrades="yes"
                   DowngradeErrorMessage="A newer version of Elarni is already installed." />
     <MediaTemplate EmbedCab="yes" />
+    <!-- Windows Installer decides which files to copy before it removes the old version, and
+         skips a file whose installed copy has a higher version: an upgrade to a build with an
+         older VC++ runtime then removed the runtime and the app no longer started. "a" copies
+         every file whatever is installed; "mus" are the defaults for registry and shortcuts. -->
+    <Property Id="REINSTALLMODE" Value="amus" />
     <Icon Id="elarni.exe" SourceFile="$(Bundle)\elarni.exe" />
     <Property Id="ARPPRODUCTICON" Value="elarni.exe" />
     <StandardDirectory Id="ProgramFiles64Folder">

@@ -237,6 +237,8 @@ class PackageReleaseChecks(unittest.TestCase):
                      for name, component in msi_rows(installer, 'SELECT `FileName`, `Component_` FROM `File`')}
             for name in VC_RUNTIME:
                 self.assertEqual(files.get(name), files['elarni.exe'], name + ' is not installed next to elarni.exe')
+            # An upgrade from a build with a newer runtime must still copy these files.
+            self.assertEqual(msi_rows(installer, "SELECT `Value` FROM `Property` WHERE `Property` = 'REINSTALLMODE'"), [['amus']])
             cleanup = [row for row in msi_rows(installer, 'SELECT `Action`, `Type`, `Source`, `Target` FROM `CustomAction`')
                        if '--uninstall-helper' in row[3]]
             self.assertEqual(len(cleanup), 1, 'The MSI does not remove %ProgramFiles%\\Elarni VPN Helper')
