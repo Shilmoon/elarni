@@ -41,7 +41,10 @@ extension _ProxyCatalog on DesktopProxy {
           DesktopProxy._nodeSettings(catalog, node),
           mapping: mappings[endpoint['host']] as Map?,
         )).first.address;
-      } on Object {
+      } on Object catch (error) {
+        // A declined clear of a crashed helper's kill switch is its own error.
+        if (error is PlatformException && error.code == 'vpn_guard_stale')
+          rethrow;
         unavailable.add(path);
       }
     }
@@ -319,11 +322,15 @@ extension _ProxyCatalog on DesktopProxy {
                 candidate,
                 candidateSemantics[candidate.selected!]!,
               ))) {
+        // Another tunnel follows: the core keeps Block traffic without VPN in
+        // place between the two.
+        final hold =
+            candidate.selected != null && candidate.settings.xrayTunEnabled;
         Future<void> stop() async {
           runtimeChanged = true;
           // The exit of a deliberately stopped core is not a connection failure.
           if (_state == 'connected') _state = 'connecting';
-          await _stopProcess();
+          await _stopProcess(hold: hold);
           _checkGeneration(generation);
         }
 
@@ -334,7 +341,16 @@ extension _ProxyCatalog on DesktopProxy {
             // replacement's servers would resolve through the old tunnel,
             // which may be dead.
             final tunnel = _process != null && before.settings.xrayTunEnabled;
-            if (tunnel) await stop();
+            if (tunnel) {
+              // Nothing resolves under the kept kill switch.
+              if (hold &&
+                  before.settings.blockWithoutVPN &&
+                  _state == 'connected') {
+                await _rememberAddresses(candidate);
+                _checkGeneration(generation);
+              }
+              await stop();
+            }
             String? prepared;
             if (candidate.selected != null) {
               prepared = await _prepareConfig(
@@ -381,7 +397,9 @@ extension _ProxyCatalog on DesktopProxy {
     } on Object catch (error) {
       if (checkpoint) {
         try {
-          if (runtimeChanged) await _stopProcess();
+          // The restore below starts the old tunnel again; a cancelled change
+          // is followed by the plain stop of whatever cancelled it.
+          if (runtimeChanged) await _stopProcess(hold: true);
           await _save({'version': 1, 'committed': before.data});
         } on Object {
           _storageLost = true;
@@ -405,7 +423,7 @@ extension _ProxyCatalog on DesktopProxy {
           // After a Stop, a newer operation may already own the runtime.
           if (generation == _generation) {
             try {
-              await _stopProcess();
+              await _stopProcess(hold: true);
             } on Object {
               // 'failed' below already reports the runtime as unusable.
             }

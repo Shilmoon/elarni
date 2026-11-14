@@ -324,6 +324,7 @@ extension _ProxyCommands on DesktopProxy {
               {},
               timeout: const Duration(seconds: 90),
             );
+          _guardKept = _guardHeld = false;
           return {'state': _state};
         } finally {
           _operation = null;

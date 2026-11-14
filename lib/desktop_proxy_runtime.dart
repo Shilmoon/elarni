@@ -7,10 +7,21 @@ extension _ProxyRuntime on DesktopProxy {
       throw desktopError('busy');
     final done = _operation = Completer<void>(), generation = _generation;
     try {
-      await _stopProcess();
+      await _stopProcess(hold: true);
       _checkGeneration(generation);
       if (Platform.isWindows || Platform.isLinux) {
-        await _clearStaleGuard();
+        final settings = _catalog!.settings;
+        // A crashed Windows helper's kill switch lets the next helper through,
+        // so with Block traffic without VPN it stays until the new tunnel
+        // replaces it. A dead Linux supervisor's rejects the next one's traffic.
+        if (Platform.isWindows &&
+            settings.xrayTunEnabled &&
+            settings.blockWithoutVPN &&
+            await _staleGuard()) {
+          _guardKept = _guardStale = true;
+        } else {
+          await _clearStaleGuard();
+        }
         _checkGeneration(generation);
       }
       final candidate = _catalog!.copy();
@@ -31,7 +42,7 @@ extension _ProxyRuntime on DesktopProxy {
       await _syncSystemProxy();
       return {'state': _state};
     } on Object catch (error) {
-      await _stopProcess();
+      await _stopProcess(hold: true);
       // A newer generation (sleep, probe interruption) can cancel this connect
       // after it set connecting or connected; the runtime is stopped either way.
       if (generation == _generation ||
@@ -41,6 +52,7 @@ extension _ProxyRuntime on DesktopProxy {
       if (error is PlatformException) rethrow;
       throw desktopError('connection_failed');
     } finally {
+      _guardStale = false;
       _operation = null;
       done.complete();
     }
@@ -78,10 +90,14 @@ extension _ProxyRuntime on DesktopProxy {
   // A helper killed during this boot leaves its fail-closed DNS guard (on Linux,
   // a redirect to its dead resolver), which blocks every lookup, route
   // planning's included, until a helper removes it.
+  Future<bool> _staleGuard() async =>
+      (await _storage('staleVPNGuard', {}))['stale'] == true;
+
   Future<void> _clearStaleGuard() async {
-    if ((await _storage('staleVPNGuard', {}))['stale'] != true) return;
+    if (!await _staleGuard()) return;
     try {
       await _native('clearVPNGuard', {}, timeout: const Duration(seconds: 90));
+      _guardKept = _guardHeld = false;
     } on PlatformException catch (error) {
       if (error.code == 'cancelled') rethrow;
       // The cause tells a declined prompt from one nobody answered.
@@ -101,11 +117,11 @@ extension _ProxyRuntime on DesktopProxy {
     final done = _operation = Completer<void>(), generation = _generation;
     try {
       _state = 'reconnecting';
-      await _stopProcess();
+      await _stopProcess(hold: true);
       _checkGeneration(generation);
       await _start(_catalog!, generation);
     } on Object catch (error) {
-      await _stopProcess();
+      await _stopProcess(hold: true);
       if (generation == _generation ||
           {'reconnecting', 'connecting', 'connected'}.contains(_state))
         _state = 'failed';
@@ -150,29 +166,18 @@ extension _ProxyRuntime on DesktopProxy {
           throw desktopError('listener_unavailable');
       }
     }
-    await _native(
-      catalog.settings.xrayTunEnabled ? 'runVPN' : 'runXrayFromJson',
-      {
-        'configJSON': config,
-        'memoryLimitMB': catalog.settings.memoryLimitMB,
-        'logLevel': catalog.settings.logLevel,
-        'streamMetrics': true,
-        'recordDiagnostics': catalog.settings.recordDiagnostics,
-        if (catalog.settings.xrayTunEnabled) ...{
-          'tcpMaxConnections': catalog.settings.tcpMaxConnections,
-          'udpMaxConnections': catalog.settings.udpMaxConnections,
-          'routePolicy': {
-            'includedRoutes': catalog.settings.includedRoutes,
-            'excludedRoutes': catalog.settings.excludedRoutes,
-            'includeAllNetworks': catalog.settings.includeAllNetworks,
-            'blockWithoutVPN': catalog.settings.blockWithoutVPN,
-            'enforceRoutes': catalog.settings.enforceRoutes,
-            'hideVPNIcon': catalog.settings.hideVPNIcon,
-          },
-        },
-        ...DesktopProxy._runtimeAssets(catalog),
-      },
-    );
+    final tunnel = catalog.settings.xrayTunEnabled;
+    try {
+      await _startCore(catalog, config);
+      // The new tunnel's kill switch replaced any kept one.
+      if (tunnel) _guardKept = _guardHeld = false;
+    } on Object {
+      // A start that fails leaves the kill switch its request asks for, as a
+      // lost tunnel does. _guardHeld stays: the start may not have reached the
+      // helper, and a plain stop to an idle one lifts only what a restart kept.
+      if (tunnel && catalog.settings.blockWithoutVPN) _guardKept = true;
+      rethrow;
+    }
     _checkGeneration(generation);
     for (final port in [
       listeners.socksPort,
@@ -192,6 +197,28 @@ extension _ProxyRuntime on DesktopProxy {
     _liveness = _livenessAt = null;
     _livenessFailures = 0;
   }
+
+  Future<void> _startCore(DesktopCatalog catalog, String config) =>
+      _native(catalog.settings.xrayTunEnabled ? 'runVPN' : 'runXrayFromJson', {
+        'configJSON': config,
+        'memoryLimitMB': catalog.settings.memoryLimitMB,
+        'logLevel': catalog.settings.logLevel,
+        'streamMetrics': true,
+        'recordDiagnostics': catalog.settings.recordDiagnostics,
+        if (catalog.settings.xrayTunEnabled) ...{
+          'tcpMaxConnections': catalog.settings.tcpMaxConnections,
+          'udpMaxConnections': catalog.settings.udpMaxConnections,
+          'routePolicy': {
+            'includedRoutes': catalog.settings.includedRoutes,
+            'excludedRoutes': catalog.settings.excludedRoutes,
+            'includeAllNetworks': catalog.settings.includeAllNetworks,
+            'blockWithoutVPN': catalog.settings.blockWithoutVPN,
+            'enforceRoutes': catalog.settings.enforceRoutes,
+            'hideVPNIcon': catalog.settings.hideVPNIcon,
+          },
+        },
+        ...DesktopProxy._runtimeAssets(catalog),
+      });
 
   Future<CatalogMap> _native(
     String method,
@@ -518,6 +545,8 @@ extension _ProxyRuntime on DesktopProxy {
 
   void _reportUnexpectedStop({required bool session}) {
     _state = 'failed';
+    if (session && _catalog?.settings.blockWithoutVPN == true)
+      _guardKept = true;
     // The listener shows text; codes are for exceptions.
     // Settings edits reconnect, so the catalog matches the running session.
     _listener?.call(
@@ -552,7 +581,11 @@ extension _ProxyRuntime on DesktopProxy {
     }
   }
 
-  Future<void> _stopProcess() => _stopping ??= () async {
+  // hold: another start follows. With Block traffic without VPN the core then
+  // keeps its kill switch between the two tunnels, so nothing leaves outside
+  // while a server switch, a settings change or failover restarts the tunnel.
+  // The plain stop of a disconnect lifts it.
+  Future<void> _stopProcess({bool hold = false}) => _stopping ??= () async {
     final launch = _process;
     if (launch != null &&
         launch == _vpnSession &&
@@ -560,7 +593,11 @@ extension _ProxyRuntime on DesktopProxy {
         !_disposed &&
         !_storageLost) {
       try {
-        final stopped = await _native('stopVPN', {});
+        final stopped = await _native('stopVPN', {if (hold) 'hold': true});
+        _guardKept = _guardHeld =
+            hold &&
+            _catalog?.settings.xrayTunEnabled == true &&
+            _catalog?.settings.blockWithoutVPN == true;
         // The helper keeps retrying the release; until it works, names may not resolve.
         if (stopped['warning'] == 'vpn_dns_release_failed')
           _listener?.call(
@@ -575,11 +612,28 @@ extension _ProxyRuntime on DesktopProxy {
     } else {
       await _reap(launch);
       if (_vpnSession == launch) _vpnSession = null;
+      if (!hold) await _liftHeldGuard();
     }
     if (_process == launch) _process = null;
     _metricsProcess = null;
     _connections.clear();
   }().whenComplete(() => _stopping = null);
+
+  // Lifts the kill switch a restart's stop kept, when no tunnel follows it: a
+  // disconnect during the restart, or a server name nothing can resolve.
+  Future<void> _liftHeldGuard() async {
+    if (!_guardHeld) return;
+    _guardKept = _guardHeld = false;
+    final session = _vpnSession;
+    if (session == null || _vpnReply != null || _disposed || _storageLost)
+      return;
+    try {
+      await _native('stopVPN', {});
+    } on Object {
+      await _reap(session);
+      if (_vpnSession == session) _vpnSession = null;
+    }
+  }
 
   Future<void> _disconnect() async {
     _cancelCamera?.call();

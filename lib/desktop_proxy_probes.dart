@@ -331,18 +331,7 @@ extension _ProxyProbes on DesktopProxy {
         ? hints.map(InternetAddress.new).toList()
         : literal != null
         ? [literal]
-        // The VPN answers this app's lookups, with Fake DNS addresses that lead
-        // nowhere outside it; the core asks a real resolver instead.
-        : _state == 'connected' && _catalog?.settings.xrayTunEnabled == true
-        ? [
-            for (final address
-                in (await _native('lookupHost', {'host': host}))['addresses']!
-                    as List)
-              InternetAddress(address as String),
-          ]
-        : await InternetAddress.lookup(
-            host,
-          ).timeout(const Duration(seconds: 5));
+        : await _hostLookup(host);
     final preferred = settings.profilePreferredIP == 'inherit'
         ? settings.preferredIP
         : settings.profilePreferredIP;
@@ -376,6 +365,69 @@ extension _ProxyProbes on DesktopProxy {
     }
     if (addresses.isEmpty) throw desktopError('connection_failed');
     return addresses;
+  }
+
+  Future<List<InternetAddress>> _hostLookup(String host) async {
+    if (_guardKept) {
+      // A kept kill switch answers no lookup. A restart looked the name up
+      // through its old tunnel first (_rememberAddresses).
+      final known = _hostAddresses[host];
+      if (known != null) return known;
+      // A name that never resolved, behind a dead tunnel: this start goes
+      // without the kill switch, as every restart did, or the user could not
+      // switch away from a dead server.
+      await _liftHeldGuard();
+      if (_guardStale) {
+        _guardStale = false;
+        await _clearStaleGuard();
+      }
+    }
+    // The VPN answers this app's lookups, with Fake DNS addresses that lead
+    // nowhere outside it; the core asks a real resolver instead.
+    final found =
+        _state == 'connected' && _catalog?.settings.xrayTunEnabled == true
+        ? [
+            for (final address
+                in (await _native('lookupHost', {'host': host}))['addresses']!
+                    as List)
+              InternetAddress(address as String),
+          ]
+        : await InternetAddress.lookup(
+            host,
+          ).timeout(const Duration(seconds: 5));
+    if (found.isNotEmpty) {
+      // Servers that were deleted since leave their entries behind.
+      if (_hostAddresses.length >= 2048) _hostAddresses.clear();
+      _hostAddresses[host] = found;
+    }
+    return found;
+  }
+
+  // Before a restart that keeps the kill switch between its tunnels: looks up
+  // the next server's names through the running tunnel, which still answers.
+  // What fails here fails again, and is reported, when the config is prepared.
+  Future<void> _rememberAddresses(DesktopCatalog catalog) async {
+    try {
+      final node = catalog.node(catalog.selected!);
+      final raw = await _compile(catalog, node);
+      final endpoints = catalogList(
+        (await DesktopProxy._domainOff(domainPath, 'profileEndpoints', {
+          'config': jsonDecode(raw),
+        }))['endpoints'],
+      ).where((e) => e['physical'] == true).toList();
+      final mappings = await _hostMappings(raw, endpoints);
+      await Future.wait([
+        for (final endpoint in endpoints)
+          _endpointAddresses(
+            endpoint,
+            DesktopProxy._nodeSettings(catalog, node),
+            mapping: mappings[endpoint['host']] as Map?,
+          ).then<void>((_) {}, onError: (Object _) {}),
+        // A dead tunnel answers nothing; the restart must not wait for it.
+      ]).timeout(const Duration(seconds: 3));
+    } on Object {
+      // Left to the restart's own preparation.
+    }
   }
 
   Future<CatalogMap> _hostMappings(String config, List<CatalogMap> endpoints) {

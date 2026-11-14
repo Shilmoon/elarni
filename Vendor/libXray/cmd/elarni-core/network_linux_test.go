@@ -539,6 +539,52 @@ func TestLinuxCleanupKeepsTheMarkerWhileTheRedirectMayRemain(t *testing.T) {
 	}
 }
 
+// During a restart two networks of one supervisor share its mark: the old one is cleaned
+// up once the new one is in, and must leave the new one's rules.
+func TestLinuxCleanupLeavesAnotherNetworkWithItsMark(t *testing.T) {
+	old := linuxNetwork{Name: "rv0123456789ab", Table: 12001, Priority: 12001, Mark: 0x52562ee1}
+	replacement := linuxNetwork{Name: "rv0123456789cd", Table: 12001 + linuxRulePriorities, Priority: 12001 + linuxRulePriorities, Mark: old.Mark}
+	routes := []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("10.0.0.0/8")}
+	var rules, own []netlink.Rule
+	for _, network := range []linuxNetwork{old, replacement} {
+		rules = append(rules, *network.markerRule(netlink.FAMILY_V4))
+		for _, rule := range network.policyRules(netlink.FAMILY_V4, routes, nil) {
+			rules = append(rules, *rule)
+		}
+		if network == old {
+			own = append([]netlink.Rule{}, rules...)
+		}
+	}
+	if got := old.staleRules(rules, false); !reflect.DeepEqual(got, own) {
+		t.Fatalf("cleanup of the old network deletes %d rules, want its own %d", len(got), len(own))
+	}
+	if got := replacement.staleRules(rules, false); !reflect.DeepEqual(got, rules[len(own):]) {
+		t.Fatalf("cleanup of the new network deletes %d rules, want its own %d", len(got), len(rules)-len(own))
+	}
+}
+
+// A new network keeps its rules' priorities clear of every other network's, on both
+// sides, or the cleanup above could not tell them apart.
+func TestLinuxNetworkPrioritiesStayClearOfOtherNetworks(t *testing.T) {
+	network := linuxNetwork{Table: 20000, Priority: 20000, Mark: 0x52564e20}
+	at := func(priority, table int) []netlink.Rule {
+		rule := netlink.NewRule()
+		rule.Priority, rule.Table = priority, table
+		return []netlink.Rule{*rule}
+	}
+	for _, test := range []struct {
+		priority, table int
+		free            bool
+	}{
+		{20000 - linuxRulePriorities, 254, true}, {20000 - linuxRulePriorities + 1, 254, false}, {20000, 254, false},
+		{20000 + linuxRulePriorities - 1, 254, false}, {20000 + linuxRulePriorities, 254, true}, {100, 20000, false}, {32766, 254, true},
+	} {
+		if got := network.free(at(test.priority, test.table)); got != test.free {
+			t.Errorf("with a rule at priority %d for table %d: free %v, want %v", test.priority, test.table, got, test.free)
+		}
+	}
+}
+
 // The Linux C1 producer compares the route marked sockets take; the lookup must work
 // with a mark, without privileges, or route moves are never noticed.
 func TestLinuxPhysicalPathFollowsTheMarkedRoute(t *testing.T) {

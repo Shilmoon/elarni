@@ -1639,6 +1639,223 @@ for line in sys.stdin:
     },
   );
 
+  // Regression: with Block traffic without VPN, each restart the app made
+  // (another server, a settings change, failover) lifted the kill switch with
+  // the old tunnel, and traffic left outside until the next tunnel was up.
+  test('a restart keeps Block traffic without VPN between its tunnels', () async {
+    await prepare();
+    final settings = (await backend.control.tunnelSettings()).copyWith(
+      xrayTunEnabled: true,
+      blockWithoutVPN: true,
+      enforceRoutes: false,
+    );
+    await backend.control.updateTunnelSettings(settings);
+    final events = File.fromUri(temporary.uri.resolve('vpn-hold-events'));
+    final stopGate = File.fromUri(temporary.uri.resolve('vpn-hold-gate'));
+    final noAnswer = File.fromUri(temporary.uri.resolve('vpn-hold-no-dns'));
+    await useStub('''
+import json, os, socket, subprocess, sys, time
+listeners = []
+def note(entry):
+    with open(${jsonEncode(events.path)}, 'a') as events: print(entry, file=events)
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request['method']
+    if method == 'runVPN':
+        note(method)
+        config = json.loads(request['payload']['configJSON'])
+        for inbound in config['inbounds']:
+            if inbound['protocol'] in ('socks', 'http'):
+                listener = socket.socket()
+                listener.bind(('127.0.0.1', inbound['port']))
+                listener.listen(32)
+                listeners.append(listener)
+        print(json.dumps({'success': True, 'data': {}}), flush=True)
+    elif method == 'stopVPN':
+        note('stopVPN hold' if request['payload'].get('hold') else method)
+        for listener in listeners: listener.close()
+        listeners.clear()
+        while os.path.exists(${jsonEncode(stopGate.path)}): time.sleep(0.01)
+        print(json.dumps({'success': True, 'data': {}}), flush=True)
+    elif method == 'lookupHost':
+        note(method + ' ' + request['payload']['host'])
+        if os.path.exists(${jsonEncode(noAnswer.path)}):
+            print(json.dumps({'success': False, 'error': 'dns_failed'}), flush=True)
+        else:
+            print(json.dumps({'success': True, 'data': {'addresses': ['127.0.0.1']}}), flush=True)
+        break
+    else:
+        child = subprocess.Popen([${jsonEncode(corePath)}], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        child.stdin.write(line)
+        child.stdin.flush()
+        print(child.stdout.readline(), end='', flush=True)
+        child.stdin.close()
+        child.wait(timeout=10)
+        break
+''');
+    Future<String> named(String host, String name) async =>
+        (await backend.control.importClientProfiles(
+              content: profile
+                  .replaceFirst('127.0.0.1', host)
+                  .replaceFirst('#Fixture', '#$name'),
+            )).snapshot.subscriptions
+            .expand((source) => source.nodes)
+            .singleWhere((node) => node.name == name)
+            .id;
+    final fixture = (await backend.control.subscriptions()).selectedNodeId!;
+    await backend.control.connect();
+    // Nothing resolves under the kept kill switch, so the next server's name
+    // is looked up through the running tunnel before it stops.
+    await backend.control.selectNode(await named('server.invalid', 'Named'));
+    expect(await backend.control.state(), 'connected');
+    expect(await events.readAsLines(), [
+      'runVPN',
+      'lookupHost server.invalid',
+      'stopVPN hold',
+      'runVPN',
+    ]);
+    // A settings change restarts on the same server.
+    await backend.control.updateTunnelSettings(
+      settings.copyWith(excludedRoutes: ['203.0.113.0/24']),
+    );
+    expect(await backend.control.state(), 'connected');
+    expect((await events.readAsLines()).skip(4), [
+      'lookupHost server.invalid',
+      'stopVPN hold',
+      'runVPN',
+    ]);
+    // A user's stop lifts the kill switch.
+    await backend.control.disconnect();
+    expect((await events.readAsLines()).skip(7), ['stopVPN']);
+
+    // A disconnect during a restart: the stop that kept the kill switch is
+    // followed by one that lifts it, or traffic stays blocked while disconnected.
+    await events.delete();
+    await backend.control.selectNode(fixture);
+    await backend.control.connect();
+    await stopGate.writeAsString('hold the restart stop');
+    Future<void>? change;
+    Future<String>? stopping;
+    try {
+      change = backend.control
+          .updateTunnelSettings(settings)
+          .then<void>((_) {}, onError: (Object _) {});
+      for (var i = 0; i < 250; i++) {
+        if ((await events.readAsLines()).contains('stopVPN hold')) break;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      expect((await events.readAsLines()).last, 'stopVPN hold');
+      stopping = backend.control.disconnect();
+    } finally {
+      await stopGate.delete();
+    }
+    await stopping;
+    await change;
+    expect(await backend.control.state(), 'disconnected');
+    expect(await events.readAsLines(), ['runVPN', 'stopVPN hold', 'stopVPN']);
+
+    // The running tunnel is dead and the next server's name was never
+    // resolved: nothing can answer under the kill switch, so this one start
+    // goes without it, as every restart did, instead of failing the switch.
+    await events.delete();
+    await backend.control.connect();
+    await noAnswer.writeAsString('the tunnel answers no lookups');
+    final unknown = await named('unknown.invalid', 'Unknown');
+    await expectLater(
+      backend.control.selectNode(unknown),
+      throwsA(isA<PlatformException>()),
+    );
+    expect(await backend.control.state(), 'connected');
+    expect((await backend.control.subscriptions()).selectedNodeId, fixture);
+    expect(await events.readAsLines(), [
+      'runVPN',
+      'lookupHost unknown.invalid',
+      'stopVPN hold',
+      'stopVPN',
+      'runVPN',
+    ]);
+    await backend.control.disconnect();
+  });
+
+  // A crashed Windows helper leaves its kill switch, which lets the next
+  // helper through: clearing it before the reconnect let traffic out until the
+  // new tunnel was up.
+  test(
+    'a reconnect keeps a crashed helper\'s block until its tunnel is up',
+    () async {
+      await prepare();
+      await backend.control.updateTunnelSettings(
+        (await backend.control.tunnelSettings()).copyWith(
+          xrayTunEnabled: true,
+          blockWithoutVPN: true,
+          enforceRoutes: false,
+        ),
+      );
+      final events = File.fromUri(temporary.uri.resolve('vpn-stale-events'));
+      await useStub('''
+import json, socket, subprocess, sys
+listeners = []
+def note(entry):
+    with open(${jsonEncode(events.path)}, 'a') as events: print(entry, file=events)
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request['method']
+    if method == 'runVPN':
+        note(method)
+        config = json.loads(request['payload']['configJSON'])
+        for inbound in config['inbounds']:
+            if inbound['protocol'] in ('socks', 'http'):
+                listener = socket.socket()
+                listener.bind(('127.0.0.1', inbound['port']))
+                listener.listen(32)
+                listeners.append(listener)
+        print(json.dumps({'success': True, 'data': {}}), flush=True)
+    elif method == 'stopVPN':
+        note(method)
+        for listener in listeners: listener.close()
+        listeners.clear()
+        print(json.dumps({'success': True, 'data': {}}), flush=True)
+    elif method == 'clearVPNGuard':
+        note(method)
+        print(json.dumps({'success': True, 'data': {}}), flush=True)
+        break
+    else:
+        child = subprocess.Popen([${jsonEncode(corePath)}], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        child.stdin.write(line)
+        child.stdin.flush()
+        print(child.stdout.readline(), end='', flush=True)
+        child.stdin.close()
+        child.wait(timeout=10)
+        break
+''');
+      staleGuard = true;
+      await backend.control.connect();
+      await backend.control.disconnect();
+      expect(await events.readAsLines(), ['runVPN', 'stopVPN']);
+      // No lookup is answered under it: a server name this app never resolved
+      // has it cleared first, as every connect did.
+      await events.delete();
+      await backend.control.selectNode(
+        (await backend.control.importClientProfiles(
+              content: profile
+                  .replaceFirst('127.0.0.1', 'localhost')
+                  .replaceFirst('#Fixture', '#Named'),
+            )).snapshot.subscriptions
+            .expand((source) => source.nodes)
+            .singleWhere((node) => node.name == 'Named')
+            .id,
+      );
+      await backend.control.connect();
+      await backend.control.disconnect();
+      expect(await events.readAsLines(), [
+        'clearVPNGuard',
+        'runVPN',
+        'stopVPN',
+      ]);
+    },
+    skip: !Platform.isWindows,
+  );
+
   // Sleep cancels an ICMP probe's stop or restore without disconnecting; the
   // stopped VPN must not stay in a transitional state that refuses Connect.
   for (final gated in ['stopVPN', 'runVPN']) {

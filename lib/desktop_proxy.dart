@@ -154,6 +154,15 @@ final class DesktopProxy {
       >{};
   final _refreshBackoff = <String, ({DateTime until, int failures})>{};
   Future<void>? _initializing, _stopping;
+  // With Block traffic without VPN the core keeps its kill switch after a
+  // tunnel that ended by itself and, when asked, between a restart's two
+  // tunnels. _guardKept: one is in place, so no lookup is answered.
+  // _guardHeld: a restart's stop kept it, and a plain stop lifts it.
+  // _guardStale: this connect left a crashed helper's in place.
+  var _guardKept = false, _guardHeld = false, _guardStale = false;
+  // The addresses each server name last resolved to, for starts under a kept
+  // kill switch.
+  final _hostAddresses = <String, List<InternetAddress>>{};
   Future<CatalogMap>? _disconnecting;
   Future<Process>? _process, _lease;
   StreamIterator<List<int>>? _leaseOutput;
