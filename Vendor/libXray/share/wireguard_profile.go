@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -262,15 +263,14 @@ func amneziaKeyConfig(data []byte) (string, bool, string, error) {
 		return "", false, "", fmt.Errorf("AmneziaVPN key has no client configuration")
 	}
 	config := client.Config
-	// AmneziaVPN fills these in when it connects, from the DNS servers the key names.
-	for placeholder, value := range map[string]string{"$PRIMARY_DNS": key.DNS1, "$SECONDARY_DNS": key.DNS2} {
-		if !strings.Contains(config, placeholder) {
-			continue
+	// AmneziaVPN fills these in when it connects: from the key's dns1 and dns2 when they are IPv4
+	// addresses, else from its own settings, which default to Cloudflare (NativeServerConfig::getDnsPair).
+	for _, dns := range [][3]string{{"$PRIMARY_DNS", key.DNS1, "1.1.1.1"}, {"$SECONDARY_DNS", key.DNS2, "1.0.0.1"}} {
+		value := dns[1]
+		if address, err := netip.ParseAddr(value); err != nil || !address.Is4() {
+			value = dns[2]
 		}
-		if value == "" || strings.ContainsAny(value, "\r\n") {
-			return "", false, "", fmt.Errorf("AmneziaVPN key lacks the DNS servers its configuration names")
-		}
-		config = strings.ReplaceAll(config, placeholder, value)
+		config = strings.ReplaceAll(config, dns[0], value)
 	}
 	return config, amneziaContainers[chosenName] == "awg", key.Description, nil
 }

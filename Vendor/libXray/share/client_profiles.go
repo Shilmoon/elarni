@@ -79,7 +79,8 @@ func (s *skippedMembers) add(name, kind, fallback string, err error) {
 
 // addLink names a skipped link by its fragment and scheme, which it may not parse far enough to have.
 func (s *skippedMembers) addLink(line string, err error) {
-	scheme, _, found := strings.Cut(line, ":")
+	// Only "scheme://" names a kind: a feed's text line ("status: ...") is no kind of server.
+	scheme, _, found := strings.Cut(line, "://")
 	if !found {
 		scheme = ""
 	}

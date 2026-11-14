@@ -246,11 +246,25 @@ class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
             .put("lastSuccessfulFetch", now()).put("refreshInterval", hours * 3600)
             .put("nextRefreshAt", now() + hours * 3600 * (0.9 + java.security.SecureRandom().nextDouble() * 0.2))
         if (metadata.opt("routingEnabled") != false) {
-            addressedRouting((listOf(headers.string("routing")) + imported.strings("directives")).filter(::isRoutingLink))
+            // The header is the provider's routing in any form the decoder reads (a link, bare base64 or JSON, "off").
+            addressedRouting(listOf(headers.string("routing")).filter(String::isNotEmpty) + imported.strings("directives").filter(::isRoutingLink))
                 .forEach { if (!importsRouting(it, id)) metadata.put("directiveNotice", "Unsupported provider directives") }
         }
+        // A server the compiler refuses is left out like a line the importer cannot read; with none left the refresh fails.
+        val refused = mutableListOf<JSONObject>()
+        try { validateNodes(only = id, refused = refused) } catch (_: OutOfMemoryError) { throw AppFailure("input_too_large") }
+        val usable = if (refused.isEmpty()) nodes else {
+            val gone = refused.map { it.string("id") }.toSet()
+            val kept = nodes.filter { it.string("id") !in gone }
+            if (kept.isEmpty()) throw AppFailure("unsupported_profile")
+            val kinds = metadata.string("skippedKinds").split(", ") + refused.map { it.mapObject("config").objects("outbounds").firstOrNull()?.string("protocol").orEmpty() }
+            metadata.put("skippedServers", ((metadata.string("skippedServers").toIntOrNull() ?: 0) + refused.size).toString())
+                .put("skippedKinds", kinds.filter(String::isNotEmpty).distinct().take(5).joinToString(", "))
+            source.put("nodes", JSONArray(kept))
+            kept
+        }
         reconcileSelection()
-        if (selected.isEmpty()) nodes.firstOrNull { it.string("format") == "xrayProfile" }?.let { data.put("selectedNodeId", it.string("id")) }
+        if (selected.isEmpty()) usable.firstOrNull { it.string("format") == "xrayProfile" }?.let { data.put("selectedNodeId", it.string("id")) }
         return null
     }
     fun refreshFailed(id: String, code: String) {
@@ -430,8 +444,9 @@ class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
         })
     }
     /** Compiles each server in turn, which validates it: 4,096 compiled trees at once outgrew the API 30 heap.
-     *  A request that compiled before is not compiled again, so an edit costs the servers it changes. */
-    fun validateNodes(valid: () -> Unit = {}) {
+     *  A request that compiled before is not compiled again, so an edit costs the servers it changes.
+     *  With [refused], only the subscription [only] is compiled and a server the compiler refuses is collected, not thrown. */
+    fun validateNodes(only: String? = null, refused: MutableList<JSONObject>? = null, valid: () -> Unit = {}) {
         // Resolve settings and each source's route once; per-node lookups were quadratic.
         val setting = settings
         val vpn = setting.getBoolean("xrayTunEnabled")
@@ -440,6 +455,7 @@ class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
         // Servers with one route and one IP preference differ only in their profile.
         val shared = HashMap<String, Pair<JSONObject, String>>()
         sources.forEach { source ->
+            if (only != null && source.string("id") != only) return@forEach
             valid()
             val routeId = assigned.string(source.string("id"))
             val route = allRoutes.firstOrNull { it.string("id") == routeId && it.optBoolean("enabled", true) }
@@ -451,7 +467,8 @@ class Catalog(val data: JSONObject, private val snapshot: Boolean = false) {
                 val profile = node.getJSONObject("config")
                 val key = sha256(context + profile.toString())
                 if (synchronized(validated) { validated[key] } != null) return@forEach
-                compiled(request.put("profile", profile))
+                try { compiled(request.put("profile", profile)) }
+                catch (error: AppFailure) { if (refused == null || error.code != "unsupported_profile") throw error; refused.add(node); return@forEach }
                 synchronized(validated) { validated[key] = true }
             }
         }

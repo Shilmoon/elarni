@@ -1298,9 +1298,14 @@ final class DesktopCatalog {
           },
         });
     }
+    _selectAfterRefresh(nodes);
+    return null;
+  }
+
+  // As on Android, a running tunnel moves to this provider's first server,
+  // or to the next one automation checks so that it stays valid.
+  void _selectAfterRefresh(List<CatalogMap> nodes) {
     reconcileSelection();
-    // As on Android, a running tunnel moves to this provider's first server,
-    // or to the next one automation checks so that it stays valid.
     data['selectedNodeId'] ??=
         switch (data['automation']) {
           {'enabled': true, 'nodeIDs': [final next, ...]} => next,
@@ -1309,7 +1314,43 @@ final class DesktopCatalog {
         nodes
             .where((node) => node['format'] == 'xrayProfile')
             .firstOrNull?['id'];
-    return null;
+  }
+
+  /// Takes the servers of [id] that the compiler refuses out of a refresh and
+  /// counts them with those the import passed over. False when none of its
+  /// servers is refused or none would be left: the refresh then fails.
+  bool dropRefused(String id, Set<String> refused) {
+    final current = source(id);
+    final nodes = catalogList(current['nodes']);
+    final kept = [
+      for (final node in nodes)
+        if (!refused.contains(node['id'])) node,
+    ];
+    if (kept.isEmpty || kept.length == nodes.length) return false;
+    final metadata = catalogMap(current['metadata'] ?? const {});
+    final kinds = {
+      if (metadata['skippedKinds'] case final String kinds)
+        ...kinds.split(', '),
+      for (final node in nodes)
+        if (refused.contains(node['id']))
+          catalogList(
+            catalogMap(node['config'])['outbounds'],
+          ).firstOrNull?['protocol'],
+    }.whereType<String>().where((kind) => kind.isNotEmpty);
+    putSource({
+      ...current,
+      'nodes': kept,
+      'metadata': {
+        ...metadata,
+        'skippedServers':
+            (metadata['skippedServers'] as int? ?? 0) +
+            nodes.length -
+            kept.length,
+        'skippedKinds': kinds.take(5).join(', '),
+      },
+    });
+    _selectAfterRefresh(kept);
+    return true;
   }
 
   // Whether a scheduled refresh is due. [longest] is the furthest ahead its

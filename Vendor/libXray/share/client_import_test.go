@@ -498,3 +498,37 @@ proxies:
 		t.Fatal("an unknown DNS field imported")
 	}
 }
+
+// A feed's text line names no server kind: only a scheme before "://" does.
+func TestSkippedTextLinesAreNotNamedAsSchemes(t *testing.T) {
+	result, err := ImportClientProfiles("status: 12 GB left\nssh://user@127.0.0.1:22\ntrojan://pw@127.0.0.1:443#One")
+	want := []SkippedProfile{{Kind: "link"}, {Kind: "ssh"}}
+	if err != nil || len(result.Profiles) != 1 || !reflect.DeepEqual(result.Skipped, want) {
+		t.Fatalf("%+v, %v; want skipped %+v", result, err, want)
+	}
+}
+
+// AmneziaVPN fills the DNS placeholders from its own settings (1.1.1.1 and 1.0.0.1 by default)
+// when a key names no usable dns1 or dns2 (NativeServerConfig::getDnsPair).
+func TestAmneziaVPNKeyWithoutDNSUsesAmneziaDefaults(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	config := "[Interface]\nAddress = 10.8.1.2/32\nDNS = $PRIMARY_DNS, $SECONDARY_DNS\nPrivateKey = " + key + "\n" +
+		"\n[Peer]\nPublicKey = " + key + "\nAllowedIPs = 0.0.0.0/0, ::/0\nEndpoint = 127.0.0.1:51820\n"
+	for name, document := range map[string]map[string]any{
+		"absent":   {"containers": []any{amneziaContainer(t, "amnezia-wireguard", "wireguard", config)}, "defaultContainer": "amnezia-wireguard"},
+		"not IPv4": {"containers": []any{amneziaContainer(t, "amnezia-wireguard", "wireguard", config)}, "defaultContainer": "amnezia-wireguard", "dns1": "dns.example", "dns2": ""},
+	} {
+		result, err := ImportClientProfiles(amneziaKey(t, document))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var root struct {
+			DNS struct {
+				Servers []string `json:"servers"`
+			} `json:"dns"`
+		}
+		if err := json.Unmarshal(result.Profiles[0].Config, &root); err != nil || !slices.Equal(root.DNS.Servers, []string{"1.1.1.1", "1.0.0.1"}) {
+			t.Fatalf("%s: %s (%v)", name, result.Profiles[0].Config, err)
+		}
+	}
+}

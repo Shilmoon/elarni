@@ -17,11 +17,12 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - Removed the core's batch latency test and its start from a config file: no platform calls
   them.
 - A subscription no longer fails as a whole because of one server Elarni cannot read. A link,
-  Clash proxy or Xray JSON entry that is unsupported or malformed is left out, the others are
-  added, and the subscription's page shows how many were left out and of which kind (**Servers
-  not added**). Before, one such line cost every server: a 12-server subscription with one
-  unusual TUIC link added nothing. A reply with nothing Elarni can read still fails and keeps
-  the servers from the last refresh. All platforms.
+  Clash proxy or Xray JSON entry that is unsupported or malformed, or that Elarni reads but
+  cannot run, is left out, the others are added, and the subscription's page shows how many
+  were left out and of which kind (**Servers not added**). Before, one such line cost every
+  server: a 12-server subscription with one unusual TUIC link added nothing. A reply with
+  nothing Elarni can use still fails and keeps the servers from the last refresh. All
+  platforms.
 - A routing profile from a provider that Elarni cannot apply no longer fails the subscription
   it came with: the servers are added or refreshed without it, and the subscription's page
   says so. All platforms.
@@ -45,7 +46,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - Happ routing profiles that leave the DNS fields or the name empty (Happ's own documented
   example and the default output of its routing builders do) were refused; missing DNS now
   takes Happ's defaults. Fields that other clients add are ignored, and the header forms
-  `off` and `...?data=` are accepted. All platforms.
+  `off` and `...?data=` are accepted. On Android a `routing` header that is not a link (bare
+  base64 or JSON, `off`) was ignored. All platforms.
 - An Xray JSON subscription with extra top-level sections (`meta` in Happ JSON, Xray's
   `version` and `geodata`) passed the importer and was then refused: a new subscription
   vanished and a refresh failed without a recorded reason. Such sections are ignored. On

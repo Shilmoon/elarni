@@ -5429,12 +5429,23 @@ for line in sys.stdin:
           ],
         },
       ]);
+      final refusedMember =
+          (jsonDecode(refused) as List).single as Map<String, Object?>;
+      final mixed = jsonEncode([
+        {
+          'remarks': 'Kept',
+          'outbounds': [(refusedMember['outbounds']! as List).first],
+        },
+        refusedMember,
+      ]);
       var served = profile;
       final feed = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       feed.listen((request) async {
-        request.response.write(
-          request.uri.path == '/refused' ? refused : served,
-        );
+        request.response.write(switch (request.uri.path) {
+          '/refused' => refused,
+          '/mixed' => mixed,
+          _ => served,
+        });
         await request.response.close();
       });
       try {
@@ -5493,6 +5504,26 @@ for line in sys.stdin:
         final failed = await group(freshID);
         expect(failed.status, 'refresh_failed');
         expect(failed.nodes, isEmpty);
+
+        // One server the compiler refuses is left out and counted, like a
+        // line the importer cannot read; the rest of the download is added.
+        final partial = await backend.control.addSubscription(
+          'http://127.0.0.1:${feed.port}/mixed',
+        );
+        final partialID = partial.snapshot.subscriptions
+            .singleWhere((s) => s.id != id && s.id != freshID && !s.isLocal)
+            .id;
+        await backend.control.refreshSubscription(
+          partialID,
+          challenge: partial.warning!.challenge,
+        );
+        expect((await group(partialID)).nodes.single.name, 'Kept');
+        final stored = catalogList(
+          catalogMap(storedCatalog!['committed'])['subscriptions'],
+        ).singleWhere((s) => s['id'] == partialID);
+        expect(stored['refreshError'], isNull);
+        expect(catalogMap(stored['metadata'])['skippedServers'], 1);
+        expect(catalogMap(stored['metadata'])['skippedKinds'], 'vless');
       } finally {
         await feed.close(force: true);
       }
