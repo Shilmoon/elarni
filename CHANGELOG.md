@@ -46,8 +46,9 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 - Happ routing profiles that leave the DNS fields or the name empty (Happ's own documented
   example and the default output of its routing builders do) were refused; missing DNS now
   takes Happ's defaults. Fields that other clients add are ignored, and the header forms
-  `off` and `...?data=` are accepted. On Android a `routing` header that is not a link (bare
-  base64 or JSON, `off`) was ignored. All platforms.
+  `off`, `...?data=` and, again, a link without a scheme (`://routing/...`, which INCY
+  documents for providers) are accepted. On Android a `routing` header that is not a link
+  (bare base64 or JSON, `off`) was ignored. All platforms.
 - An Xray JSON subscription with extra top-level sections (`meta` in Happ JSON, Xray's
   `version` and `geodata`) passed the importer and was then refused: a new subscription
   vanished and a refresh failed without a recorded reason. Such sections are ignored. On
