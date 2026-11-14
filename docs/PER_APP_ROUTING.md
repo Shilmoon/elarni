@@ -101,6 +101,14 @@ per-app routing until the app reconnects. When the tunnel starts, Elarni looks f
 whether it was closed. Android needs nothing: it closes the apps' connections itself when
 a VPN starts.
 
+On Windows the same is true of every app, with or without per-app routing: a connection
+opened before Elarni connected, or in the moment between two tunnels (a server switch, a
+changed setting), would stay outside the VPN for as long as it lives. When the tunnel is up,
+Elarni closes the IPv4 connections whose destination Windows now sends into the tunnel, so
+the apps reconnect through it; **Recent connections** lists only those of listed apps. Left
+alone are connections to an excluded route, to this computer and to local networks, and those
+of apps that skip the tunnel (target Direct, or unlisted while only listed apps use it).
+
 ## Apps installed while connected
 
 Android takes the VPN's apps by user ID when the tunnel starts, and so do the per-app

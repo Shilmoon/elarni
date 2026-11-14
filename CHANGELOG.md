@@ -19,6 +19,12 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
 
 ### Fixed
 
+- Windows, with **Block traffic without VPN** off: a connection an app opened before Elarni
+  connected, or in the fraction of a second between two tunnels (a server switch, a changed
+  setting), stayed outside the VPN for as long as it lived, as Windows keeps a connection on
+  the network it was opened on. When the tunnel is up, Elarni now closes such IPv4 connections
+  whose destination the tunnel takes, so the apps reconnect through it. Connections to excluded
+  routes and local networks, and those of apps that skip the tunnel, are left alone.
 - After a network change (Wi-Fi to mobile data, a new default route), an XHTTP or TUIC connection
   on the dead path could stay open with its apps stalled until the idle timeout, 30 s or more:
   data the old network had still delivered counted as the server's answer to the check. The
