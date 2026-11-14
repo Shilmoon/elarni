@@ -48,7 +48,10 @@ type vpnRequest struct {
 	RecordDiagnostics bool                      `json:"recordDiagnostics"`
 }
 type linuxCommand struct {
-	Action     string         `json:"action"`
+	Action string `json:"action"`
+	// Hold marks a stop the app follows with another start: with Block traffic without
+	// VPN the kill switch stays in place between the two tunnels.
+	Hold       bool           `json:"hold,omitempty"`
 	Request    vpnRequest     `json:"request"`
 	Network    linuxNetwork   `json:"network"`
 	Owner      int            `json:"owner"` // Set by the supervisor: the user the worker records for.
@@ -394,7 +397,11 @@ func startVPN(payload json.RawMessage) (any, error) {
 	}
 	return map[string]any{"adapter": reply.Adapter, "helperPid": reply.PID}, nil
 }
-func stopVPN() (any, error) {
+func stopVPN(payload json.RawMessage) (any, error) {
+	var request struct {
+		Hold bool `json:"hold"`
+	}
+	_ = json.Unmarshal(payload, &request)
 	linuxBroker.Lock()
 	child := linuxBroker.child
 	linuxBroker.metrics = nil
@@ -402,7 +409,7 @@ func stopVPN() (any, error) {
 	if child == nil {
 		return map[string]any{}, nil
 	}
-	_, err := child.request(linuxCommand{Action: "stop"}, 10*time.Second)
+	_, err := child.request(linuxCommand{Action: "stop", Hold: request.Hold}, 10*time.Second)
 	if err != nil {
 		_ = platformStop()
 	}
@@ -616,6 +623,9 @@ func superviseLinuxTunnels(ctx context.Context, commands <-chan linuxCommand, cl
 	// any other end it stays, with the tunnel lock, and blocks traffic until the next
 	// tunnel replaces it or the next connect after this process exits reaps it.
 	var block bool
+	// held says the app's restart stop kept the network: unlike a lost tunnel's, a plain
+	// stop then removes it, so a disconnect during a restart leaves nothing blocked.
+	var held bool
 	// release removes interception before the worker's DNS listener and tunnel, then the
 	// rest. A failure keeps the network recorded for another attempt. A worker that had to
 	// be killed leaves no state in this process.
@@ -688,8 +698,13 @@ func superviseLinuxTunnels(ctx context.Context, commands <-chan linuxCommand, cl
 			if command.Action == "stop" {
 				// An idle stop keeps a lost tunnel's kill switch, like the Windows helper:
 				// only the next tunnel, Repair or a reboot lifts it.
-				if worker != nil {
-					block = false
+				switch {
+				case worker != nil && command.Hold && block && network.Name != "":
+					// The app starts another tunnel next: the kill switch covers the gap.
+					_ = worker.stop()
+					worker, held = nil, true
+				case worker != nil || held && !command.Hold:
+					block, held = false, false
 					if release() != nil {
 						return 1
 					}
@@ -704,11 +719,12 @@ func superviseLinuxTunnels(ctx context.Context, commands <-chan linuxCommand, cl
 				_ = send(linuxReply{Error: "invalid_vpn_request"})
 				return 1
 			}
-			// A kill switch kept from a lost tunnel goes first: two tunnels' policy rules
-			// would each capture the other's traffic.
-			if release() != nil {
-				return 1
-			}
+			// A kill switch kept from the last tunnel stays until this one has its own:
+			// removed first, traffic left outside while the tunnel started. Its tunnel is
+			// gone, so its table is empty and its rules route nothing; its guard rejects
+			// this tunnel's traffic for the moment both exist.
+			previous := network
+			network, held = linuxNetwork{}, false
 			reply := linuxReply{Error: "vpn_start_failed"}
 			var err error
 			if active == nil {
@@ -750,6 +766,24 @@ func superviseLinuxTunnels(ctx context.Context, commands <-chan linuxCommand, cl
 			// This long-lived root process's copy of the geodata is garbage now.
 			command.assets = nil
 			debug.FreeOSMemory()
+			if previous.Name != "" {
+				kept := !reply.Ready && command.Request.RoutePolicy != nil && command.Request.RoutePolicy.BlockWithoutVPN
+				if kept {
+					// What the failed start installed may be partial; the previous kill
+					// switch is whole. Without the block setting nothing may stay blocked.
+					block = false
+					if release() != nil {
+						return 1
+					}
+					network, block = previous, true
+				} else if host.cleanup(previous) != nil {
+					// Its guard would reject the new tunnel's traffic: the next connect
+					// sees the leftover and offers to clear it.
+					return 1
+				} else {
+					host.forget(previous)
+				}
+			}
 			if !reply.Ready {
 				if ended() != nil {
 					return 1

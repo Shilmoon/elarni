@@ -306,3 +306,51 @@ func TestVPNChildReusesOnlyTheRevisionItVerified(t *testing.T) {
 		t.Fatal("a reuse with files was accepted")
 	}
 }
+
+// Regression: with Block traffic without VPN, each restart the app made (another server,
+// a settings change, failover) lifted the guard with the old tunnel, and traffic left
+// outside until the next tunnel had its own.
+func TestChildGuardStaysForARestart(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		code              int
+		hold, block, keep bool
+	}{
+		{"a disconnect", 0, false, true, false},
+		{"a restart stop", 0, true, true, true},
+		{"a restart stop without the block setting", 0, true, false, false},
+		{"a lost tunnel", 1, false, true, true},
+		{"a lost tunnel without the block setting", 1, false, false, false},
+	} {
+		guard := childGuard{installed: true, hold: test.hold}
+		guard.ended(test.code, test.block)
+		if guard.keep != test.keep || guard.hold {
+			t.Errorf("after %s the guard is %+v, want keep %v", test.name, guard, test.keep)
+		}
+	}
+	// A disconnect during a restart lifts what the restart kept; another restart stop does not.
+	guard := childGuard{installed: true, hold: true}
+	guard.ended(0, true)
+	guard.idleStop(true)
+	if !guard.keep {
+		t.Fatal("a repeated restart stop lifted the guard")
+	}
+	guard.idleStop(false)
+	if guard.keep {
+		t.Fatal("a disconnect during a restart kept traffic blocked")
+	}
+	// The stop that follows a lost tunnel keeps it: only the next tunnel or Repair lifts it.
+	guard = childGuard{installed: true}
+	guard.ended(1, true)
+	guard.idleStop(false)
+	if !guard.keep {
+		t.Fatal("a stop lifted a lost tunnel's guard")
+	}
+	// A start that fails after a restart stop is a lost tunnel under the new request's setting.
+	guard = childGuard{installed: true, hold: true}
+	guard.ended(0, true)
+	guard.ended(1, false)
+	if guard.keep {
+		t.Fatal("a failed start without the block setting kept traffic blocked")
+	}
+}

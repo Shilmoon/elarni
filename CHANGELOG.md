@@ -35,6 +35,14 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   against the selected server, so one that refused or reset connections stayed selected, shown
   as connected, with nothing passing. A server whose check passed before and whose requests are
   now refused, reset or closed counts as failed. Windows, Linux, macOS and iPhone.
+- With **Block traffic without VPN** on (Windows, Linux), traffic no longer leaves outside the
+  VPN while the app restarts the tunnel: on a server switch, a per-app or route change,
+  failover, or the reconnect after the tunnel ended by itself. It left for 60-240 ms on each
+  change and about a second after a lost tunnel. The block now stays in place between the two
+  tunnels, and a reconnect under it uses the server address it last resolved, so a server
+  named by a domain reconnects without a lookup the block would refuse. Disconnect lifts it.
+  On Windows the reconnect after a crashed VPN helper also keeps the block the helper left,
+  instead of clearing it first (up to 19 s outside the VPN on a slow PC).
 - After a network change (Wi-Fi to mobile data, a new default route), an XHTTP or TUIC connection
   on the dead path could stay open with its apps stalled until the idle timeout, 30 s or more:
   data the old network had still delivered counted as the server's answer to the check. The

@@ -60,6 +60,7 @@ type vpnRequest struct {
 type vpnHandshake struct {
 	Version           int                       `json:"version"`
 	Action            string                    `json:"action,omitempty"`
+	Hold              bool                      `json:"hold,omitempty"` // a stop the app follows with another start
 	Config            string                    `json:"config"`
 	Assets            map[string]int            `json:"assets"`
 	AssetRevision     string                    `json:"assetRevision,omitempty"`
@@ -259,7 +260,11 @@ func sendVPNStart(pipe io.Writer, replies <-chan vpnReply, handshake vpnHandshak
 	return reply, ok, nil
 }
 
-func stopVPN() (any, error) {
+func stopVPN(payload json.RawMessage) (any, error) {
+	var request struct {
+		Hold bool `json:"hold"`
+	}
+	_ = json.Unmarshal(payload, &request)
 	vpnBroker.Lock()
 	pipe, replies := vpnBroker.pipe, vpnBroker.replies
 	vpnBroker.metrics = nil
@@ -267,7 +272,7 @@ func stopVPN() (any, error) {
 	if pipe == nil {
 		return nil, errors.New("vpn_failed")
 	}
-	if writeFrame(pipe, vpnHandshake{Version: 1, Action: "stop"}) != nil {
+	if writeFrame(pipe, vpnHandshake{Version: 1, Action: "stop", Hold: request.Hold}) != nil {
 		return nil, errors.New("vpn_failed")
 	}
 	select {
@@ -590,10 +595,7 @@ func vpnChild(name string, brokerPID uint32) int {
 				var ready bool
 				code, ready, fatal = runVPNTunnel(pipe, parent, command, commands, closed, &guard, &held)
 				heldUntil = time.Now().Add(childAssetHold)
-				// With Block traffic without VPN, only a requested stop lifts the guard. After
-				// any other end it blocks traffic, still claimed by this child, until the next
-				// tunnel replaces it, Repair VPN setup or a restart.
-				guard.keep = code != 0 && command.RoutePolicy != nil && command.RoutePolicy.BlockWithoutVPN
+				guard.ended(code, command.RoutePolicy != nil && command.RoutePolicy.BlockWithoutVPN)
 				guard.settle()
 				switch {
 				case code == 0: // A requested stop is answered even when this child cannot be reused.
@@ -604,6 +606,9 @@ func vpnChild(name string, brokerPID uint32) int {
 				default:
 					continue // The failed start was answered.
 				}
+			} else {
+				guard.idleStop(command.Hold)
+				guard.settle()
 			}
 			if reply.Ready && guard.failed {
 				reply.Error = "vpn_dns_release_failed"
@@ -621,8 +626,28 @@ func vpnChild(name string, brokerPID uint32) int {
 type childGuard struct {
 	owner     windows.Handle
 	installed bool // this child's guard is in place
-	keep      bool // Block traffic without VPN keeps it after a tunnel that ended by itself
+	keep      bool // Block traffic without VPN keeps it after a tunnel that ended by itself or for a restart
+	held      bool // kept by the app's restart stop: unlike a lost tunnel's, a plain stop lifts it
+	hold      bool // the stop that ended the tunnel announced another start
 	failed    bool // the last release failed; each settle retries it
+}
+
+// ended decides what stays after a tunnel; code 0 is a requested stop. With Block traffic
+// without VPN only a plain requested stop lifts the guard. After a tunnel that ended by
+// itself, or a stop the app follows with another start, it blocks traffic, still claimed
+// by this child, until the next tunnel replaces it, Repair VPN setup or a restart.
+func (g *childGuard) ended(code int, block bool) {
+	g.keep = (code != 0 || g.hold) && block
+	g.held = g.keep && code == 0
+	g.hold = false
+}
+
+// idleStop follows a stop without a tunnel. A disconnect during a restart lifts the guard
+// the restart kept; a lost tunnel's stays.
+func (g *childGuard) idleStop(hold bool) {
+	if g.held && !hold {
+		g.keep, g.held = false, false
+	}
 }
 
 func (g *childGuard) claim() error {
@@ -880,6 +905,7 @@ func runVPNTunnel(pipe io.Writer, parent windows.Handle, request vpnCommand, com
 			if command.Action != "stop" {
 				return 1, true, true
 			}
+			guard.hold = command.Hold
 			return 0, true, false
 		case now := <-ticker.C:
 			if state, err := windows.WaitForSingleObject(parent, 0); err != nil || state != uint32(windows.WAIT_TIMEOUT) {

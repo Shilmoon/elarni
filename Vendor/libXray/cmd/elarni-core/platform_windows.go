@@ -56,7 +56,7 @@ func platformRequest(method string, payload json.RawMessage) (any, error, bool) 
 		data, err := runVPN(payload)
 		return data, err, true
 	case "stopVPN":
-		data, err := stopVPN()
+		data, err := stopVPN(payload)
 		return data, err, true
 	case "clearVPNGuard":
 		data, err := clearVPNGuard()

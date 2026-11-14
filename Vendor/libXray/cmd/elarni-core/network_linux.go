@@ -260,10 +260,8 @@ func reserveLinuxNetwork() (linuxNetwork, error) {
 			if err != nil {
 				return linuxNetwork{}, errors.New("vpn_routes_failed")
 			}
-			for _, rule := range rules {
-				if rule.Table == network.Table || rule.Priority > network.Priority-linuxRulePriorities && rule.Priority <= network.Priority {
-					occupied = true
-				}
+			if !network.free(rules) {
+				occupied = true
 			}
 			routes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: network.Table}, netlink.RT_FILTER_TABLE)
 			if err != nil {
@@ -291,6 +289,18 @@ func reserveLinuxNetwork() (linuxNetwork, error) {
 		return network, nil
 	}
 	return linuxNetwork{}, errors.New("vpn_resources_busy")
+}
+
+// free reports that no rule uses this network's table or sits within a band of its
+// priority, on either side. Every network has a rule at its own priority, so the bands
+// of two networks never overlap and staleRules can tell them apart by priority.
+func (network linuxNetwork) free(rules []netlink.Rule) bool {
+	for _, rule := range rules {
+		if rule.Table == network.Table || rule.Priority > network.Priority-linuxRulePriorities && rule.Priority < network.Priority+linuxRulePriorities {
+			return false
+		}
+	}
+	return true
 }
 
 func (network linuxNetwork) rule(family int) *netlink.Rule {
@@ -529,13 +539,16 @@ func (network linuxNetwork) cleanup() error {
 	return errors.Join(failures...)
 }
 
-// staleRules are this network's rules to delete; the mark names them whatever policy
-// installed them. While its DNS redirect may remain, the marker rule stays, so an
-// unprivileged linuxGuardLeft still reports the leftover and Repair can clear it.
+// staleRules are this network's rules to delete; the mark and its priorities name them
+// whatever policy installed them. A supervisor's networks share its mark, and during a
+// restart the old one is cleaned up beside the new one. While its DNS redirect may
+// remain, the marker rule stays, so an unprivileged linuxGuardLeft still reports the
+// leftover and Repair can clear it.
 func (network linuxNetwork) staleRules(rules []netlink.Rule, redirect bool) []netlink.Rule {
 	var stale []netlink.Rule
 	for _, rule := range rules {
-		if rule.Protocol == 186 && rule.Mark == network.Mark && (!redirect || rule.IifName != network.markerRule(rule.Family).IifName) {
+		if rule.Protocol == 186 && rule.Mark == network.Mark && rule.Priority > network.Priority-linuxRulePriorities && rule.Priority <= network.Priority &&
+			(!redirect || rule.IifName != network.markerRule(rule.Family).IifName) {
 			stale = append(stale, rule)
 		}
 	}
