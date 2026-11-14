@@ -55,6 +55,15 @@ struct AutomationConfiguration: Codable, Equatable {
   /// Probe timeouts that make a health check an endpoint failure. Switching servers
   /// needs both targets to time out when there are two, as on desktop and Android.
   var endpointFailureTimeouts: Int { policy == .fixed || targets.count == 1 ? 1 : 2 }
+
+  /// Whether a failed health probe counts against the server. A timeout always does. A request
+  /// that was refused, reset or closed counts only for a server whose check passed before on this
+  /// connection: its service or its route has gone since. One that never passed may be rejecting
+  /// the credentials, which no other moment changes.
+  static func countsAgainstServer(code: String?, stage: String?, passedBefore: Bool) -> Bool {
+    code == "timeout" || passedBefore && stage == "target_request"
+      && ["failed", "eof", "unexpected_eof", "closed_pipe"].contains(code ?? "")
+  }
 }
 
 enum AutomationFailure: String, Error {

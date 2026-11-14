@@ -34,7 +34,7 @@ enum NativeAPI {
     guard let reply = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw IOSAppError.nativeFailure }
     guard reply["success"] as? Bool == true else {
       if let diagnostics = (reply["data"] as? [String: Any])?["diagnostics"] as? [String: Any] {
-        throw IOSProbeFailure(code: diagnostics["code"] as? String ?? "unknown",
+        throw IOSProbeFailure(code: diagnostics["code"] as? String ?? "unknown", stage: diagnostics["stage"] as? String,
           cleanupPending: ["pending", "failed"].contains(diagnostics["cleanupState"] as? String ?? ""),
           receivedHTTP: (diagnostics["httpStatus"] as? Int ?? 0) != 0)
       }
@@ -46,6 +46,7 @@ enum NativeAPI {
 
 struct IOSProbeFailure: LocalizedError {
   let code: String
+  let stage: String?
   let cleanupPending: Bool
   let receivedHTTP: Bool
   var errorDescription: String? {

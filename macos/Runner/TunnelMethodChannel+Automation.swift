@@ -416,6 +416,7 @@ extension TunnelMethodChannel {
           let instance = before["instanceID"] as? String, !instance.isEmpty else { throw AutomationFailure.providerFailure }
     var qualifyingFailures = 0
     var invalidTarget = false
+    let passedBefore = verifiedHealth?.node == context.nodeID && verifiedHealth?.epoch == automation.epoch
     for (ordinal, target) in automationConfiguration.targets.prefix(2).enumerated() {
       let started = automationNow()
       var diagnostic = ProbeDiagnostic(targetOrdinal: ordinal + 1, revision: context.intentRevision,
@@ -470,9 +471,11 @@ extension TunnelMethodChannel {
             (failure.details["httpStatus"] as? Int ?? 0) != 0 {
           invalidTarget = true
         }
-        // EOF/generic handshake errors may be authentication failures. Only
-        // classified timeouts at every target (both, when there are two) qualify for cycling.
-        if failure.details["code"] as? String == "timeout" { qualifyingFailures += 1 }
+        // EOF/generic handshake errors may be authentication failures, so they qualify only for
+        // a server that passed before; timeouts always do. Every target (both, when there are
+        // two) must qualify for cycling.
+        if AutomationConfiguration.countsAgainstServer(code: failure.details["code"] as? String,
+            stage: failure.details["stage"] as? String, passedBefore: passedBefore) { qualifyingFailures += 1 }
       } catch { /* Unclassified failures remain indeterminate. */ }
     }
     if invalidTarget { throw AutomationFailure.invalidTarget }

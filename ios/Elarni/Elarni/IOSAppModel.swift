@@ -526,6 +526,7 @@ final class IOSAppModel {
         guard var id = store.selectedNodeID() else { throw IOSAppError.noSelection }
         let original = id
         recovery.rearm(now: ProcessInfo.processInfo.systemUptime)
+        healthPassedNode = nil
         try saveEpisode()
         if preferences.automation.enabled, preferences.automation.policy == .lowestLatency, !vpn.active {
           id = try await chooseBeforeConnecting(current: id)
@@ -1151,20 +1152,25 @@ final class IOSAppModel {
     if let rules = (config["routing"] as? [String: Any])?["rules"] as? [Any], !rules.isEmpty { throw AutomationFailure.unsupportedPolicy }
   }
 
+  /// The server whose active health check passed on this connection; see `countsAgainstServer`.
+  @ObservationIgnored private var healthPassedNode: String?
+
   private func activeHealth(_ node: ServerNode, expectedPlan: Data? = nil) async throws {
     try requireRecoveryPolicy(node)
     // As on macOS and desktop: every target gets its probe before the check is classified.
     var timeouts = 0, invalidTarget = false
     let russianEntry = preferences.automation.russianEntryNodeIDs?.contains(node.id) == true
+    let passedBefore = healthPassedNode == node.id
     for target in preferences.automation.targets {
       do {
         _ = try await probe(node, mode: "activeProxy", target: target, expectedPlan: expectedPlan)
+        healthPassedNode = node.id
         recovery.observe(node: node.id, passed: true, russianEntry: russianEntry); whitelistMode = recovery.whitelist
         return
       } catch let error as IOSProbeFailure {
         if error.cleanupPending { throw AutomationFailure.quarantine }
         if error.receivedHTTP || error.code == "target_dns_failed" { invalidTarget = true }
-        if error.code == "timeout" { timeouts += 1 }
+        if AutomationConfiguration.countsAgainstServer(code: error.code, stage: error.stage, passedBefore: passedBefore) { timeouts += 1 }
       } catch { throw error }
     }
     if invalidTarget { throw AutomationFailure.invalidTarget }

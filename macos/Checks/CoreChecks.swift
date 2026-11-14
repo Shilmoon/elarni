@@ -374,6 +374,20 @@ struct CoreChecks {
       try expect(configuration.endpointFailureTimeouts == 1, "fixed policy")
     }
 
+    // A server that worked and now refuses or resets connections is down, as one that times out
+    // is. Failover never left it: only timeouts counted.
+    try check("a refused request counts against a server that passed before") {
+      let counts = AutomationConfiguration.countsAgainstServer
+      for code in ["failed", "eof", "unexpected_eof", "closed_pipe"] {
+        try expect(counts(code, "target_request", true), code)
+        // It may be rejecting the credentials, which another server does not fix.
+        try expect(!counts(code, "target_request", false), code + " on a server that never passed")
+        try expect(!counts(code, "instance_start", true), code + " before the request")
+      }
+      try expect(counts("timeout", "target_request", false) && counts("timeout", nil, false), "timeouts always count")
+      try expect(!counts("target_dns_failed", "target_dns", true) && !counts(nil, nil, true), "other failures")
+    }
+
     try check("automation thresholds and retry deadlines are bounded") {
       var policy = AutomationPolicy()
       policy.pathChanged("wifi", available: true, now: 0)
