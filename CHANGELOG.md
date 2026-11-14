@@ -88,6 +88,8 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   while it was being read.
 - Logs and diagnostic reports kept host names written in a non-Latin script (`пример.рф`); they
   are now redacted like other host names. All platforms.
+- TUIC links that write the skip-verification flag as `insecure` or `allowInsecure` (as some
+  panels do) now import; before, one such line made the whole subscription fail to add.
 - After a network change (Wi-Fi to mobile data, a new default route), an XHTTP or TUIC connection
   on the dead path could stay open with its apps stalled until the idle timeout, 30 s or more:
   data the old network had still delivered counted as the server's answer to the check. The

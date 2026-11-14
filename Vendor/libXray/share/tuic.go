@@ -35,7 +35,7 @@ func (proxy xrayShareLink) tuicOutbound() (*conf.OutboundDetourConfig, error) {
 	}
 	for key, values := range query {
 		switch key {
-		case "sni", "alpn", "congestion_control", "udp_relay_mode", "allow_insecure":
+		case "sni", "alpn", "congestion_control", "udp_relay_mode", "allow_insecure", "allowInsecure", "insecure":
 		default:
 			return nil, fmt.Errorf("unsupported TUIC URI parameter")
 		}
@@ -55,14 +55,25 @@ func (proxy xrayShareLink) tuicOutbound() (*conf.OutboundDetourConfig, error) {
 	if alpn, ok := query["alpn"]; ok {
 		tls.ALPN = new(conf.StringList(strings.Split(alpn[0], ",")))
 	}
-	if insecure, ok := query["allow_insecure"]; ok {
-		switch insecure[0] {
+	// Panels write the flag under any of the aliases other link types accept; they must agree.
+	var insecureSeen bool
+	for _, key := range []string{"allow_insecure", "allowInsecure", "insecure"} {
+		values, ok := query[key]
+		if !ok {
+			continue
+		}
+		var insecure bool
+		switch values[0] {
 		case "0", "false":
 		case "1", "true":
-			tls.AllowInsecure = true
+			insecure = true
 		default:
 			return nil, fmt.Errorf("invalid TUIC verification flag")
 		}
+		if insecureSeen && insecure != tls.AllowInsecure {
+			return nil, fmt.Errorf("conflicting TUIC verification flags")
+		}
+		insecureSeen, tls.AllowInsecure = true, insecure
 	}
 	return tuicOutbound(settings, tls, u.Fragment)
 }
