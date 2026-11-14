@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'desktop_catalog.dart';
 import 'desktop_proxy.dart';
+import 'desktop_version.dart';
 import 'headless_transport.dart';
 import 'tunnel_channel.dart' show recordingBuild;
 
@@ -358,7 +359,7 @@ Future<void> runHeadless({
       platformIO: (method, args) async {
         if (method == 'systemInfo')
           return {
-            'os': Platform.operatingSystemVersion,
+            'os': desktopOSVersion(),
             'processorCount': Platform.numberOfProcessors,
             'activeProcessorCount': Platform.numberOfProcessors,
             'launchAtLoginStatus': 'managedByService',

@@ -141,7 +141,7 @@ extension _ProxyCommands on DesktopProxy {
         }
         return {
           ...await _platformRequest(method, args),
-          'os': Platform.operatingSystemVersion,
+          'os': desktopOSVersion(),
           'appVersion': ?desktopAppVersion,
           'coreVersion': ?_coreVersion,
           'vpnService': ?_vpnService?.enabled,

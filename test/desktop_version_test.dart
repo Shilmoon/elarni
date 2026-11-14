@@ -50,6 +50,24 @@ void main() {
     });
   }
 
+  // Regression: System info and diagnostics named Windows 11 "Windows 10".
+  test('Windows 11 is named by its build number', () {
+    expect(
+      desktopOSVersion('"Windows 10 Pro" 10.0 (Build 26200)'),
+      '"Windows 11 Pro" 10.0 (Build 26200)',
+    );
+    expect(
+      desktopOSVersion('"Windows 10 Home" 10.0 (Build 22000)'),
+      '"Windows 11 Home" 10.0 (Build 22000)',
+    );
+    for (final unchanged in [
+      '"Windows 10 Pro" 10.0 (Build 19045)',
+      '"Windows Server 2025 Standard" 10.0 (Build 26100)',
+      'Linux 6.8.0-45-generic #45-Ubuntu SMP',
+    ])
+      expect(desktopOSVersion(unchanged), unchanged);
+  });
+
   test(
     'a Linux bundle reports the version Flutter writes beside its assets',
     () async {
