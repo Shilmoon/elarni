@@ -217,7 +217,7 @@ if args.case in ('all', 'native') and first_shard:
         shell('mkdir', '-p', remote)
         run(*device, 'push', *(out / f'{name}.test' for name in ('tun', 'socket', 'traffic', 'wireguard')), ROOT / f'.build/android-native/jniLibs/{abi}/libelarni_domain.so', remote + '/')
     if attempt('native push', native):
-        for binary, pattern, expected in [('tun', 'TestAndroidTun', 2), ('socket', 'TestAndroidRequiredSocketProtection|TestAndroidProbeRestoreRefreshesGeodata', 2), ('traffic', 'TestImported.*Traffic|TestCompiledProvider|TestTUIC', 62), ('wireguard', 'TestWireGuardEnginesCarryTCPAndUDP', 3)]:
+        for binary, pattern, expected in [('tun', 'TestAndroidTun', 2), ('socket', 'TestAndroidRequiredSocketProtection|TestAndroidProbeRestoreRefreshesGeodata', 2), ('traffic', 'TestImported.*Traffic|TestCompiledProvider|TestTUIC', 64), ('wireguard', 'TestWireGuardEnginesCarryTCPAndUDP', 3)]:
             def go_binary(binary=binary, pattern=pattern, expected=expected):
                 output = shell('env', f'LD_LIBRARY_PATH={remote}', f'{remote}/{binary}.test', '-test.v', '-test.run', pattern, '-test.timeout', '180s')
                 count = len(re.findall(r'^\s*--- PASS:', output, re.M))
