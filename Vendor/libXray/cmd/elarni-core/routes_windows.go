@@ -51,6 +51,23 @@ type physicalNetworkCache struct {
 var physicalNetwork physicalNetworkCache
 var physicalBindingsOnce sync.Once
 
+var getBestRoute2 = windows.NewLazySystemDLL("iphlpapi.dll").NewProc("GetBestRoute2")
+
+// routedInto tells whether Windows now sends a new connection to an address into the interface:
+// its best route, which leaves out an excluded route, a local network and another VPN's own.
+func routedInto(luid winipcfg.LUID) func(netip.Addr) bool {
+	return func(address netip.Addr) bool {
+		var destination, source winipcfg.RawSockaddrInet
+		if destination.SetAddr(address.Unmap()) != nil {
+			return false
+		}
+		var route winipcfg.MibIPforwardRow2
+		failed, _, _ := getBestRoute2.Call(0, 0, 0, uintptr(unsafe.Pointer(&destination)), 0,
+			uintptr(unsafe.Pointer(&route)), uintptr(unsafe.Pointer(&source)))
+		return failed == 0 && route.InterfaceLUID == luid
+	}
+}
+
 func (c *physicalNetworkCache) fresh(s *physicalNetworkSnapshot) bool {
 	// DNS-only edits need not generate a route/interface notification.
 	return s != nil && time.Since(s.captured) < 5*time.Second && !c.dirty.Load()

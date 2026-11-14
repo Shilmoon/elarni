@@ -136,7 +136,7 @@ func TestMoveOpenedConnectionsResetsTheListedAppsConnections(t *testing.T) {
 
 	// The connections here run over loopback, which a real tunnel leaves alone.
 	previous := outsideTunnel
-	outsideTunnel = func(connection xnet.TCPConnection, _ []netip.Prefix) bool {
+	outsideTunnel = func(connection xnet.TCPConnection, _ []netip.Prefix, _ bool) bool {
 		return connection.Remote == netip.MustParseAddrPort(listener.Addr().String())
 	}
 	t.Cleanup(func() { outsideTunnel = previous })
@@ -162,7 +162,7 @@ func TestMoveOpenedConnectionsResetsTheListedAppsConnections(t *testing.T) {
 	}
 	defer StopXray()
 
-	reset, kept := MoveOpenedConnections(nil)
+	reset, kept := MoveOpenedConnections(nil, nil)
 	result, err := ReadConnections(0, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -206,14 +206,152 @@ func TestPerAppRulesKeepTheRoutersOrderAndTargets(t *testing.T) {
 		{"ruleTag":"elarni-per-app-other","outboundTag":"elarni-direct"},
 		{"process":["/opt/user"],"outboundTag":"elarni-block"}]}}`
 	var got []string
-	for _, rule := range perAppRules(config) {
+	rules, rest := perAppGate(config)
+	for _, rule := range rules {
 		got = append(got, fmt.Sprintf("%s=%t", strings.Join(rule.processes, ","), rule.tunnel))
 	}
 	if want := "/opt/a=true /opt/direct=false /opt/blocked=true /opt/server=true children:/opt/a=true"; strings.Join(got, " ") != want {
 		t.Fatalf("rules %q, want %q", got, want)
 	}
-	if perAppRules("{") != nil {
+	if rest {
+		t.Fatal("the other programs go direct, and the gate sends them into the tunnel")
+	}
+	// The other programs go on to the normal routing, or there is no per-app routing at all.
+	for _, config := range []string{
+		`{"outbounds":[{"tag":"elarni-direct","protocol":"freedom"},{"tag":"elarni-apps-0","protocol":"loopback"}],
+			"routing":{"rules":[{"ruleTag":"elarni-per-app-listed-0","process":["/opt/a"],"outboundTag":"elarni-direct"},
+			{"ruleTag":"elarni-per-app-other","outboundTag":"elarni-apps-0"}]}}`,
+		`{"outbounds":[{"tag":"elarni-direct","protocol":"freedom"}],"routing":{"rules":[{"outboundTag":"elarni-direct"}]}}`,
+	} {
+		if _, rest := perAppGate(config); !rest {
+			t.Fatalf("the tunnel does not take the other programs of %s", config)
+		}
+	}
+	if rules, _ := perAppGate("{"); rules != nil {
 		t.Fatal("rules from invalid JSON")
+	}
+}
+
+// Windows keeps a connection on the network it was opened on: one opened before the tunnel, or
+// between two tunnels, would run outside it for as long as it lives. Where the system now routes
+// its destination into the tunnel, the core resets it for every program the tunnel takes, not
+// only for listed ones, and lists none of those.
+func TestMoveOpenedConnectionsResetsWhatTheTunnelNowTakes(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	accepted := make(chan net.Conn)
+	go func() {
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			accepted <- connection
+		}
+	}()
+	target := netip.MustParseAddrPort(listener.Addr().String())
+	previous := outsideTunnel
+	outsideTunnel = func(connection xnet.TCPConnection, _ []netip.Prefix, _ bool) bool { return connection.Remote == target }
+	t.Cleanup(func() { outsideTunnel = previous })
+	routed := func(address netip.Addr) bool { return address == target.Addr() }
+	suffix := ""
+	if runtime.GOOS == "windows" {
+		suffix = ".exe"
+	}
+	// moved tells whether the pass reset the program's connection; one the system does not let
+	// the core reset still works.
+	moved := func(t *testing.T, held *heldConnection, reset, kept int) {
+		t.Helper()
+		switch {
+		case reset == 1 && kept == 0:
+			if line, err := held.lines.ReadString('\n'); err != nil || !strings.HasPrefix(line, "closed ") {
+				t.Fatalf("the reset connection still works: %q %v", line, err)
+			}
+		case reset == 0 && kept == 1:
+			held.alive(t)
+		default:
+			t.Fatalf("reset %d, kept %d, want the one connection", reset, kept)
+		}
+		if again, still := MoveOpenedConnections(nil, routed); again != 0 || still != 0 {
+			t.Fatalf("a second pass reset %d and kept %d", again, still)
+		}
+		if result, err := ReadConnections(0, 0); err != nil || len(result.Connections) != 0 {
+			t.Fatalf("listed %+v %v, want none: no listed app owns it", result, err)
+		}
+	}
+	for _, c := range []struct {
+		name  string
+		rules func(direct string) []any
+		moves bool
+	}{
+		{"without per-app routing", func(string) []any { return nil }, true},
+		{"when only listed apps use the tunnel", func(string) []any {
+			return []any{map[string]any{"type": "field", "inboundTag": []string{"elarni-tun"}, "outboundTag": "elarni-direct", "ruleTag": "elarni-per-app-other"}}
+		}, false},
+		{"when listed apps skip the tunnel", func(direct string) []any {
+			return []any{
+				map[string]any{"type": "field", "inboundTag": []string{"elarni-tun"}, "process": []string{direct},
+					"outboundTag": "elarni-direct", "ruleTag": "elarni-per-app-listed-0"},
+				map[string]any{"type": "field", "inboundTag": []string{"elarni-tun"}, "outboundTag": "elarni-apps-0", "ruleTag": "elarni-per-app-other"},
+			}
+		}, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := resolvedTempDir(t)
+			if err := os.Mkdir(filepath.Join(dir, "own"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			app := holdConnection(t, binary, filepath.Join(dir, "app"+suffix), listener, accepted)
+			direct := holdConnection(t, binary, filepath.Join(dir, "direct"+suffix), listener, accepted)
+			// Another process of this program, as the app's own core is to its elevated helper.
+			own := holdConnection(t, binary, filepath.Join(dir, "own", filepath.Base(self)), listener, accepted)
+			config := map[string]any{
+				"inbounds": []any{map[string]any{"tag": "elarni-tun", "listen": "127.0.0.1", "port": 0, "protocol": "dokodemo-door",
+					"settings": map[string]any{"network": "tcp", "address": "127.0.0.1", "port": 9}}},
+				"outbounds": []any{
+					map[string]any{"tag": "elarni-direct", "protocol": "freedom"},
+					map[string]any{"tag": "elarni-apps-0", "protocol": "loopback", "settings": map[string]any{"inboundTag": "elarni-apps-0"}},
+				},
+				"routing": map[string]any{"rules": c.rules(direct.path)},
+			}
+			raw, _ := json.Marshal(config)
+			if err := RunXrayFromJSON(string(raw)); err != nil {
+				t.Fatal(err)
+			}
+			defer StopXray()
+			if reset, kept := MoveOpenedConnections(nil, func(netip.Addr) bool { return false }); reset != 0 || kept != 0 {
+				t.Fatalf("reset %d and kept %d to a destination the tunnel does not take", reset, kept)
+			}
+			reset, kept := MoveOpenedConnections(nil, routed)
+			if c.name == "without per-app routing" {
+				// direct is one more program the tunnel takes.
+				if reset+kept != 2 {
+					t.Fatalf("reset %d, kept %d, want both programs' connections", reset, kept)
+				}
+				reset, kept = reset/2, kept/2
+			} else {
+				direct.alive(t)
+			}
+			if c.moves {
+				moved(t, app, reset, kept)
+			} else if reset != 0 || kept != 0 {
+				t.Fatalf("reset %d and kept %d of a program that skips the tunnel", reset, kept)
+			} else {
+				app.alive(t)
+			}
+			own.alive(t)
+		})
 	}
 }
 
@@ -230,25 +368,31 @@ func TestPerAppTunnelFollowsTheFirstMatchingRule(t *testing.T) {
 
 func TestOutsideTunnelKeepsLocalNetworks(t *testing.T) {
 	tunnel := []netip.Prefix{netip.MustParsePrefix("198.51.100.252/30"), netip.MustParsePrefix("fd76:6f75:7465::/126")}
+	// routed: where the system's routes say which remote addresses the tunnel takes, a private
+	// one is not left out here.
 	for _, c := range []struct {
 		local, remote string
-		want          bool
+		want, routed  bool
 	}{
-		{"192.168.1.20:50000", "203.0.114.9:443", true},
-		{"[2001:db8:5::20]:50000", "[2606:4700::1111]:443", true},
-		{"[::ffff:192.168.1.20]:50000", "[::ffff:203.0.114.9]:443", true},
-		{"198.51.100.254:50000", "203.0.114.9:443", false},
-		{"[fd76:6f75:7465::2]:50000", "[2606:4700::1111]:443", false},
-		{"192.168.1.20:50000", "192.168.1.1:80", false},
-		{"10.0.0.2:50000", "10.0.0.1:443", false},
-		{"100.101.1.2:50000", "100.64.0.1:443", false},
-		{"[fe80::1]:50000", "[fe80::2]:443", false},
-		{"127.0.0.1:50000", "127.0.0.1:443", false},
-		{"[::1]:50000", "[::1]:443", false},
+		{"192.168.1.20:50000", "203.0.114.9:443", true, true},
+		{"[2001:db8:5::20]:50000", "[2606:4700::1111]:443", true, true},
+		{"[::ffff:192.168.1.20]:50000", "[::ffff:203.0.114.9]:443", true, true},
+		{"198.51.100.254:50000", "203.0.114.9:443", false, false},
+		{"[fd76:6f75:7465::2]:50000", "[2606:4700::1111]:443", false, false},
+		{"192.168.1.20:50000", "192.168.1.1:80", false, true},
+		{"10.0.0.2:50000", "10.0.0.1:443", false, true},
+		{"100.101.1.2:50000", "100.64.0.1:443", false, true},
+		{"[fe80::1]:50000", "[fe80::2]:443", false, true},
+		{"127.0.0.1:50000", "127.0.0.1:443", false, false},
+		{"[::1]:50000", "[::1]:443", false, false},
+		{"192.168.1.20:50000", "127.0.0.1:443", false, false},
 	} {
 		connection := xnet.TCPConnection{Local: netip.MustParseAddrPort(c.local), Remote: netip.MustParseAddrPort(c.remote)}
-		if got := outsideTunnel(connection, tunnel); got != c.want {
+		if got := outsideTunnel(connection, tunnel, false); got != c.want {
 			t.Errorf("%s -> %s: %v, want %v", c.local, c.remote, got, c.want)
+		}
+		if got := outsideTunnel(connection, tunnel, true); got != c.routed {
+			t.Errorf("%s -> %s, the routes decide: %v, want %v", c.local, c.remote, got, c.routed)
 		}
 	}
 }
