@@ -31,6 +31,10 @@ Notable changes to Elarni. Versions follow `pubspec.yaml`.
   network adapter of the previous helper stays behind as a device that is gone; the new adapter
   was created while Wintun was still removing it, which Windows 10 answers after 15 seconds
   with an error. The helper now waits for the removal, which takes a fraction of a second.
+- Automatic failover never left a server whose service had stopped: only check timeouts counted
+  against the selected server, so one that refused or reset connections stayed selected, shown
+  as connected, with nothing passing. A server whose check passed before and whose requests are
+  now refused, reset or closed counts as failed. Windows, Linux, macOS and iPhone.
 - After a network change (Wi-Fi to mobile data, a new default route), an XHTTP or TUIC connection
   on the dead path could stay open with its apps stalled until the idle timeout, 30 s or more:
   data the old network had still delivered counted as the server's answer to the check. The

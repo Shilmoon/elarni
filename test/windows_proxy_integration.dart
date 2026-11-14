@@ -4732,6 +4732,107 @@ for line in sys.stdin:
     timeout: const Timeout(Duration(seconds: 90)),
   );
 
+  // Only timeouts counted against the selected server, so one whose service
+  // stopped (connection refused or reset) was never left.
+  test(
+    'failover leaves a server that passed its check and then refuses connections',
+    () async {
+      await backend.dispose();
+      backend = createBackend(
+        automationProbeSeconds: 2,
+        automationRetrySeconds: 1,
+        livenessInterval: const Duration(minutes: 5),
+      );
+      final relay = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final peers = <Socket>{};
+      relay.listen((client) async {
+        peers.add(client);
+        final server = await Socket.connect(
+          '127.0.0.1',
+          Uri.parse(profile).port,
+        );
+        peers.add(server);
+        unawaited(
+          client
+              .cast<List<int>>()
+              .pipe(server)
+              .catchError((Object _) => server),
+        );
+        unawaited(
+          server
+              .cast<List<int>>()
+              .pipe(client)
+              .catchError((Object _) => client),
+        );
+      });
+      var open = true;
+      try {
+        final imported = await backend.control.importClientProfiles(
+          content: [
+            Uri.parse(
+              profile,
+            ).replace(port: relay.port, fragment: 'Primary').toString(),
+            profile,
+          ].join('\n'),
+        );
+        final group = imported.snapshot.subscriptions.single;
+        String id(String name) =>
+            group.nodes.singleWhere((node) => node.name == name).id;
+        await backend.control.selectNode(id('Primary'));
+        await backend.control.configureAutomation(
+          AutomationConfiguration(
+            enabled: true,
+            policy: AutomationSelectionPolicy.orderedFallback,
+            subscriptionId: group.id,
+            nodeIds: [id('Primary'), id('Fixture')],
+            targets: [
+              AutomationTarget(
+                id: 'fixture',
+                url: 'http://127.0.0.1:${target.port}/fixture',
+                expectedStatus: 200,
+                expectedBody: body,
+              ),
+            ],
+          ),
+        );
+        expect(await backend.control.connect(), 'connected');
+        for (var i = 0; i < 300; i++) {
+          if ((await backend.control.automationStatus())['healthNodeID'] ==
+              id('Primary'))
+            break;
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        expect(
+          (await backend.control.automationStatus())['healthNodeID'],
+          id('Primary'),
+        );
+        // The server's service stops: nothing listens on its port any more.
+        open = false;
+        await relay.close();
+        for (final peer in peers) peer.destroy();
+        for (var i = 0; i < 900; i++) {
+          if ((await backend.control.subscriptions()).selectedNodeId ==
+                  id('Fixture') &&
+              await backend.control.state() == 'connected')
+            break;
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        expect(
+          (await backend.control.subscriptions()).selectedNodeId,
+          id('Fixture'),
+        );
+        expect(await backend.control.state(), 'connected');
+        final settings = await backend.control.tunnelSettings();
+        await checkSocks(settings.socksPort, target.port);
+      } finally {
+        if (open) await relay.close();
+        for (final peer in peers) peer.destroy();
+        await backend.control.disconnect();
+      }
+    },
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
+
   // An unresolvable server name is a failed connection, so failover moves on.
   test(
     'ordered fallback moves on from a primary whose server name does not resolve',
